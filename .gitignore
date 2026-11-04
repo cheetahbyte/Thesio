@@ -1,0 +1,5 @@
+/target
+/dist
+/dist-preview
+.DS_Store
+/archive/
