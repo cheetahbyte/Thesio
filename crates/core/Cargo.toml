@@ -19,6 +19,12 @@ uuid = { version = "1.28.0", features = ["v4"] }
 rustc-hash = "2.1"
 html5ever = "0.27"
 markup5ever_rcdom = "0.3"
+typst = "0.15.1"
+typst-layout = "0.15.1"
+typst-pdf = "0.15.1"
+typst-render = "0.15.1"
+comemo = "0.5.1"
+typst-kit = { version = "0.15.1", features = ["embedded-fonts"] }
 
 [lints]
 workspace = true

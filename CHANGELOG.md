@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Typst compiler for vaults, with PDF export and page rendering.
 - Remove quick notes and their system-wide keyboard shortcuts.
 
 - Replace the Nucleo interface icons with Lucide icons.
