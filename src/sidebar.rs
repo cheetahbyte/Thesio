@@ -6,7 +6,7 @@ use crate::app::{Confirm, RowMenu, View, Workspace};
 use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
-use thesio_core::references::Heading;
+use thesio_core::project::Heading;
 use crate::ui::{Icon, TipExt, TitleBarExt, icon, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 

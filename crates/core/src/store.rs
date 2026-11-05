@@ -224,11 +224,23 @@ fn parent_of(id: &str) -> Option<&str> { id.rsplit_once('/').map(|(parent, _)| p
 fn base_name(id: &str) -> &str { id.rsplit_once('/').map_or(id, |(_, name)| name) }
 fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }
 
-/// What launch will most likely open: the newest document, the top-level file
-/// that includes it, and its text. Read-only, for compiling ahead of the UI; a
-/// wrong guess only wastes that work.
-pub fn launch_target(root: &Path) -> Option<(String, String, String)> {
-    fn walk(dir: &Path, parent: Option<&str>, out: &mut Vec<(String, u64, String)>) {
+/// A visible file or folder of a vault.
+pub(crate) struct VaultItem {
+    pub id: String,
+    pub name: String,
+    pub parent: Option<String>,
+    pub path: PathBuf,
+    pub info: std::fs::Metadata,
+}
+
+impl VaultItem {
+    pub fn is_document(&self) -> bool { !self.info.is_dir() && self.path.extension().is_some_and(|e| e == EXTENSION) }
+    pub fn modified(&self) -> u64 { unix_secs(self.info.modified()) }
+}
+
+/// Visits every visible file and folder under `root`, parents before children.
+pub(crate) fn visit_vault(root: &Path, visit: &mut dyn FnMut(VaultItem)) {
+    fn walk(dir: &Path, parent: Option<&str>, visit: &mut dyn FnMut(VaultItem)) {
         let Ok(read) = std::fs::read_dir(dir) else { return };
         let mut items: Vec<_> = read.flatten().collect();
         items.sort_by_key(|e| e.file_name());
@@ -237,30 +249,12 @@ pub fn launch_target(root: &Path) -> Option<(String, String, String)> {
             let Ok(info) = item.metadata() else { continue };
             if name.starts_with('.') { continue; }
             let id = join(parent, &name);
-            if info.is_dir() {
-                walk(&item.path(), Some(&id), out);
-            } else if item.path().extension().is_some_and(|e| e == EXTENSION) && let Ok(text) = std::fs::read_to_string(item.path()) {
-                out.push((id, unix_secs(info.modified()), text));
-            }
+            let folder = info.is_dir();
+            visit(VaultItem { id: id.clone(), name, parent: parent.map(str::to_string), path: item.path(), info });
+            if folder { walk(&item.path(), Some(&id), visit); }
         }
     }
-    let mut documents = vec![];
-    walk(root, None, &mut documents);
-    documents.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
-    let (id, _, text) = documents.first()?.clone();
-    let includes: HashMap<&str, Vec<String>> = documents.iter().map(|(file, _, text)| (file.as_str(), crate::references::included_files(text, file))).collect();
-    let includes_file = |top: &str, target: &str| {
-        let (mut stack, mut seen) = (vec![top.to_string()], std::collections::HashSet::new());
-        while let Some(file) = stack.pop() {
-            if !seen.insert(file.clone()) { continue; }
-            if file == target && file != top { return true; }
-            stack.extend(includes.get(file.as_str()).into_iter().flatten().cloned());
-        }
-        false
-    };
-    let is_included = |file: &str| documents.iter().any(|(top, ..)| top != file && includes_file(top, file));
-    let main = documents.iter().find(|(top, ..)| *top != id && includes_file(top, &id) && !is_included(top)).map_or(id.clone(), |(top, ..)| top.clone());
-    Some((id, main, text))
+    walk(root, None, visit);
 }
 
 impl Store {
@@ -304,40 +298,29 @@ impl Store {
     /// Every visible file and folder, parents before children.
     pub fn list(&mut self) -> Vec<Entry> {
         let mut out = vec![];
-        self.scan(&self.root.clone(), None, &mut out);
-        out
-    }
-
-    fn scan(&mut self, dir: &Path, parent: Option<&str>, out: &mut Vec<Entry>) {
-        let Ok(read) = std::fs::read_dir(dir) else { return };
-        let mut items: Vec<_> = read.flatten().collect();
-        items.sort_by_key(|e| e.file_name());
-        for item in items {
-            let name = item.file_name().to_string_lossy().into_owned();
-            let Ok(info) = item.metadata() else { continue };
-            if name.starts_with('.') { continue; }
-            let id = join(parent, &name);
-            let mut meta = self.index.get(&id).cloned().unwrap_or_default();
-            meta.created = unix_secs(info.created());
-            meta.modified = unix_secs(info.modified());
-            meta.parent = parent.map(str::to_string);
-            if info.is_dir() {
-                out.push(Entry { id: id.clone(), meta, title: name, folder: true, typst: false, body: String::new() });
-                self.scan(&item.path(), Some(&id), out);
-            } else if !item.path().extension().is_some_and(|e| e == EXTENSION) {
+        visit_vault(&self.root.clone(), &mut |item| {
+            let mut meta = self.index.get(&item.id).cloned().unwrap_or_default();
+            meta.created = unix_secs(item.info.created());
+            meta.modified = item.modified();
+            meta.parent = item.parent.clone();
+            let (id, name) = (item.id.clone(), item.name.clone());
+            if item.info.is_dir() {
+                out.push(Entry { id, meta, title: name, folder: true, typst: false, body: String::new() });
+            } else if !item.is_document() {
                 out.push(Entry { id, meta, title: name, folder: false, typst: false, body: String::new() });
             } else {
-                let stamp = (meta.modified, info.len());
+                let stamp = (meta.modified, item.info.len());
                 let fresh = self.bodies.get(&id).filter(|b| b.stamp == stamp).map(|b| b.text.clone());
                 let body = fresh.unwrap_or_else(|| {
-                    let text = std::fs::read_to_string(item.path()).unwrap_or_default();
+                    let text = std::fs::read_to_string(&item.path).unwrap_or_default();
                     self.bodies.insert(id.clone(), CachedBody { stamp, text: text.clone() });
                     text
                 });
                 let title = name.strip_suffix(".typ").unwrap_or(&name).to_string();
                 out.push(Entry { id, meta, title, folder: false, typst: true, body });
             }
-        }
+        });
+        out
     }
 
     pub fn load(&self, id: &str) -> Result<String> {
@@ -615,24 +598,5 @@ mod tests {
         assert_eq!(renamed_file("flaky2024", true), "flaky2024.typ");
         assert_eq!(renamed_file("flaky2024.typ", true), "flaky2024.typ");
         assert_eq!(renamed_file("paper.pdf", false), "paper.pdf");
-    }
-
-    #[test]
-    fn launch_target_is_the_newest_document_within_its_top_file() {
-        let root = std::env::temp_dir().join(format!("thesio-launch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("Thesis/chapters")).unwrap();
-        std::fs::create_dir_all(root.join(".trash")).unwrap();
-        let write = |path: &str, text: &str, age: u64| {
-            let file = std::fs::File::create(root.join(path)).unwrap();
-            std::io::Write::write_all(&mut &file, text.as_bytes()).unwrap();
-            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)).unwrap();
-        };
-        write("old.typ", "old", 500);
-        write("Thesis/thesis.typ", "#include \"chapters/one.typ\"", 300);
-        write("Thesis/chapters/one.typ", "newest", 100);
-        write(".trash/hidden.typ", "hidden", 0);
-        assert_eq!(launch_target(&root), Some(("Thesis/chapters/one.typ".into(), "Thesis/thesis.typ".into(), "newest".into())));
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

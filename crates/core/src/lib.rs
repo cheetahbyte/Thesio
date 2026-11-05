@@ -6,6 +6,7 @@ pub mod compiler;
 pub mod history;
 pub mod library;
 pub mod lookup;
+pub mod project;
 pub mod quote;
 pub mod references;
 pub mod source_type;

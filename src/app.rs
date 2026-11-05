@@ -9,7 +9,8 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
-use thesio_core::references::{Heading, note_links, outline};
+use thesio_core::project::{self, Heading, Project};
+use thesio_core::references::note_links;
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::Cell;
@@ -574,10 +575,10 @@ impl Workspace {
         self.backlinks = self.current.as_ref().map_or(vec![], |current| self.entries.iter().filter(|e| e.typst && e.id != *current)
             .filter_map(|e| note_links(&e.body, &e.id).into_iter().find(|link| link.target == *current).map(|link| (e.id.clone(), e.title.clone(), link.range.start))).collect());
         let entries = &self.entries;
-        self.outline = outline(&root, &mut |path| match &open {
+        self.outline = Project::open(&root, &mut |path| match &open {
             Some((id, text)) if id == path => Some(text.clone()),
             _ => entries.iter().find(|e| e.id == path).map(|e| e.body.clone()),
-        });
+        }).outline();
         let caret = self.editor.as_ref().map_or(0, |editor| editor.read(cx).buffer.caret());
         self.mark_outline(caret, cx);
     }
@@ -593,7 +594,7 @@ impl Workspace {
     }
 
     fn first_document(&self) -> Option<String> {
-        self.entries.iter().find(|e| e.typst).map(|e| e.id.clone())
+        project::newest(self.entries.iter().filter(|e| e.typst).map(|e| (e.id.as_str(), e.meta.modified))).map(str::to_string)
     }
 
     pub fn new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {

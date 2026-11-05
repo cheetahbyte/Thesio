@@ -696,19 +696,6 @@ mod tests {
     }
 
     #[test]
-    fn an_outline_reads_through_includes_in_order() {
-        let files = [
-            ("main.typ", "= One <one>\n#include \"ch/a.typ\"\n== Two\n#include \"ch/b.typ\"\n// = Not a heading\n`= Nor this`\n"),
-            ("ch/a.typ", "= In A\nText\n#include \"../main.typ\"\n"),
-            ("ch/b.typ", "=== In *B*\n"),
-        ];
-        let mut read = |path: &str| files.iter().find(|(file, _)| *file == path).map(|(_, text)| text.to_string());
-        let headings = references::outline("main.typ", &mut read);
-        let summary: Vec<(&str, usize, &str)> = headings.iter().map(|h| (h.path.as_str(), h.level, h.title.as_str())).collect();
-        assert_eq!(summary, [("main.typ", 1, "One"), ("ch/a.typ", 1, "In A"), ("main.typ", 2, "Two"), ("ch/b.typ", 3, "In *B*")]);
-    }
-
-    #[test]
     fn note_links_are_found_and_written_and_follow_a_move() {
         use references::{note_link, note_link_at, note_links, rewrite_paths};
         let text = "#link(\"../b.typ\")[B] #link(\"https://x.org/a.typ\")[web] #link(\"c.pdf\")[pdf]\n#link(\"d.typ\", \"e.typ\")\n`#link(\"raw.typ\")`\n";

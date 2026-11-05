@@ -33,6 +33,7 @@ main.rs: window
 | `source_type.rs` | The Library's source types, their fields, and where each field lives in an entry. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
 | `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
+| `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
 | `time.rs` | Local dates without a time zone database. |
 
 ## Editing flow
@@ -63,7 +64,7 @@ The search dialog lists documents, then sources, then PDF highlights. Highlights
 
 ## Sidebar
 
-The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`references::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
+The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`Project::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
 
 `tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`store::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
 

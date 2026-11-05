@@ -3,6 +3,7 @@
 //! folders; see `VaultWorld::resolved`), so `#include`, `#image`, and `#bibliography` reach any
 //! file in it. Unsaved editor text is held in buffers that shadow the disk.
 
+use crate::project::{self, Project};
 use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
 use std::num::NonZeroUsize;
@@ -150,13 +151,12 @@ impl Compiler {
     pub fn pages_from(&self, document: &PagedDocument, path: &str) -> Vec<bool> {
         let every = vec![true; document.pages().len()];
         if file_id(path).ok() == self.world.main { return every; }
-        let mut files = rustc_hash::FxHashSet::default();
-        let mut stack = vec![path.to_string()];
-        while let Some(file) = stack.pop() {
-            let Ok(id) = file_id(&file).map(|id| self.world.resolved(id)) else { continue };
-            if !files.insert(id) { continue; }
-            if let Ok(source) = self.world.source(id) { stack.extend(crate::references::included_files(source.text(), &file)); }
-        }
+        let Some(main) = self.world.main.map(|main| main.get().vpath().get_without_slash().to_string()) else { return every };
+        let project = Project::within(&main, path, &mut |file| {
+            let id = file_id(file).ok().filter(|id| self.world.exists(*id, file))?;
+            Some(self.world.source(id).ok()?.text().to_string())
+        });
+        let files: rustc_hash::FxHashSet<FileId> = project.files().filter_map(|(file, _)| file_id(file).ok()).collect();
         let own: Vec<bool> = document.pages().iter().map(|page| shows(&page.frame, &files)).collect();
         if own.contains(&true) { own } else { every }
     }
@@ -217,21 +217,14 @@ struct VaultWorld {
 }
 
 impl VaultWorld {
-    /// The file `id` means. Typst runs one project per root, but a vault holds
-    /// several: `/template.typ` is sought from the main file's folder upward,
-    /// then at the vault root, as `typst compile` run in that project would.
+    fn exists(&self, id: FileId, path: &str) -> bool { self.buffers.contains_key(&id) || self.root.join(path).is_file() }
+
+    /// The file `id` means; see `project::candidates`.
     fn resolved(&self, id: FileId) -> FileId {
         let (Some(main), VirtualRoot::Project) = (self.main, id.get().root()) else { return id };
         let main = main.get().vpath().get_without_slash().to_string();
         let file = id.get().vpath().get_without_slash();
-        let mut dir = main.as_str();
-        while let Some((parent, _)) = dir.rsplit_once('/') {
-            dir = parent;
-            let candidate = format!("{dir}/{file}");
-            let Ok(found) = file_id(&candidate) else { continue };
-            if self.buffers.contains_key(&found) || self.root.join(&candidate).is_file() { return found; }
-        }
-        id
+        project::candidates(&main, file).find_map(|path| file_id(&path).ok().filter(|found| self.exists(*found, &path))).unwrap_or(id)
     }
 
     fn path(&self, id: FileId) -> FileResult<PathBuf> {

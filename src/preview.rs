@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thesio_core::compiler::{Compiler, Diagnostic, PageTarget, render_changed, with_large_stack};
+use thesio_core::project::{LaunchTarget, launch_target};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
@@ -52,18 +53,18 @@ fn compile_and_render(compiler: &mut Compiler, path: &str, text: String, main: &
     anyhow::Ok((pages, compilation.diagnostics, started.elapsed()))
 }
 
-/// A launch compile: (path, main, text), its compiler, and its result.
-type Prepared = ((String, String, String), Compiler, CompileResult);
+/// A launch compile: what it guessed, its compiler, and its result.
+type Prepared = (LaunchTarget, Compiler, CompileResult);
 static PREPARED: Mutex<Option<std::thread::JoinHandle<Option<Prepared>>>> = Mutex::new(None);
 
 /// Starts compiling what launch will open, before the UI exists to ask for it.
 pub fn prepare() {
     *PREPARED.lock().unwrap() = Some(std::thread::spawn(|| {
         let root = crate::store::Store::root_dir();
-        let (path, main, text) = thesio_core::store::launch_target(&root)?;
+        let target = launch_target(&root)?;
         let mut compiler = Compiler::new(root);
-        let result = run(&mut compiler, &path, text.clone(), &main, &[]);
-        Some(((path, main, text), compiler, result))
+        let result = run(&mut compiler, &target.document, target.text.clone(), &target.main, &[]);
+        Some((target, compiler, result))
     }));
 }
 
@@ -222,7 +223,7 @@ impl Preview {
             if latest.load(Ordering::Relaxed) != generation { return None; }
             if let Some(handle) = prepared
                 && let Ok(Some((target, ready, result))) = handle.join()
-                && target == (path.clone(), main.clone(), text.clone()) {
+                && (target.document == path && target.main == main && target.text == text) {
                     *compiler.lock().unwrap() = ready;
                     return Some(result);
                 }

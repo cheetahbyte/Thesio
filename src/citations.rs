@@ -16,7 +16,8 @@ use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use thesio_core::references::{bibliography_style, cited_keys, citations_of, included_files, note_link, rename_citation, set_bibliography_style};
+use thesio_core::project::{Documents, Project};
+use thesio_core::references::{bibliography_style, cited_keys, citations_of, note_link, rename_citation, set_bibliography_style};
 
 const ROW_H: f32 = 32.;
 /// Rows inset their cells, so cell text lines up with the page title.
@@ -387,24 +388,15 @@ impl Workspace {
     /// Every key cited in a document and the files it includes.
     fn cited_in(&self, id: &str) -> BTreeSet<String> {
         let mut keys = BTreeSet::new();
-        for (_, text) in self.document_files(id) {
-            keys.extend(cited_keys(&text));
+        for (_, text) in Project::open(id, &mut |file| self.store.load(file).ok()).files() {
+            keys.extend(cited_keys(text));
         }
         keys
     }
 
-    /// A document and the files it includes, each once.
-    fn document_files(&self, id: &str) -> Vec<(String, String)> {
-        let mut stack = vec![id.to_string()];
-        let mut seen = BTreeSet::new();
-        let mut out = vec![];
-        while let Some(file) = stack.pop() {
-            if !seen.insert(file.clone()) { continue; }
-            let Ok(text) = self.store.load(&file) else { continue };
-            stack.extend(included_files(&text, &file));
-            out.push((file, text));
-        }
-        out
+    /// Every document, for asking which includes which.
+    fn documents(&self) -> Documents {
+        Documents::load(self.entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |file| self.store.load(file).ok())
     }
 
     /// Rewrites each generated block to hold what its document cites.
@@ -500,18 +492,10 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The documents that include `id`, directly or through other files.
-    fn includers(&self, id: &str) -> Vec<String> {
-        self.entries.iter().filter(|e| e.typst && e.id != id)
-            .filter(|e| self.document_files(&e.id).iter().any(|(file, _)| file == id))
-            .map(|e| e.id.clone()).collect()
-    }
-
     /// The top-level document `id` belongs to: a document has one bibliography,
     /// so it goes there and not in an included chapter.
     pub(crate) fn top_document(&self, id: &str) -> String {
-        let includers = self.includers(id);
-        includers.iter().find(|doc| self.includers(doc).is_empty()).cloned().unwrap_or_else(|| id.to_string())
+        self.documents().top_document(id)
     }
 
     /// Embeds a bibliography in `id`'s top-level document unless the document
@@ -519,7 +503,7 @@ impl Workspace {
     fn ensure_bibliography(&mut self, id: &str, cx: &mut Context<Self>) {
         let body = |w: &Self, doc: &str| w.entries.iter().find(|e| e.id == doc).map_or(String::new(), |e| e.body.clone());
         if self.bibliography_mode(cx) != Mode::None { return; }
-        if self.includers(id).iter().any(|doc| library::mode(&body(self, doc), doc) != Mode::None) { return; }
+        if self.documents().includers(id).iter().any(|doc| library::mode(&body(self, doc), doc) != Mode::None) { return; }
         let top = self.top_document(id);
         if top == id {
             let Some(editor) = self.editor.clone() else { return };
