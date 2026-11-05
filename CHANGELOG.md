@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Drag images into the editor, or paste an image or an image file. The image is copied to `images/` beside the document, and a `#figure` goes in at the caret with the path relative to the document and the caret in an empty caption. Several images make several figures, and Tab moves between their captions. PNG, JPEG, GIF, WebP, SVG, and PDF work. A file with the same content is reused and no existing file is replaced. Pasted bitmaps are saved as PNG. Undo removes the figure and leaves the copied file.
 - Underline compile errors in red and warnings in amber in the editor, on the exact text, in paper notes too. Pointing at an underline shows the message and hints. Underlines follow your typing and stay until the new result arrives, and a chapter's errors show in the chapter when it is open. The list under the preview stays.
 - Land on the right place when clicking a diagnostic in the list while newer text compiles.
 - Offer cross-references with `@`. Figures, tables, headings, equations, and any other label in the whole document, included chapters too, join the sources in one list, with their title, kind, and page. Accepting one writes `@label` and adds no bibliography.

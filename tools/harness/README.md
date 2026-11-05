@@ -55,6 +55,10 @@ Use one command per line. Lines starting with `#` are comments. `COMMANDS` in `s
 | `wheel x y dy` | Send one wheel event |
 | `shot <name>` / `burst <name> [n]` | Capture a screenshot or capture `n` screenshots (default 10) about 8 ms apart |
 | `clip text <file>` | Set the simulated clipboard to the file's text, for a subsequent `key cmd-v` |
+| `clip image <file>` | Set the simulated clipboard to the file's bytes, as image data copied from another app |
+| `clip files <path>[\|<path>…]` | Set the simulated clipboard to files, as copied in Finder |
+| `dropover x y <path>[\|<path>…]` | Drag files from outside over the window and hold them there, for a shot of the drop target |
+| `drop x y <path>[\|<path>…]` | Drag files from outside to (x, y) and drop them. Paths may hold spaces. It goes through the window's AppKit drag methods with a pasteboard of its own, except that a mouse up ends it, so the app is not activated |
 | `pick <path>[\|<path>…]` | Supply paths for the next open or save dialog; a dialog with none waiting counts as cancelled |
 | `pdfselect <text>` | Select the first match in the open paper before the next highlight; mouse steps cannot reach the native viewer |
 | `resize w h` | Resize the window |

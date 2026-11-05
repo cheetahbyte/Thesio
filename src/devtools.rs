@@ -3,6 +3,7 @@
 //! is the script grammar, and tools/harness/README.md documents each command;
 //! a test keeps the two together.
 
+use crate::system::Clip;
 use gpui::*;
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -30,6 +31,24 @@ fn ease(t: f32) -> f32 {
     if t < 0.5 { 4. * t * t * t } else { 1. - (-2. * t + 2.).powi(3) / 2. }
 }
 
+/// What `clip` puts on the simulated clipboard.
+#[derive(Debug)]
+enum Clipping {
+    Text(PathBuf),
+    Image(PathBuf),
+    Files(Vec<PathBuf>),
+}
+
+impl Clipping {
+    fn read(&self) -> std::io::Result<Clip> {
+        Ok(match self {
+            Clipping::Text(path) => Clip::Text(std::fs::read_to_string(path)?),
+            Clipping::Image(path) => Clip::Image(std::fs::read(path)?),
+            Clipping::Files(files) => Clip::Files(files.clone()),
+        })
+    }
+}
+
 #[derive(Debug)]
 enum Step {
     Wait(u64),
@@ -51,7 +70,9 @@ enum Step {
     Shot(String),
     Burst(String, usize),
     Deskshot(String, f64),
-    Clip(PathBuf),
+    Clip(Clipping),
+    Drop(f32, f32, Vec<PathBuf>),
+    Dropover(f32, f32, Vec<PathBuf>),
     Pick(Vec<PathBuf>),
     Pdfselect(String),
     Resize(f32, f32),
@@ -77,6 +98,25 @@ fn text(s: &str) -> Option<String> { Some(s.trim().to_string()).filter(|s| !s.is
 fn press(s: &str) -> Option<(f32, f32, i64)> {
     let [x, y] = nums(s)?;
     Some((x, y, nums::<3>(s).map_or(1, |[_, _, clicks]| clicks as i64)))
+}
+
+fn paths(s: &str) -> Vec<PathBuf> { s.trim().split('|').map(PathBuf::from).collect() }
+
+fn clipping(s: &str) -> Option<Step> {
+    let (kind, rest) = s.trim().split_once(' ')?;
+    Some(Step::Clip(match kind {
+        "text" => Clipping::Text(rest.trim().into()),
+        "image" => Clipping::Image(rest.trim().into()),
+        "files" => Clipping::Files(paths(rest)),
+        _ => return None,
+    }))
+}
+
+/// `x y` and the paths after them, which may hold spaces.
+fn file_drag(s: &str) -> Option<(f32, f32, Vec<PathBuf>)> {
+    let mut parts = s.trim().splitn(3, ' ');
+    let (x, y) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+    Some((x, y, paths(parts.next()?)))
 }
 
 fn bench(s: &str) -> Option<Step> {
@@ -115,8 +155,10 @@ const COMMANDS: &[(&str, Parse)] = &[
         let (name, margin) = s.trim().split_once(' ').unwrap_or((s.trim(), "48"));
         Some(Step::Deskshot(text(name)?, margin.trim().parse().ok()?))
     }),
-    ("clip", |s| s.trim().strip_prefix("text ").map(|path| Step::Clip(path.trim().into()))),
-    ("pick", |s| Some(Step::Pick(s.trim().split('|').map(PathBuf::from).collect()))),
+    ("clip", clipping),
+    ("drop", |s| file_drag(s).map(|(x, y, files)| Step::Drop(x, y, files))),
+    ("dropover", |s| file_drag(s).map(|(x, y, files)| Step::Dropover(x, y, files))),
+    ("pick", |s| Some(Step::Pick(paths(s)))),
     ("pdfselect", |s| text(s).map(Step::Pdfselect)),
     ("resize", |s| nums(s).map(|[w, h]| Step::Resize(w, h))),
     ("place", |s| nums(s).map(|[x, y]| Step::Place(x, y))),
@@ -330,10 +372,24 @@ impl Driver {
                     Err(e) => eprintln!("devtools: capture failed: {e}"),
                 }
             }),
-            Step::Clip(path) => match std::fs::read_to_string(path) {
-                Ok(text) => crate::system::script_clipboard(text),
-                Err(e) => eprintln!("devtools: cannot read {}: {e}", path.display()),
+            Step::Clip(clipping) => match clipping.read() {
+                Ok(clip) => crate::system::script_clipboard(clip),
+                Err(e) => eprintln!("devtools: cannot read {clipping:?}: {e}"),
             },
+            #[cfg(target_os = "macos")]
+            Step::Dropover(x, y, files) => {
+                log_pointer(*x, *y, "move");
+                drag_files(view, *x, *y, files);
+            }
+            // A mouse up ends it, as `performDragOperation:` would: GPUI activates
+            // the app there, and a script must not take focus.
+            #[cfg(target_os = "macos")]
+            Step::Drop(x, y, files) => {
+                log_pointer(*x, *y, "up");
+                drag_files(view, *x, *y, files);
+                send(view, LEFT_UP, *x, *y, 1);
+                end_file_drag(view);
+            }
             Step::Pick(paths) => crate::system::script_pick(paths.clone()),
             Step::Pdfselect(text) => crate::system::script_pdf_selection(text.clone()),
             Step::Resize(w, h) => self.in_window(cx, |window, _| window.resize(size(px(*w), px(*h)))),
@@ -634,6 +690,85 @@ mod native {
                     let _: () = msg_send![view, keyUp: ev];
                 }
             }
+        }
+    }
+
+    /// Where a scripted drag is, as `NSDraggingInfo` reports it.
+    #[repr(C)]
+    struct DragLocation {
+        x: f64,
+        y: f64,
+    }
+
+    unsafe impl objc::Encode for DragLocation {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGPoint=dd}") }
+        }
+    }
+
+    /// Stands in for AppKit's `NSDraggingInfo`, the only part of a file drag
+    /// that cannot be asked for: the window takes everything else from it.
+    fn drag_class() -> &'static objc::runtime::Class {
+        use objc::declare::ClassDecl;
+        use objc::runtime::{Class, Sel};
+        static REGISTER: std::sync::Once = std::sync::Once::new();
+        const NAME: &str = "ThesioScriptedDrag";
+        extern "C" fn pasteboard(this: &Object, _: Sel) -> *mut Object {
+            unsafe { *this.get_ivar::<*mut Object>("pasteboard") }
+        }
+        extern "C" fn location(this: &Object, _: Sel) -> DragLocation {
+            unsafe { DragLocation { x: *this.get_ivar("x"), y: *this.get_ivar("y") } }
+        }
+        REGISTER.call_once(|| unsafe {
+            let mut decl = ClassDecl::new(NAME, class!(NSObject)).unwrap();
+            decl.add_ivar::<*mut Object>("pasteboard");
+            decl.add_ivar::<f64>("x");
+            decl.add_ivar::<f64>("y");
+            decl.add_method(sel!(draggingPasteboard), pasteboard as extern "C" fn(&Object, Sel) -> *mut Object);
+            decl.add_method(sel!(draggingLocation), location as extern "C" fn(&Object, Sel) -> DragLocation);
+            decl.register();
+        });
+        Class::get(NAME).unwrap()
+    }
+
+    fn ns_string(text: &str) -> *mut Object {
+        unsafe {
+            let s: *mut Object = msg_send![class!(NSString), alloc];
+            msg_send![s, initWithBytes: text.as_ptr() length: text.len() encoding: 4usize]
+        }
+    }
+
+    /// Files dragged over the window, through the methods AppKit calls. They
+    /// travel on a pasteboard of their own, so the user's clipboard stays out of it.
+    pub fn drag_files(ns_view: usize, x: f32, y: f32, files: &[std::path::PathBuf]) {
+        unsafe {
+            let view = ns_view as *mut Object;
+            let win: *mut Object = msg_send![view, window];
+            let frame: CGRect = msg_send![view, frame];
+            let names: Vec<*mut Object> = files.iter().map(|file| ns_string(&file.to_string_lossy())).collect();
+            let names: *mut Object = msg_send![class!(NSArray), arrayWithObjects: names.as_ptr() count: names.len()];
+            let pasteboard: *mut Object = msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
+            let kind = ns_string("NSFilenamesPboardType");
+            let kinds: *mut Object = msg_send![class!(NSArray), arrayWithObject: kind];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: isize = msg_send![pasteboard, declareTypes: kinds owner: nil];
+            let _: bool = msg_send![pasteboard, setPropertyList: names forType: kind];
+            let drag: *mut Object = msg_send![drag_class(), new];
+            (*drag).set_ivar("pasteboard", pasteboard);
+            (*drag).set_ivar("x", x as f64);
+            (*drag).set_ivar("y", frame.size.height - y as f64);
+            let _: usize = msg_send![win, draggingEntered: drag];
+            let _: usize = msg_send![win, draggingUpdated: drag];
+            let _: () = msg_send![drag, release];
+            let _: () = msg_send![pasteboard, releaseGlobally];
+        }
+    }
+
+    pub fn end_file_drag(ns_view: usize) {
+        unsafe {
+            let win: *mut Object = msg_send![ns_view as *mut Object, window];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: () = msg_send![win, draggingExited: nil];
         }
     }
 

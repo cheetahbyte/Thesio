@@ -9,6 +9,7 @@ pub mod diff;
 pub mod history;
 pub mod ide;
 pub mod identifier;
+pub mod images;
 pub mod library;
 pub mod lookup;
 pub mod packages;

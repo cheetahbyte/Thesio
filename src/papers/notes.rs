@@ -88,6 +88,7 @@ impl Workspace {
                     w.schedule_notes_save(cx);
                 }
                 SourceEvent::Completed(CompletionKind::Citation) => w.link_note_library(&note, &editor, cx),
+                SourceEvent::Images(images) => w.add_images(&note, &editor, images, cx),
                 SourceEvent::Completed(_) | SourceEvent::Caret | SourceEvent::Follow(_) => {}
             }
         });

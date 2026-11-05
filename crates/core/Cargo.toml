@@ -26,6 +26,7 @@ typst-kit = { version = "0.15.1", features = ["embedded-fonts", "system-packages
 hayagriva = { version = "0.10.1", default-features = false, features = ["biblatex"] }
 serde_yaml = "0.9"
 ureq = "3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 [dev-dependencies]
 flate2 = "1"

@@ -48,6 +48,7 @@ main.rs: window
 | `biblatex.rs` | BibLaTeX import and export. Hayagriva parses, and export takes every name from the field table. |
 | `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
 | `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
+| `images.rs` | Images coming into the vault: what Typst can show, the name a copy takes, and the figure text. See [Images](#images). |
 | `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers and Typst packages. The only code that reaches the network. |
 | `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
@@ -81,6 +82,20 @@ A download happens outside the compile, so a slow one holds up neither typing no
 `typst-kit` unpacks into a temporary folder and moves it into place whole, so a failed download leaves nothing in the cache. The failure itself stays in memory for 30 seconds and shows as an error at the import. Compiles in that time report it without asking again, since a compile follows every pause in typing; the first compile after that tries again.
 
 Importing a package is the only network use a document can trigger. It requests the package's archive from `packages.typst.org`, plus the package index if the archive is not found, and sends nothing from the document but the package's name and version.
+
+## Images
+
+Dropping a file on a Typst editor or pasting an image goes the same way. `SourceEditor` emits `SourceEvent::Images`, `Workspace::add_images` copies each one with `Store::add_image`, and `SourceEditor::insert_figures` writes the figures as one undoable edit. Undo removes the text and leaves the file. Paper notes work the same way. Another kind of text file takes no drops, and pastes only text.
+
+The rule for where a copy goes is one folder: `images/` beside the document, so a document's path is always `images/<name>`, and `notes/images/` holds what paper notes bring in. The name is the file's own, cleaned as a new document's is, or `pasted`. A name already taken is compared byte for byte: the same content is used as it is, and otherwise the next number is tried, `plot 1.png`, so a second drop of a changed file finds the first copy of it. Nothing is ever written over.
+
+Typst decides what counts: `ImageFormat::detect` reads the bytes, and that gives PNG, JPEG, GIF, WebP, SVG, and PDF. A file whose extension disagrees is copied under the right one, since Typst goes by the extension. Anything else is refused with a toast, including BMP, TIFF, and HEIC files. A dropped gzip file is refused too: Typst takes gzip for compressed SVG, which only its extension would settle. Pasted bytes become PNG unless they are PNG or SVG already, so a TIFF on the clipboard works where a TIFF file does not.
+
+A paste asks for image files first, since a file copied in Finder also holds its name as text and its icon as an image. GPUI's clipboard has no files, so `system.rs` reads them from `NSPasteboard` on macOS. Without files it takes what GPUI gives, which is text ahead of a bitmap. File drops come from GPUI as an `ExternalPaths` drag, and need no patch.
+
+A figure stands in paragraphs of its own, cutting the line at the caret. It goes past a `figure` call around the caret, because the caret sits in a caption after an insert, and a second drop would otherwise land inside it. A selection is replaced as a paste would.
+
+A moved document's `image` path is rewritten like any other, and the image stays where it is: `images/` does not follow the document.
 
 ## Editor rendering
 
@@ -174,6 +189,11 @@ The first citation in a document embeds a block unless one already covers it. A 
 
 ## Limits
 
+- An image goes in as `#figure` wherever the caret is, so in code, math, or a raw block it does not compile.
+- Only files and image data count. An image dragged out of a browser or Photos as a promise of a file is not taken, and files on the clipboard are read on macOS only.
+- An image copied together with text pastes as the text.
+- A copied image stays when no document uses it any more.
+- A file is copied on the main thread, so a very large one holds up the window for that time.
 - Fonts are the set bundled with Typst.
 - `@preview` package names are not offered in `#import`: that needs the package index, which no question may fetch.
 - Fields after a dot come from evaluating the document, so an error earlier in the file leaves `typst_ide` no value to list. Names in the standard library are still offered.

@@ -7,6 +7,7 @@ Thesio/
 ├── notes/reading.typ      Documents, in any folders you like
 ├── thesis.typ
 ├── library.yaml           The citation library, in Hayagriva format, with an optional `tags` list on each entry
+├── images/plot.png        Images dropped or pasted into a document, beside that document
 ├── references.bib         Any other files; text files open in the editor without a preview
 ├── .thesio/               App state
 │   ├── format.json        {"format": 1}: store::FORMAT

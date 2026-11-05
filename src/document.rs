@@ -16,6 +16,7 @@ use gpui::*;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
+use thesio_core::images::Incoming;
 use thesio_core::paths;
 use thesio_core::references::{note_link, note_link_at, note_links};
 
@@ -148,7 +149,24 @@ impl Workspace {
             }
             SourceEvent::Completed(CompletionKind::Citation) => if let Some(id) = self.current().map(str::to_string) { self.citation_added(&id, cx); },
             SourceEvent::Completed(_) => {}
+            SourceEvent::Images(images) => if let Some(id) = self.current().map(str::to_string) { self.add_images(&id, editor, images, cx); },
         }
+    }
+
+    /// Copies `images` beside `document` and puts their figures at the caret of
+    /// `editor`, which shows it. One that cannot be copied says so and the rest go on.
+    pub(crate) fn add_images(&mut self, document: &str, editor: &Entity<SourceEditor>, images: &[Incoming], cx: &mut Context<Self>) {
+        let mut paths = vec![];
+        for image in images {
+            let added = self.store.borrow_mut().add_image(document, image);
+            match added {
+                Ok(path) => paths.push(path),
+                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{e:#}"), cx),
+            }
+        }
+        if paths.is_empty() { return; }
+        self.refresh_entries(cx);
+        editor.update(cx, |editor, cx| editor.insert_figures(&paths, cx));
     }
 
     fn on_preview_event(&mut self, _: &Entity<Preview>, event: &PreviewEvent, window: &mut Window, cx: &mut Context<Self>) {

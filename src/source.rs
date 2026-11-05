@@ -11,6 +11,8 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, time::Duratio
 use thesio_core::buffer::{Buffer, Change, EditKind, difference, follow, stretch};
 use thesio_core::bibliography;
 use thesio_core::ide::{Hover, word_around};
+use thesio_core::images::{Incoming, figure_place, figures};
+use thesio_core::quote::block_glue;
 use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
@@ -88,6 +90,8 @@ pub enum SourceEvent {
     Follow(usize),
     /// A completion was accepted.
     Completed(CompletionKind),
+    /// Images were dropped or pasted. The host copies them and answers with `insert_figures`.
+    Images(Vec<Incoming>),
 }
 
 /// What asked the popup to follow the caret. Only typing or asking opens it,
@@ -384,10 +388,22 @@ impl SourceEditor {
             let tail = if after.is_some_and(char::is_alphanumeric) { " " } else { "" };
             format!("{glue}{markup}{tail}")
         } else {
-            let glue = if before.is_empty() || before.ends_with("\n\n") { "" } else if before.ends_with('\n') { "\n" } else { "\n\n" };
-            format!("{glue}{markup}\n\n")
+            format!("{}{markup}\n\n", block_glue(before))
         };
         self.insert(&text, EditKind::Other, cx);
+    }
+
+    /// Replaces the selection with a figure for each path, as one step to undo,
+    /// with the caret in the first caption and Tab reaching the others.
+    pub fn insert_figures(&mut self, paths: &[String], cx: &mut Context<Self>) {
+        let sel = self.buffer.sel.clone();
+        let text = self.buffer.text();
+        let sel = if sel.is_empty() { let place = figure_place(text, sel.start); place..place } else { sel };
+        let (inserted, captions) = figures(paths, &text[..sel.start], &text[sel.end..]);
+        let Some(first) = captions.first().map(|caption| sel.start + caption) else { return };
+        let change = self.buffer.replace_selecting(sel.clone(), &inserted, first..first, EditKind::Other);
+        self.changed(change, Trigger::Moved, cx);
+        self.stops = captions[1..].iter().map(|caption| sel.start + caption..sel.start + caption).collect();
     }
 
     /// Replaces rows, keeping the view: `splice` sends a list whose top row is
@@ -776,7 +792,13 @@ impl SourceEditor {
 
     fn on_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.selecting { self.move_caret(Place::Extend(self.offset_at(event.position)), false, cx); }
+        else if cx.has_active_drag() { self.stop_pointing(cx); }
         else { self.point_at(self.text_at(event.position), cx); }
+    }
+
+    fn on_file_drop(&mut self, files: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus(window);
+        cx.emit(SourceEvent::Images(files.paths().iter().cloned().map(Incoming::File).collect()));
     }
 
     fn on_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) { self.selecting = false; }
@@ -938,6 +960,8 @@ impl SourceEditor {
         }
     }
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let images = if self.typst { crate::system::pasted_images(cx) } else { vec![] };
+        if !images.is_empty() { return cx.emit(SourceEvent::Images(images)); }
         if let Some(text) = crate::system::paste(cx) {
             self.insert(&plain_newlines(&text), EditKind::Other, cx);
         }
@@ -1061,6 +1085,7 @@ impl Render for SourceEditor {
             .on_action(cx.listener(Self::completion_dismiss))
             .on_action(cx.listener(Self::hover_dismiss))
             .on_action(cx.listener(|e, _: &CompletionTrigger, _, cx| e.refresh_completion(Trigger::Asked, cx)))
+            .when(self.typst, |d| d.drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::fill_hover())).on_drop(cx.listener(Self::on_file_drop)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_down))
             .on_mouse_move(cx.listener(Self::on_move))
             .on_hover(cx.listener(|e, hovered: &bool, _, cx| if !hovered { e.stop_pointing(cx); }))

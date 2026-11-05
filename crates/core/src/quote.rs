@@ -5,6 +5,11 @@ use crate::typst_source::escape_markup;
 /// Quotes of this many words or more stand as a block.
 const BLOCK_WORDS: usize = 40;
 
+/// What separates a block from the text `before` it, so it stands as a paragraph.
+pub fn block_glue(before: &str) -> &'static str {
+    if before.is_empty() || before.ends_with("\n\n") { "" } else if before.ends_with('\n') { "\n" } else { "\n\n" }
+}
+
 /// `raw` as read from a PDF: line-end hyphens joined, ligatures spelled out,
 /// whitespace collapsed. PDFKit turns line breaks into spaces, so "exam- ple"
 /// is taken for a break and "well- known" needs the user's eye. Suspended

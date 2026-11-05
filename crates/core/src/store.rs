@@ -4,9 +4,11 @@
 //! files move to `.trash/`.
 
 use crate::history::Versions;
+use crate::images::{IMAGES_DIR, Incoming};
 use crate::paths::{self, EXTENSION, STATE_DIR, VaultItem, base_name, document_name, document_title, is_document, join, parent_of, visit_vault, write_atomic};
 use crate::project::Documents;
 use crate::references::rewrite_paths;
+use crate::typst_source::relative;
 use crate::time::{DAY, now, now_ms};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 const TRASH_DIR: &str = ".trash";
+/// How far numbering a taken name goes before giving up.
+const MAX_NUMBERED: u32 = 10_000;
 const FORMAT_FILE: &str = "format.json";
 const INDEX_FILE: &str = "index.json";
 const TRASH_FILE: &str = "trash.json";
@@ -198,6 +202,12 @@ fn renamed_file(title: &str, typst: bool) -> String {
     document_name(document_title(&stem))
 }
 
+/// `stem`'s `n`th name, for when the ones before it are taken.
+fn numbered_name(stem: &str, extension: Option<&str>, n: u32) -> String {
+    let numbered = if n == 0 { stem.to_string() } else { format!("{stem} {n}") };
+    extension.map_or(numbered.clone(), |e| format!("{numbered}.{e}"))
+}
+
 impl Store {
     /// `THESIO_HOME`, else a folder of its own in the user's Documents.
     pub fn root_dir() -> PathBuf {
@@ -280,12 +290,8 @@ impl Store {
 
     /// A free name for `stem` in `parent`.
     fn free_id(&self, parent: Option<&str>, stem: &str, extension: Option<&str>) -> Result<String> {
-        let name = |n: u32| {
-            let numbered = if n == 0 { stem.to_string() } else { format!("{stem} {n}") };
-            extension.map_or(numbered.clone(), |e| format!("{numbered}.{e}"))
-        };
-        for n in 0..10_000 {
-            let id = join(parent, &name(n));
+        for n in 0..MAX_NUMBERED {
+            let id = join(parent, &numbered_name(stem, extension, n));
             if !self.path(&id)?.try_exists()? { return Ok(id); }
         }
         anyhow::bail!("Too many files named {stem}")
@@ -363,6 +369,30 @@ impl Store {
         if let Some(dir) = target.parent() { std::fs::create_dir_all(dir)?; }
         std::fs::copy(from, target)?;
         Ok(())
+    }
+
+    /// Copies `image` into `images/` beside `document` and returns its path as
+    /// the document writes it. A file with the same bytes is used as it is, and
+    /// no other file is replaced.
+    pub fn add_image(&mut self, document: &str, image: &Incoming) -> Result<String> {
+        let image = image.read()?;
+        let folder = join(parent_of(document), IMAGES_DIR);
+        let stem = file_stem(&image.stem);
+        std::fs::create_dir_all(self.path(&folder)?)?;
+        for n in 0..MAX_NUMBERED {
+            let id = join(Some(&folder), &numbered_name(&stem, Some(&image.extension), n));
+            let path = self.path(&id)?;
+            let same = match std::fs::symlink_metadata(&path) {
+                Ok(found) => found.is_file() && found.len() == image.bytes.len() as u64 && std::fs::read(&path)? == image.bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    write_atomic(&path, &image.bytes)?;
+                    true
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if same { return Ok(relative(&paths::dir_parts(document), &id)); }
+        }
+        anyhow::bail!("Too many files named {stem}")
     }
 
     pub fn rename(&mut self, id: &str, title: &str) -> Result<Moved> {
