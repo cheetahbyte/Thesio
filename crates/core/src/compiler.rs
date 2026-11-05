@@ -462,9 +462,9 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    fn chapters() -> Compilation {
+    fn chapters(name: &str) -> Compilation {
         let page_of_text = "Word ".repeat(600);
-        let root = vault("jump", &[
+        let root = vault(name, &[
             ("main.typ", "#include \"chapters/one.typ\"\n#pagebreak()\n#include \"chapters/two.typ\"\n#pagebreak()\n#include \"chapters/three.typ\"\n"),
             ("chapters/three.typ", "= Third\n"),
             ("chapters/one.typ", "First chapter.\n"),
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn the_preview_and_the_source_point_at_each_other() {
-        let compilation = chapters();
+        let compilation = chapters("jump-pages");
         let (page, y) = compilation.position_of("chapters/two.typ", 3).unwrap();
         assert_eq!(page, 1);
         let Some(PageTarget::Source(path, offset)) = compilation.target_at(page, 75., y - 3.) else { panic!("no source there") };
@@ -487,17 +487,17 @@ mod tests {
 
     #[test]
     fn blank_lines_take_the_place_of_the_text_before_them() {
-        assert_eq!(chapters().position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
+        assert_eq!(chapters("jump-text").position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
     }
 
     #[test]
     fn a_heading_marker_takes_the_place_of_the_heading() {
-        assert_eq!(chapters().position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
+        assert_eq!(chapters("jump-heading").position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
     }
 
     #[test]
     fn a_click_on_a_margin_lands_on_nothing() {
-        assert_eq!(chapters().target_at(1, 1., 1.), None);
+        assert_eq!(chapters("jump-margin").target_at(1, 1., 1.), None);
     }
 
     #[test]
