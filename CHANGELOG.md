@@ -24,7 +24,6 @@
 - Stop before changing a `library.yaml` that cannot be read back, instead of replacing it with no earlier version kept.
 - Keep a file's versions when a rename changes its extension.
 - Undo past a generated edit instead of stopping there.
-- Leave a `#bibliography` with several sources or a URL alone: it was mistaken for one linking the library.
 - Treat a pasted lone carriage return as a new line in the editor.
 - Name Control, not Command, in Windows tooltips.
 - Use UTC, not UTC+8, for dates when the local offset is unknown.
