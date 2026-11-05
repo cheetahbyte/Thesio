@@ -23,14 +23,14 @@ pub struct Preferences {
     pub quick_hotkey: bool,
     /// Light or dark look: "light", "dark", or empty to follow the system.
     pub appearance: String,
-    /// Keep `library.yaml` out of the sidebar. The file stays in the vault.
-    pub hide_library_file: bool,
+    /// Keep `library.yaml` and the papers out of the sidebar. They stay in the vault.
+    pub hide_library_files: bool,
     /// Sent to Unpaywall, which requires one, to find open-access papers.
     pub unpaywall_email: String,
 }
 
 impl Default for Preferences {
-    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_file: false, unpaywall_email: String::new() } }
+    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_files: true, unpaywall_email: String::new() } }
 }
 
 
@@ -231,7 +231,7 @@ impl Workspace {
             return;
         }
         if p.appearance != old.appearance { apply_appearance(&p.appearance); }
-        if sync_dark(cx) || p.hide_library_file != old.hide_library_file {
+        if sync_dark(cx) || p.hide_library_files != old.hide_library_files {
             refresh_all(self, cx);
         }
         cx.notify();
@@ -347,13 +347,13 @@ impl Workspace {
         let reveal = if cfg!(target_os = "macos") { "Show in Finder" } else if cfg!(target_os = "windows") {
             "Show in File Explorer"
         } else { "Show in File Manager" };
-        let hide_library_file = prefs().hide_library_file;
+        let hide_library_files = prefs().hide_library_files;
         div().w_full().flex().flex_col().gap(px(8.))
             .child(group(None, vec![
                 row("Vault folder", Some(location.into()),
                     button("reveal-library", reveal).on_click(|_, _, cx| cx.reveal_path(&crate::store::Store::root_dir()))).into_any_element(),
-                row("Hide library.yaml", Some("Keeps the citation library out of the sidebar. The file stays in the vault.".into()),
-                    switch("hide-library-file", hide_library_file).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_file = !hide_library_file, cx)))).into_any_element(),
+                row("Hide library files", Some("Keeps library.yaml and the sources folder out of the sidebar. They stay in the vault.".into()),
+                    switch("hide-library-files", hide_library_files).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_files = !hide_library_files, cx)))).into_any_element(),
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
                     ui::field_well().w(px(220.)).child(self.citations.email.clone())).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),

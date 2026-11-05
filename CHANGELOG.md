@@ -11,7 +11,7 @@
 - Add a right-click menu to Library rows: Edit, Cite, Copy Key, and Delete.
 - Remove file icons from the sidebar; folders keep theirs.
 - Remove the empty General settings page.
-- Add a Documents setting that hides `library.yaml` from the sidebar.
+- Hide `library.yaml` and `sources/` from the sidebar by default, with a Documents setting to show them.
 - Fix the dialog backdrop brightening the window in dark mode.
 
 - Fix a crash when opening destructive confirmation dialogs.

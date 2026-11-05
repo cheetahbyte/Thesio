@@ -117,8 +117,12 @@ impl Workspace {
     /// What the file list shows and "select all" takes: a hidden file must not
     /// be caught by a batch delete or move the user cannot see.
     fn listed_entries(&self) -> impl Iterator<Item = &Entry> {
-        let hide = crate::settings::prefs().hide_library_file;
-        self.entries.iter().filter(move |e| !(hide && e.id == crate::library::LIBRARY_FILE))
+        use crate::library::{LIBRARY_FILE, PAPERS_DIR};
+        let hide = crate::settings::prefs().hide_library_files;
+        let inside = format!("{PAPERS_DIR}/");
+        // A `sources` folder holding anything else is the user's own.
+        let papers_only = !self.entries.iter().any(|e| e.id.starts_with(&inside) && !e.id.ends_with(".pdf"));
+        self.entries.iter().filter(move |e| !(hide && (e.id == LIBRARY_FILE || papers_only && (e.id == PAPERS_DIR || e.id.starts_with(&inside)))))
     }
 
     pub(crate) fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
