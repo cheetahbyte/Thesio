@@ -247,7 +247,7 @@ impl Store {
     pub fn root(&self) -> &Path { &self.root }
 
     /// The file behind `id`, refusing paths that leave the vault.
-    fn path(&self, id: &str) -> Result<PathBuf> {
+    pub fn path(&self, id: &str) -> Result<PathBuf> {
         let relative = Path::new(id);
         anyhow::ensure!(!id.is_empty() && relative.components().all(|c| matches!(c, Component::Normal(_))), "Invalid vault path: {id}");
         Ok(self.root.join(relative))
@@ -374,6 +374,15 @@ impl Store {
             }
         }
         rewritten
+    }
+
+    /// Copies the outside file `from` to `id`, never over an existing file.
+    pub fn attach(&mut self, from: &Path, id: &str) -> Result<()> {
+        let target = self.path(id)?;
+        anyhow::ensure!(!target.try_exists()?, "{id} already exists");
+        if let Some(dir) = target.parent() { std::fs::create_dir_all(dir)?; }
+        std::fs::copy(from, target)?;
+        Ok(())
     }
 
     /// Renames a file or folder in place. Returns its new id and the documents

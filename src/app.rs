@@ -9,7 +9,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
-use crate::ui::{TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
+use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -159,6 +159,7 @@ pub enum View {
     Doc,
     Home,
     Library,
+    Sources,
     Trash,
     Settings,
 }
@@ -431,10 +432,14 @@ impl Workspace {
         let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string(), main)));
         if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
         self.editor_subs = vec![
-            cx.subscribe_in(&editor, window, |this, editor, _: &SourceEvent, window, cx| {
-                let text = editor.read(cx).buffer.text().to_string();
-                if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
-                this.schedule_save(window, cx);
+            cx.subscribe_in(&editor, window, |this, editor, event: &SourceEvent, window, cx| match event {
+                SourceEvent::Changed => {
+                    let text = editor.read(cx).buffer.text().to_string();
+                    if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
+                    this.schedule_save(window, cx);
+                }
+                SourceEvent::Citing => this.offer_sources(cx),
+                SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
             }),
         ];
         if let Some(preview) = &preview {
@@ -680,7 +685,7 @@ impl Workspace {
         if view == View::Trash {
             self.trash = self.store.list_trash();
         }
-        if view == View::Library {
+        if matches!(view, View::Library | View::Sources) {
             self.reload_library();
         }
         self.view = view;
@@ -871,7 +876,7 @@ impl Workspace {
             .w(px(width)).h(px(32.)).no_drag().flex().items_center().gap(px(8.)).px(px(10.))
             .rounded(px(9.)).bg(Theme::fill_hover())
             .cursor_pointer().hover(|s| s.bg(Theme::fill_hover_strong()))
-            .child(icon("search", 15., Theme::text_caption()))
+            .child(icon(Icon::Search, 15., Theme::text_caption()))
             .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
             .when(width >= 200., |d| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J").replace(" + ", " "))))
             .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
@@ -895,7 +900,7 @@ impl Workspace {
             .map(|id| self.ancestors(id).iter().map(|e| (e.id.clone(), display_title(&e.title))).collect())
             .unwrap_or_default();
         let mut crumbs: Vec<AnyElement> = vec![];
-        let sep = || div().mx(px(3.)).flex_none().child(icon("chevron-right", 12., theme::c(craft::N500))).into_any_element();
+        let sep = || div().mx(px(3.)).flex_none().child(icon(Icon::ChevronRight, 12., theme::c(craft::N500))).into_any_element();
         for (i, (id, name)) in chain.iter().enumerate() {
             if chain.len() > 2 && i > 0 && i < chain.len() - 1 {
                 if i == 1 {
@@ -965,7 +970,7 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::fill_hover_strong()))
                         .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                        .child(icon("panel-left-open", 17., Theme::icon()))
+                        .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
                         .on_click(cx.listener(|w, _, _, cx| {
                             w.sidebar_open = true;
                             cx.notify();
@@ -977,7 +982,7 @@ impl Workspace {
                         .hover(|s| s.bg(Theme::fill_hover_strong()))
                         .active(|s| s.bg(Theme::fill_pressed()))
                         .tip("Back to Home", None)
-                        .child(icon("home", 18., Theme::icon()))
+                        .child(icon(Icon::Home, 18., Theme::icon()))
                         .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Home, cx))),
                 )
                 .child(div().mx(px(12.)).child(divider()))
@@ -1026,7 +1031,7 @@ impl Workspace {
                         d.child(
                             // No tooltip while its dropdown is open; the menu hangs
                             // from this button's right edge.
-                            seg("doc-more", "ellipsis")
+                            seg("doc-more", Icon::Ellipsis)
                                 .relative()
                                 .when(self.doc_menu, |d| d.bg(Theme::fill_hover()))
                                 .when(!self.doc_menu, |d| d.tip("More", None))
@@ -1038,13 +1043,13 @@ impl Workspace {
                         )
                     })
                     .child(
-                        seg("doc-search", "search")
+                        seg("doc-search", Icon::Search)
                             .tip_label("Search (⌘ + J)".into(), TipSide::Below)
                             .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx))),
                     )
                     .child(
                         // Straight to a new document: no New menu, as Import is rare.
-                        seg("doc-new", "plus").tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
+                        seg("doc-new", Icon::Plus).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
                     ).into_any_element()
             )
     }
@@ -1098,6 +1103,7 @@ impl Render for Workspace {
                 .into_any_element(),
             View::Home => self.render_home(window, cx),
             View::Library => self.render_library(cx),
+            View::Sources => self.render_sources(cx),
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(cx),
         };
@@ -1105,6 +1111,8 @@ impl Render for Workspace {
         let entry_form = self.render_entry_form(cx);
         let cite_picker = self.render_cite_picker(cx);
         let lookup = self.render_lookup(cx);
+        let library_menu = self.render_library_menu(window, cx);
+        let library_row_menu = self.render_library_row_menu(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
         // surface beside it; the change of value is the only line between
@@ -1192,6 +1200,8 @@ impl Render for Workspace {
             .children(entry_form)
             .children(cite_picker)
             .children(lookup)
+            .children(library_menu)
+            .children(library_row_menu)
             .children(search)
             .children(resize_overlay)
             .children(toast)

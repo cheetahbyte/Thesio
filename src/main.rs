@@ -10,6 +10,7 @@ mod clipboard;
 mod devtools;
 mod docmenu;
 mod home;
+mod icon;
 mod input;
 #[cfg(target_os = "macos")]
 mod native_header;

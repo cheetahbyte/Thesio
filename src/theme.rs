@@ -111,7 +111,7 @@ pub fn mix(a: u32, b: u32, t: f32) -> Hsla {
 /// (`N*` neutrals, `B*` accent, `R*` / `O*` reds and oranges), so every
 /// `craft::N300` still means "border", `N600` "secondary text" and so on.
 /// Neutrals are measured greys; `B*` is built around the accent
-/// (#3A85F7); `R*` / `O*` are Tailwind v4 ramps.
+/// (system blue, #007AFF); `R*` / `O*` are Tailwind v4 ramps.
 #[allow(dead_code)]
 pub mod craft {
     pub const N00: u32 = 0xffffff;
@@ -146,9 +146,9 @@ pub mod craft {
     pub const B350: u32 = 0x80aef9;
     pub const B400: u32 = 0x5d99f8;
     /// The accent: caret, primary button, menu highlight.
-    pub const B500: u32 = 0x3a85f7;
-    pub const B600: u32 = 0x2f74e0;
-    pub const B700: u32 = 0x2660c0;
+    pub const B500: u32 = 0x007aff;
+    pub const B600: u32 = 0x006be0;
+    pub const B700: u32 = 0x005bbf;
     pub const B800: u32 = 0x1d4b96;
     pub const B900: u32 = 0x14356a;
     pub const R50: u32 = 0xfef2f2;
@@ -259,6 +259,10 @@ impl Theme {
     pub fn fill_hover() -> Hsla { ca(craft::N1000, 0.045) }
     pub fn fill_hover_strong() -> Hsla { ca(craft::N1000, 0.06) }
     pub fn fill_pressed() -> Hsla { ca(craft::N1000, 0.09) }
+    /// Grouped rows: settings and forms, set off by tone instead of an outline.
+    pub fn fill_group() -> Hsla { ca(craft::N1000, 0.03) }
+    /// A filled control held down.
+    pub fn fill_active() -> Hsla { ca(craft::N1000, 0.13) }
     /// Text selection: the accent, light.
     pub fn selection() -> Hsla { ca(craft::B500, 0.24) }
     pub fn scrollbar_thumb() -> Hsla { ca(craft::N1000, 0.22) }

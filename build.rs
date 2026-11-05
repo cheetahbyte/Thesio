@@ -66,6 +66,8 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
     for e in std::fs::read_dir(dir).unwrap().flatten() {
         let p = e.path();
         if p.is_dir() {
+            // macOS draws its icons as SF Symbols (src/icon.rs).
+            if p == root.join("icons") && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") { continue; }
             collect(root, &p, out);
         } else {
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");

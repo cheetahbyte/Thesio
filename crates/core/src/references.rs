@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 use typst::syntax::ast::{self, AstNode};
-use typst::syntax::{LinkedNode, Source, SyntaxKind};
+use typst::syntax::{LinkedNode, Side, Source, SyntaxKind, is_id_continue};
 
 /// Functions whose first arguments are vault paths.
 const PATH_FUNCTIONS: &[&str] = &["image", "bibliography", "read", "csv", "json", "yaml", "toml", "xml", "cbor", "plugin"];
@@ -142,6 +142,22 @@ pub fn cited_keys(text: &str) -> Vec<String> {
         _ => {}
     });
     keys
+}
+
+/// The `@key` being written at `caret`, `@` included. An `@` after a word is an
+/// email address, and raw text, strings, comments, and math hold no citations.
+pub fn citation_at(text: &str, caret: usize) -> Option<Range<usize>> {
+    let in_key = |c: char| is_id_continue(c) || matches!(c, '.' | ':');
+    let (head, tail) = text.split_at_checked(caret)?;
+    let at = head.trim_end_matches(in_key).strip_suffix('@')?.len();
+    if text[..at].chars().next_back().is_some_and(char::is_alphanumeric) { return None; }
+    let end = caret + tail.find(|c| !in_key(c)).unwrap_or(tail.len());
+    let source = Source::detached(text);
+    let root = LinkedNode::new(source.root());
+    let leaf = root.leaf_at(at + 1, Side::Before)?;
+    // Typst only lexes `@` as a reference once a key follows it.
+    let markup = leaf.kind() == SyntaxKind::RefMarker || leaf.kind() == SyntaxKind::Text && leaf.parent_kind() != Some(SyntaxKind::Raw);
+    markup.then(|| at..at + text[at..end].trim_end_matches(['.', ':']).len())
 }
 
 /// Vault paths of the files `text`, at vault path `file`, includes directly.

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Redesign the interface: native SF Symbols on macOS, calmer buttons and fields, and grouped forms.
+- Simplify the Library toolbar: Add opens Add by Identifier, with manual entry inside it, and Import and Export move to a "…" menu.
+- Show empty and no-result states in the Library, and prose instead of Typst source on Home cards.
+- Complete citations in the editor: typing `@` offers matching Library entries, and accepting one adds a bibliography if the document has none.
+- Add a Sources page. Adding a source downloads an open-access PDF to `sources/`, from arXiv or, with an email in Settings, Unpaywall.
+- Add PDFs by hand from Sources or a Library row, and link unlinked papers to a source.
+- Add a right-click menu to Library rows: Edit, Cite, Copy Key, and Delete.
+- Remove file icons from the sidebar; folders keep theirs.
+- Remove the empty General settings page.
+- Add a Documents setting that hides `library.yaml` from the sidebar.
+- Fix the dialog backdrop brightening the window in dark mode.
+
 - Fix a crash when opening destructive confirmation dialogs.
 
 - Optimize the application crate in debug builds to reduce macOS unwind data.

@@ -30,7 +30,7 @@ main.rs: window
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
 | `library.rs` | The citation library, BibLaTeX import and export, and the generated bibliography block. |
-| `lookup.rs` | Fetches entries by identifier. The only code that reaches the network. |
+| `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
 | `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
 | `time.rs` | Local dates without a time zone database. |
 
@@ -63,6 +63,8 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 `library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting an entry asks first and says how many documents cite it.
 
 Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Keys are generated as surname and year.
+
+Adding a source also looks for its paper: arXiv first, then the locations Unpaywall lists, when an email is set in Settings. Only PDFs are kept, as `sources/<key>.pdf`, and the Sources page lists that folder. A paper follows its entry when the key changes, and stays when the entry is deleted. A paper can also be added by hand. A PDF in `sources/` whose name matches no key shows as unlinked until it is linked to a source.
 
 A document has one of three bibliography modes, read from its text (`library::mode`):
 

@@ -30,6 +30,7 @@ When upgrading upstream, reapply each patch in the tables and retain its comment
 | 12 | `platform/mac/text_system.rs` | For requested italics without an italic face, including CoreText fallback fonts, use a slanted twin FontId. Shear glyphs by 14° during rasterization, matching WebKit's synthetic oblique angle, and widen their bounds. | Chinese italic text slants like browser text; PingFang has no italic face and previously displayed it upright. |
 | 13 | `text_system/line.rs` | Include centered and right-aligned glyph positions and oversized text in scene ordering bounds for text and background decorations. | Image captions no longer show through floating toolbars. |
 | 14 | `platform/mac/text_system.rs`, `platform/mac.rs`, `platform.rs` | Allow `font_ids_by_postscript_name` to return multiple FontIds per name. Match CoreText fallback fonts by glyph count; add `check_fallback_glyphs` for `editor::text::tests`. | System fallback PingFang (`PingFangUI.ttc`) and downloaded `PingFang.ttc` both use `PingFangSC-Regular` but have different glyph tables. Name-only lookup previously selected the wrong font and rendered incorrect Chinese characters. |
+| 15 | `assets.rs`, `svg_renderer.rs` | Add `AssetSource::render_mask`, which `SvgRenderer::render` tries before loading an SVG. | SF Symbols are drawn by AppKit at the exact device size and go through the normal tinted sprite path. |
 
 ## taffy 0.9.0
 

@@ -8,7 +8,7 @@ use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
 pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, row_hover, scrim, secondary_button};
 use crate::theme::{self, Theme};
-use crate::ui::{ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::references::cited_keys;
 
@@ -24,7 +24,7 @@ fn remaining(deleted: u64) -> String {
 /// The page header, as tall as the document's so the header pills sit in
 /// the same place: a 17pt semibold view title, and the open-sidebar
 /// button when the sidebar is hidden.
-pub(crate) fn page_header(ws: &Workspace, title: &'static str, left: f32, cx: &mut Context<Workspace>) -> Stateful<Div> {
+pub(crate) fn page_header(ws: &Workspace, title: &'static str, count: Option<usize>, left: f32, cx: &mut Context<Workspace>) -> Stateful<Div> {
     div()
         .id("page-header")
         .h(px(crate::app::HEADER_H))
@@ -52,7 +52,7 @@ pub(crate) fn page_header(ws: &Workspace, title: &'static str, left: f32, cx: &m
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::fill_hover_strong()))
                     .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                    .child(icon("panel-left-open", 17., Theme::icon()))
+                    .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
                     .on_click(cx.listener(|w, _, _, cx| {
                         w.sidebar_open = true;
                         cx.notify();
@@ -60,11 +60,12 @@ pub(crate) fn page_header(ws: &Workspace, title: &'static str, left: f32, cx: &m
             )
         })
         .child(div().text_size(px(17.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
+        .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
         .child(div().flex_1())
 }
 
-/// Centred empty-state illustration and caption.
-pub(crate) fn empty_state(illus: &'static str, text: &'static str) -> Div {
+/// Centred empty state: a large glyph, a title, and a caption.
+pub(crate) fn empty_state(glyph: Icon, title: &'static str, text: &'static str) -> Div {
     div()
         .flex_1()
         .flex()
@@ -72,8 +73,9 @@ pub(crate) fn empty_state(illus: &'static str, text: &'static str) -> Div {
         .items_center()
         .justify_center()
         .pb(px(64.))
-        .child(img(illus).size(px(120.)))
-        .child(div().mt(px(16.)).text_size(px(13.)).line_height(px(20.)).text_color(Theme::text_caption()).child(text))
+        .child(icon(glyph, 44., Theme::text_placeholder()))
+        .child(div().mt(px(14.)).text_size(px(15.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().mt(px(2.)).text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(text))
 }
 
 impl Workspace {
@@ -86,14 +88,14 @@ impl Workspace {
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let header = page_header(self, "Trash", 26., cx).child(
-            crate::ui::header_icon("trash-search", "search")
+        let header = page_header(self, "Trash", None, 26., cx).child(
+            crate::ui::header_icon("trash-search", Icon::Search)
                 .tip_label("Search (⌘ + J)".into(), crate::ui::TipSide::Below)
                 .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(crate::app::FocusSearch), cx))),
         );
         let mut page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
         if self.trash.is_empty() {
-            return page.child(empty_state("illus/empty-trash.svg", "Trash is empty")).into_any_element();
+            return page.child(empty_state(Icon::Delete, "Trash is empty", "Deleted documents stay here for a while.")).into_any_element();
         }
         // The list: 13pt tertiary headers over a hairline,
         // 15pt titles, 13pt secondary cells.
@@ -134,7 +136,7 @@ impl Workspace {
                 .cursor_pointer()
                 .hover(|s| s.bg(Theme::fill_hover_strong()))
                 .when(menu_open, |d| d.bg(Theme::fill_hover_strong()))
-                .child(icon("ellipsis", 16., Theme::text_caption()))
+                .child(icon(Icon::Ellipsis, 16., Theme::text_caption()))
                 .on_click(cx.listener(move |w, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     let p = ev.position();
@@ -175,7 +177,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap(px(4.))
-                            .child(icon("library", 16., Theme::text_placeholder()))
+                            .child(icon(Icon::Library, 16., Theme::text_placeholder()))
                             .child(div().min_w_0().text_size(px(13.)).text_color(Theme::text_caption()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(self.trash_location(t)))),
                     )
                     .child(div().w(px(168.)).flex_none().pl(px(20.)).text_size(px(13.)).text_color(Theme::text_caption()).child(remaining(t.deleted)))
@@ -189,7 +191,7 @@ impl Workspace {
     pub(crate) fn render_trash_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (id, pos, corner) = self.trash_menu.clone()?;
         // The native context menu: 26pt rows, accent highlight with a white label.
-        let item = |key: &'static str, ic: &'static str, label: &'static str, color: Hsla| {
+        let item = |key: &'static str, ic: Icon, label: &'static str, color: Hsla| {
             let g = SharedString::from(key);
             crate::ui::menu_row(key, g.clone())
                 .text_color(color)
@@ -206,12 +208,12 @@ impl Workspace {
                 w.trash_menu = None;
                 cx.notify();
             }))
-            .child(item("tm-restore", "restore", "Restore", Theme::text()).on_click(cx.listener(move |w, _, _, cx| {
+            .child(item("tm-restore", Icon::Restore, "Restore", Theme::text()).on_click(cx.listener(move |w, _, _, cx| {
                 w.trash_menu = None;
                 w.confirm = Some(Confirm::Restore(a.clone()));
                 cx.notify();
             })))
-            .child(item("tm-purge", "bin", "Delete permanently", Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
+            .child(item("tm-purge", Icon::Delete, "Delete permanently", Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
                 w.trash_menu = None;
                 w.confirm = Some(Confirm::Purge(b.clone()));
                 cx.notify();

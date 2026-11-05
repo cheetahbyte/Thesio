@@ -3,8 +3,8 @@
 //! each page a column of grouped rows. Only what a
 //! user really needs to change lives here.
 
-use crate::{app::{View, Workspace}, theme::{self, craft, Theme}, ui};
-use crate::ui::{TitleBarExt, TipExt};
+use crate::{app::{View, Workspace}, theme::{self, Theme}, ui};
+use crate::ui::{Icon, TitleBarExt, TipExt};
 use crate::sidebar as sb;
 use gpui::{prelude::FluentBuilder, *};
 use serde::{Deserialize, Serialize};
@@ -23,10 +23,14 @@ pub struct Preferences {
     pub quick_hotkey: bool,
     /// Light or dark look: "light", "dark", or empty to follow the system.
     pub appearance: String,
+    /// Keep `library.yaml` out of the sidebar. The file stays in the vault.
+    pub hide_library_file: bool,
+    /// Sent to Unpaywall, which requires one, to find open-access papers.
+    pub unpaywall_email: String,
 }
 
 impl Default for Preferences {
-    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new() } }
+    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_file: false, unpaywall_email: String::new() } }
 }
 
 
@@ -118,32 +122,30 @@ pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
 // ---- the view
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Page { #[default] General, Appearance, Shortcuts, Library, About }
+pub enum Page { #[default] Appearance, Shortcuts, Library, About }
 
 impl Page {
     fn title(self) -> &'static str {
         match self {
-            Page::General => "General",
             Page::Appearance => "Appearance",
             Page::Shortcuts => "Shortcuts",
             Page::Library => "Documents",
             Page::About => "About",
         }
     }
-    fn icon(self) -> &'static str {
+    fn icon(self) -> Icon {
         match self {
-            Page::General => "view-settings",
-            Page::Appearance => "palette",
-            Page::Shortcuts => "keyboard",
-            Page::Library => "storage",
-            Page::About => "info",
+            Page::Appearance => Icon::Palette,
+            Page::Shortcuts => Icon::Keyboard,
+            Page::Library => Icon::Storage,
+            Page::About => Icon::Info,
         }
     }
 }
 
-/// The sidebar list, one evenly spaced run (six rows need no unlabelled
+/// The sidebar list, one evenly spaced run (five rows need no unlabelled
 /// groups); `None` is Trash (its own view, shown with this sidebar).
-const NAV: [Option<Page>; 6] = [Some(Page::General), Some(Page::Appearance), Some(Page::Shortcuts), Some(Page::Library), None, Some(Page::About)];
+const NAV: [Option<Page>; 5] = [Some(Page::Appearance), Some(Page::Shortcuts), Some(Page::Library), None, Some(Page::About)];
 
 // ---- controls (switch on the accent, 30pt buttons, grouped rows)
 
@@ -155,12 +157,12 @@ pub(crate) fn group(title: Option<&'static str>, rows: Vec<AnyElement>) -> Div {
     let n = rows.len();
     div().w_full().flex().flex_col().gap(px(8.))
         .children(title.map(caption))
-        .child(div().w_full().flex().flex_col().rounded(px(12.)).border_1().border_color(Theme::line_border()).bg(crate::theme::raised(Theme::bg_body())).overflow_hidden()
+        .child(div().w_full().flex().flex_col().rounded(px(12.)).bg(Theme::fill_group()).overflow_hidden()
             .children(rows.into_iter().enumerate().map(move |(i, r)| div().w_full().flex().flex_col().when(i + 1 < n, |d| d.border_b_1().border_color(ui::list_line())).child(r))))
 }
 
 pub(crate) fn caption(t: &'static str) -> Div {
-    div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(t)
+    div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text_caption()).child(t)
 }
 
 /// One setting: title and an optional description on the left, the control on the right.
@@ -189,6 +191,14 @@ fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: imp
         }))
 }
 
+/// An on/off switch: the accent when on, the knob at that end.
+fn switch(id: &'static str, on: bool) -> Stateful<Div> {
+    div().id(id).flex_none().w(px(36.)).h(px(20.)).p(px(2.)).flex().items_center().rounded_full().cursor_pointer()
+        .when(on, |d| d.justify_end().bg(Theme::primary()))
+        .when(!on, |d| d.bg(Theme::fill_active()))
+        .child(div().size(px(16.)).rounded_full().bg(gpui::white()).shadow(theme::shadow_button()))
+}
+
 /// A keyboard shortcut chip; `recording` shows it waiting for keys.
 pub(crate) fn keycap(id: impl Into<ElementId>, key: &str, recording: bool) -> Stateful<Div> {
     div().id(id).flex_none().min_w(px(144.)).min_h(px(28.)).px(px(14.)).py(px(4.)).flex().items_center().justify_center().rounded(px(7.)).cursor_pointer()
@@ -205,10 +215,9 @@ pub(crate) fn link_button(id: impl Into<ElementId>, label: &'static str) -> Stat
 }
 
 pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
-    div().id(id).flex_none().h(px(28.)).px(px(12.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
-        .bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::button_border()).shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::N100))).active(|s| s.bg(theme::c(craft::N200)))
-        .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text()).child(label)
+    div().id(id).flex_none().h(px(28.)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
+        .bg(Theme::fill_hover_strong()).hover(|s| s.bg(Theme::fill_pressed())).active(|s| s.bg(Theme::fill_active()))
+        .text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text()).child(label)
 }
 
 impl Workspace {
@@ -222,7 +231,7 @@ impl Workspace {
             return;
         }
         if p.appearance != old.appearance { apply_appearance(&p.appearance); }
-        if sync_dark(cx) {
+        if sync_dark(cx) || p.hide_library_file != old.hide_library_file {
             refresh_all(self, cx);
         }
         cx.notify();
@@ -246,7 +255,7 @@ impl Workspace {
         let in_trash = self.view == View::Trash;
         let nav_row = |page: Option<Page>, cx: &mut Context<Self>| {
             let on = if page.is_some() { page == current } else { in_trash };
-            let (title, icon) = page.map_or(("Trash", "bin"), |p| (p.title(), p.icon()));
+            let (title, icon) = page.map_or(("Trash", Icon::Delete), |p| (p.title(), p.icon()));
             div().id(SharedString::from(format!("settings-nav-{page:?}"))).h(px(sb::ROW_H)).flex().items_center().pl(px(6.)).pr(px(4.)).rounded(px(sb::ROW_R))
                 .text_size(px(13.)).line_height(px(20.)).cursor_pointer()
                 .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
@@ -267,7 +276,7 @@ impl Workspace {
             // Replace Settings with Back, returning to the previous page.
             .child(div().flex_1())
             .child(sb::footer_line())
-            .child(sb::footer_slot(sb::footer_row("ft-back", "arrow-left", "Back").tip("Back", Some("Esc"))
+            .child(sb::footer_slot(sb::footer_row("ft-back", Icon::Back, "Back").tip("Back", Some("Esc"))
                 .on_click(cx.listener(|w, _, _, cx| w.close_settings(cx)))))
             .into_any_element()
     }
@@ -277,16 +286,16 @@ impl Workspace {
     /// switching between the document list and Settings.
     pub(crate) fn header_navigation(&self, cx: &mut Context<Self>) -> AnyElement {
         let open = self.sidebar_open;
-        let bar_button = |id: &'static str, glyph: &'static str| {
+        let bar_button = |id: &'static str, glyph: Icon| {
             div().id(id).no_drag().flex_none().size(px(28.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
                 .hover(move |s| s.bg(if open { Theme::sidebar_hover() } else { Theme::fill_hover_strong() }))
                 .child(ui::icon(glyph, 17., Theme::icon()))
         };
         div().flex().items_center().ml(px(4.)).gap(px(4.))
-            .child(bar_button("settings-collapse", if open { "panel-left-close" } else { "panel-left-open" })
+            .child(bar_button("settings-collapse", Icon::SidebarToggle)
                 .tip(if open { "Hide sidebar" } else { "Show sidebar" }, Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
                 .on_click(cx.listener(|w, _, _, cx| { w.sidebar_open = !w.sidebar_open; cx.notify(); })))
-            .child(bar_button("settings-home", "home").tip("Home", Some(crate::shortcuts::hint("workspace::GoHome", "⌘ + ⌥ + Home")))
+            .child(bar_button("settings-home", Icon::Home).tip("Home", Some(crate::shortcuts::hint("workspace::GoHome", "⌘ + ⌥ + Home")))
                 .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Home, cx))))
             .into_any_element()
     }
@@ -300,7 +309,6 @@ impl Workspace {
     pub(crate) fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let page = self.settings_page;
         let body = match page {
-            Page::General => self.general_page(cx),
             Page::Appearance => self.appearance_page(cx),
             Page::Shortcuts => self.shortcut_settings(cx),
             Page::Library => self.library_page(cx),
@@ -318,10 +326,6 @@ impl Workspace {
                             .when(page == Page::Shortcuts, |d| d.child(self.shortcut_actions(cx))))
                         .child(body))))
             .into_any_element()
-    }
-
-    fn general_page(&self, _cx: &mut Context<Self>) -> AnyElement {
-        div().w_full().flex().flex_col().gap(px(28.)).into_any_element()
     }
 
     fn appearance_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -343,10 +347,15 @@ impl Workspace {
         let reveal = if cfg!(target_os = "macos") { "Show in Finder" } else if cfg!(target_os = "windows") {
             "Show in File Explorer"
         } else { "Show in File Manager" };
+        let hide_library_file = prefs().hide_library_file;
         div().w_full().flex().flex_col().gap(px(8.))
             .child(group(None, vec![
                 row("Vault folder", Some(location.into()),
                     button("reveal-library", reveal).on_click(|_, _, cx| cx.reveal_path(&crate::store::Store::root_dir()))).into_any_element(),
+                row("Hide library.yaml", Some("Keeps the citation library out of the sidebar. The file stays in the vault.".into()),
+                    switch("hide-library-file", hide_library_file).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_file = !hide_library_file, cx)))).into_any_element(),
+                row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
+                    ui::field_well().w(px(220.)).child(self.citations.email.clone())).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
                     button("open-trash", "Open").on_click(cx.listener(|w, _, _, cx| w.show_view(View::Trash, cx)))).into_any_element(),
             ]))

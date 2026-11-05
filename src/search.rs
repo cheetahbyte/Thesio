@@ -8,7 +8,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
 use crate::trash::scrim;
-use crate::ui::{ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::ops::Range;
 
@@ -119,11 +119,11 @@ pub(crate) fn doc_icon() -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(icon("doc", 18., Theme::text_caption()))
+        .child(icon(Icon::Document, 18., Theme::text_caption()))
 }
 
 /// The 24px square buttons at the right of the input row.
-fn input_button(id: &'static str, glyph: &'static str, size: f32, color: Hsla) -> Stateful<Div> {
+fn input_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -138,7 +138,7 @@ fn input_button(id: &'static str, glyph: &'static str, size: f32, color: Hsla) -
 }
 
 /// One `·`-separated part of a row's extra line.
-fn extra_segment(glyph: Option<&'static str>, text: String) -> Div {
+fn extra_segment(glyph: Option<Icon>, text: String) -> Div {
     div()
         .flex_none()
         .flex()
@@ -151,9 +151,9 @@ fn extra_segment(glyph: Option<&'static str>, text: String) -> Div {
 pub(crate) fn extra_line(e: &Entry) -> Div {
     let mut extra = vec![extra_segment(None, "Owner: me".into())];
     if e.meta.opened > 0 {
-        extra.push(extra_segment(Some("eye"), format!("Opened {}", format_visit(e.meta.opened))));
+        extra.push(extra_segment(Some(Icon::Show), format!("Opened {}", format_visit(e.meta.opened))));
     }
-    extra.push(extra_segment(Some("pen-line"), format!("Modified {}", format_visit(e.meta.modified))));
+    extra.push(extra_segment(Some(Icon::Edit), format!("Modified {}", format_visit(e.meta.modified))));
     let last = extra.len() - 1;
     let extra = extra.into_iter().enumerate().flat_map(|(i, seg)| {
         let seg = if i == last { seg.flex_shrink().min_w_0().overflow_hidden() } else { seg };
@@ -333,11 +333,11 @@ impl Workspace {
                     .size(px(16.))
                     .ml(px(4.))
                     .mr(px(10.))
-                    .child(icon("search", 17.5, Theme::text_placeholder()).absolute().top(px(-0.75)).left(px(-0.75))),
+                    .child(icon(Icon::Search, 17.5, Theme::text_placeholder()).absolute().top(px(-0.75)).left(px(-0.75))),
             )
             .child(div().flex_1().min_w_0().pl(px(2.)).flex().child(self.search.clone()))
             .when(has_text, |d| {
-                d.child(input_button("search-clear", "search-clear", 18., Theme::text_disabled()).ml(px(8.)).on_click(cx.listener(
+                d.child(input_button("search-clear", Icon::Clear, 18., Theme::text_disabled()).ml(px(8.)).on_click(cx.listener(
                     |w, _, window, cx| {
                         w.search.update(cx, |s, cx| s.set_text("", cx));
                         window.focus(&w.search.focus_handle(cx));

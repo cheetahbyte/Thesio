@@ -3,7 +3,7 @@
 use crate::app::Workspace;
 use crate::library::Mode;
 use crate::theme::{self, Theme};
-use crate::ui::popover;
+use crate::ui::{Icon, popover};
 use gpui::{prelude::FluentBuilder, *};
 
 const MENU_W: f32 = 200.;
@@ -11,7 +11,7 @@ const MENU_W: f32 = 200.;
 const MENU_GAP: f32 = 6.;
 const PAD: f32 = crate::ui::MENU_PAD_Y;
 
-fn menu_item(id: &'static str, ic: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
+fn menu_item(id: &'static str, ic: Icon, label: impl Into<SharedString>) -> Stateful<Div> {
     let g = SharedString::from(id);
     crate::ui::menu_row(id, g.clone())
         .child(crate::ui::menu_glyph(ic, 16., g.clone()))
@@ -74,7 +74,7 @@ impl Workspace {
         let typst = entry.is_some_and(|e| e.typst);
         let mode = self.bibliography_mode(cx);
         let block_shown = self.editor.as_ref().is_some_and(|e| e.read(cx).block_shown);
-        let bibliography = |id: &'static str, ic: &'static str, label: &'static str, target: Mode| {
+        let bibliography = |id: &'static str, ic: Icon, label: &'static str, target: Mode| {
             menu_item(id, ic, label).on_click(cx.listener(move |w, _, _, cx| {
                 w.close_doc_menu(cx);
                 w.set_bibliography(target, cx);
@@ -90,38 +90,38 @@ impl Workspace {
             .flex_col()
             .shadow(theme::shadow_s4_down())
             .on_mouse_down_out(cx.listener(|w, _: &MouseDownEvent, _, cx| w.close_doc_menu(cx)))
-            .child(menu_item("dm-move", "folder-input", "Move to").on_click(cx.listener(move |w, _, window, cx| {
+            .child(menu_item("dm-move", Icon::Move, "Move to").on_click(cx.listener(move |w, _, window, cx| {
                 w.close_doc_menu(cx);
                 w.open_move(vec![mv_id.clone()], window, cx);
             })))
-            .child(menu_item("dm-pin", if pinned { "pin-off" } else { "pin" }, if pinned { "Unpin" } else { "Pin" }).on_click(cx.listener(move |w, _, _, cx| {
+            .child(menu_item("dm-pin", if pinned { Icon::Unpin } else { Icon::Pin }, if pinned { "Unpin" } else { "Pin" }).on_click(cx.listener(move |w, _, _, cx| {
                 w.toggle_pin(&pin_id, cx);
                 w.close_doc_menu(cx);
             })))
-            .child(menu_item("dm-star", if starred { "star-off" } else { "star" }, if starred { "Remove from favorites" } else { "Add to favorites" })
+            .child(menu_item("dm-star", if starred { Icon::Unstar } else { Icon::Star }, if starred { "Remove from favorites" } else { "Add to favorites" })
                 .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star_id, cx))))
             .when(typst, |d| d.child(divider())
-                .child(menu_item("dm-copy", "copy", "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
-                .child(menu_item("dm-pdf", "export", "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
+                .child(menu_item("dm-copy", Icon::Copy, "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
+                .child(menu_item("dm-pdf", Icon::Export, "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
                     w.close_doc_menu(cx);
                     w.export_pdf(&pdf_id, cx);
                 })))
                 .when(mode != Mode::Custom, |d| d.child(divider())
-                    .child(menu_item("dm-cite", "quote", "Insert citation").on_click(cx.listener(|w, _, window, cx| {
+                    .child(menu_item("dm-cite", Icon::Quote, "Insert citation").on_click(cx.listener(|w, _, window, cx| {
                         w.close_doc_menu(cx);
                         w.open_cite_picker(window, cx);
                     })))
-                    .when(mode == Mode::Embedded, |d| d.child(menu_item("dm-block", "eye", if block_shown { "Hide bibliography data" } else { "Show bibliography data" }).on_click(cx.listener(|w, _, _, cx| {
+                    .when(mode == Mode::Embedded, |d| d.child(menu_item("dm-block", if block_shown { Icon::Hide } else { Icon::Show }, if block_shown { "Hide bibliography data" } else { "Show bibliography data" }).on_click(cx.listener(|w, _, _, cx| {
                         w.close_doc_menu(cx);
                         if let Some(editor) = &w.editor { editor.update(cx, |e, cx| e.toggle_block(cx)); }
                     }))))
-                    .when(mode != Mode::Embedded, |d| d.child(bibliography("dm-embed", "library", "Embed bibliography", Mode::Embedded)))
-                    .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", "library", "Link library file", Mode::Linked)))
-                    .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", "x", "Remove bibliography", Mode::None)))))
+                    .when(mode != Mode::Embedded, |d| d.child(bibliography("dm-embed", Icon::Library, "Embed bibliography", Mode::Embedded)))
+                    .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))
+                    .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", Icon::Close, "Remove bibliography", Mode::None)))))
             .child(divider())
-            .child(menu_item("dm-delete", "bin", "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))))
+            .child(menu_item("dm-delete", Icon::Delete, "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))))
             .child(divider())
-            .child(menu_item("dm-shortcuts", "keyboard", "Keyboard shortcuts").on_click(cx.listener(|w, _, _, cx| {
+            .child(menu_item("dm-shortcuts", Icon::Keyboard, "Keyboard shortcuts").on_click(cx.listener(|w, _, _, cx| {
                 w.close_doc_menu(cx);
                 w.open_settings(crate::settings::Page::Shortcuts, cx);
             })));

@@ -1,14 +1,18 @@
 //! Looks up bibliographic metadata by identifier: DOIs and arXiv IDs through
-//! doi.org, PMIDs through NCBI, ISBNs through Open Library. Network access
-//! happens only here, and only for identifiers the user entered.
+//! doi.org, PMIDs through NCBI, ISBNs through Open Library. Also downloads
+//! open-access papers from arXiv and the locations Unpaywall lists. Network
+//! access happens only here, and only for sources the user added to the library.
 
 use anyhow::{Context, Result};
 use serde_json::Value as Json;
 use serde_yaml::{Mapping, Value};
+use std::path::Path;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = "Thesio/0.1";
+const PAPER_TIMEOUT: Duration = Duration::from_secs(120);
+const PAPER_LIMIT: u64 = 200 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Identifier {
@@ -207,6 +211,72 @@ fn fetch_isbn(id: &str) -> Result<Mapping> {
     if let Some(publisher) = book.pointer("/publishers/0").and_then(|p| text(p, "name")) { entry.insert("publisher".into(), publisher.into()); }
     serial(&mut entry, "isbn", id);
     Ok(entry)
+}
+
+/// What a paper can be found by.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PaperIds {
+    pub doi: Option<String>,
+    pub arxiv: Option<String>,
+}
+
+impl PaperIds {
+    /// arXiv's own DOIs name the same paper.
+    fn arxiv_id(&self) -> Option<String> {
+        self.arxiv.clone().or_else(|| strip_prefix_any(self.doi.as_deref()?, &["10.48550/arxiv."]).map(str::to_string))
+    }
+}
+
+/// Unpaywall's PDF links for `doi`, best first. None when it has no record.
+fn unpaywall_links(doi: &str, email: &str) -> Result<Vec<String>> {
+    let body = match get(&format!("https://api.unpaywall.org/v2/{}?email={}", encode(doi), encode(email)), "application/json") {
+        Ok(body) => body,
+        Err(e) if e.to_string() == "not found" => return Ok(vec![]),
+        Err(e) => return Err(e),
+    };
+    let json: Json = serde_json::from_str(&body).context("Unpaywall returned no record")?;
+    let others = json.get("oa_locations").and_then(Json::as_array).into_iter().flatten();
+    let mut links = vec![];
+    for location in json.get("best_oa_location").into_iter().chain(others) {
+        if let Some(link) = text(location, "url_for_pdf") && !links.iter().any(|known| known == link) { links.push(link.to_string()); }
+    }
+    Ok(links)
+}
+
+/// Saves the PDF at `url` to `dest`, whole or not at all.
+fn download(url: &str, dest: &Path) -> Result<()> {
+    anyhow::ensure!(url.starts_with("https://") || url.starts_with("http://"), "not a web link");
+    let mut response = ureq::get(url).header("Accept", "application/pdf").header("User-Agent", USER_AGENT)
+        .config().timeout_global(Some(PAPER_TIMEOUT)).build().call()?;
+    let bytes = response.body_mut().with_config().limit(PAPER_LIMIT).read_to_vec()?;
+    // Publishers often answer a PDF link with a login page.
+    anyhow::ensure!(bytes.starts_with(b"%PDF-"), "the link did not lead to a PDF");
+    let name = dest.file_name().context("no file name")?.to_string_lossy();
+    let partial = dest.with_file_name(format!(".{name}.part"));
+    if let Some(dir) = dest.parent() { std::fs::create_dir_all(dir)?; }
+    std::fs::write(&partial, bytes)?;
+    std::fs::rename(&partial, dest)?;
+    Ok(())
+}
+
+/// Downloads an open-access copy to `dest`: arXiv first, then Unpaywall when
+/// there is an `email` to ask with. False when neither knows a copy.
+pub fn fetch_paper(ids: &PaperIds, email: Option<&str>, dest: &Path) -> Result<bool> {
+    let mut links: Vec<String> = ids.arxiv_id().map(|id| format!("https://arxiv.org/pdf/{}", encode(&id))).into_iter().collect();
+    let mut problem = None;
+    if let (Some(doi), Some(email)) = (&ids.doi, email) {
+        match unpaywall_links(doi, email) {
+            Ok(found) => links.extend(found),
+            Err(e) => problem = Some(e),
+        }
+    }
+    for link in links {
+        match download(&link, dest) {
+            Ok(()) => return Ok(true),
+            Err(e) => problem = Some(e),
+        }
+    }
+    problem.map_or(Ok(false), Err)
 }
 
 /// Fetches one identifier as a Hayagriva entry, without its key.

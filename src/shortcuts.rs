@@ -265,7 +265,7 @@ impl Workspace {
         div().flex_none().flex().items_center().gap(px(8.))
             .when(customized, |d| d.child(crate::settings::link_button("shortcuts-reset-all", "Reset all").on_click(cx.listener(|w, _, _, cx| w.reset_all_shortcuts(cx)))))
             .child(div().w(px(200.)).h(px(28.)).px(px(8.)).flex().items_center().gap(px(6.)).rounded(px(8.)).bg(Theme::fill_hover())
-                .child(crate::ui::icon("search", 14., Theme::text_caption()))
+                .child(crate::ui::icon(crate::ui::Icon::Search, 14., Theme::text_caption()))
                 .child(div().flex_1().min_w_0().child(self.settings_filter.clone())))
             .into_any_element()
     }
@@ -304,7 +304,7 @@ impl Workspace {
                 let n = rows.len();
                 div().w_full().flex().flex_col().gap(px(8.))
                     .child(div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(GROUPS[g]))
-                    .child(div().w_full().flex().flex_col().rounded(px(12.)).border_1().border_color(Theme::line_border()).overflow_hidden()
+                    .child(div().w_full().flex().flex_col().rounded(px(12.)).bg(Theme::fill_group()).overflow_hidden()
                         .children(rows.into_iter().enumerate().map(move |(i, r)| div().w_full().flex().flex_col().when(i + 1 < n, |d| d.border_b_1().border_color(crate::ui::list_line())).child(r))))
             }))
             .into_any_element()

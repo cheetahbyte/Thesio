@@ -1,11 +1,15 @@
 //! The Typst source editor: one virtualized list row per logical line, soft
 //! wrapped, with the selection and caret painted by each row.
 
-use crate::theme::{MONO_FONT, Theme, c, craft};
-use gpui::*;
+use crate::citations::matches;
+use crate::library::Row;
+use crate::theme::{self, MONO_FONT, Theme, c, craft};
+use crate::ui::{MENU_PAD_Y, ROW_RADIUS, popover, ui_text};
+use gpui::{prelude::FluentBuilder, *};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 use thesio_core::buffer::{Buffer, EditKind};
 use thesio_core::library;
+use thesio_core::references::citation_at;
 use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
@@ -16,7 +20,8 @@ actions!(
     source_editor,
     [Backspace, Delete, DeleteWordLeft, DeleteWordRight, Left, Right, Up, Down, WordLeft, WordRight, LineStart, LineEnd,
      DocStart, DocEnd, SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart,
-     SelectLineEnd, SelectAll, Copy, Cut, Paste, Undo, Redo, Enter, Tab]
+     SelectLineEnd, SelectAll, Copy, Cut, Paste, Undo, Redo, Enter, Tab, CompletionUp, CompletionDown, CompletionAccept,
+     CompletionDismiss]
 );
 
 pub fn bind_keys(cx: &mut App) {
@@ -54,10 +59,35 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-z", Redo, c),
         KeyBinding::new("enter", Enter, c),
         KeyBinding::new("tab", Tab, c),
+        KeyBinding::new("up", CompletionUp, COMPLETING),
+        KeyBinding::new("down", CompletionDown, COMPLETING),
+        KeyBinding::new("enter", CompletionAccept, COMPLETING),
+        KeyBinding::new("tab", CompletionAccept, COMPLETING),
+        KeyBinding::new("escape", CompletionDismiss, COMPLETING),
     ]);
 }
 
-pub enum SourceEvent { Changed }
+const COMPLETING: Option<&str> = Some("SourceEditor && completing");
+/// Sources the popup offers at once.
+const COMPLETION_ROWS: usize = 6;
+/// Frames to wait for a new `@` to be laid out before giving up on the popup.
+const COMPLETION_WAIT: u8 = 3;
+
+pub enum SourceEvent {
+    Changed,
+    /// A citation was started: the editor wants fresh `sources`.
+    Citing,
+    /// A citation was completed.
+    Cited,
+}
+
+/// The source popup over the `@key` at `range`.
+struct Completion {
+    range: Range<usize>,
+    query: String,
+    selected: usize,
+    waited: u8,
+}
 
 /// A painted row: where it landed and how it wrapped, for hit testing.
 #[derive(Clone)]
@@ -84,6 +114,11 @@ pub struct SourceEditor {
     folded: Option<(Range<usize>, Range<usize>)>,
     /// The user asked to see the generated block.
     pub block_shown: bool,
+    /// What `@` completes to.
+    pub sources: Vec<Row>,
+    completion: Option<Completion>,
+    /// The `@` whose popup was accepted or dismissed: it stays closed there.
+    settled: Option<usize>,
 }
 
 impl EventEmitter<SourceEvent> for SourceEditor {}
@@ -97,7 +132,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false };
+        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion: None, settled: None };
         editor.refold();
         editor
     }
@@ -117,6 +152,7 @@ impl SourceEditor {
         self.block_shown = !self.block_shown;
         self.refold();
         self.list.reset(self.buffer.line_count());
+        self.completion = None;
         cx.notify();
     }
 
@@ -189,7 +225,111 @@ impl SourceEditor {
         self.list.reset(self.buffer.line_count());
         self.goal_x = None;
         self.reveal(cx);
+        self.refresh_completion(false, cx);
         cx.emit(SourceEvent::Changed);
+    }
+
+    /// Follows the caret. Only typing opens the popup, so moving through
+    /// existing citations stays quiet.
+    fn refresh_completion(&mut self, typed: bool, cx: &mut Context<Self>) {
+        let caret = self.buffer.caret();
+        let found = (self.typst && self.buffer.sel.is_empty() && self.marked.is_none()).then(|| citation_at(self.buffer.text(), caret)).flatten();
+        let Some(range) = found else {
+            self.settled = None;
+            self.completion = None;
+            return;
+        };
+        if self.settled == Some(range.start) { return; }
+        let query = self.buffer.text()[range.start + 1..caret].to_lowercase();
+        match &mut self.completion {
+            Some(open) => {
+                if open.query != query { open.selected = 0; }
+                (open.range, open.query) = (range, query);
+            }
+            None if typed => {
+                self.completion = Some(Completion { range, query, selected: 0, waited: 0 });
+                cx.emit(SourceEvent::Citing);
+            }
+            None => {}
+        }
+    }
+
+    /// The sources matching the open popup, keys that start with the query first.
+    fn completions(&self) -> Vec<&Row> {
+        let Some(open) = &self.completion else { return vec![] };
+        let mut rows: Vec<&Row> = self.sources.iter().filter(|row| open.query.is_empty() || matches(row, &open.query)).collect();
+        rows.sort_by_key(|row| !row.key.to_lowercase().starts_with(&open.query));
+        rows.truncate(COMPLETION_ROWS);
+        rows
+    }
+
+    fn complete(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(key) = self.completions().get(index).map(|row| row.key.clone()) else { return };
+        let Some(open) = self.completion.take() else { return };
+        self.settled = Some(open.range.start);
+        self.buffer.replace(open.range, &format!("@{key}"), EditKind::Other);
+        self.changed(cx);
+        cx.emit(SourceEvent::Cited);
+    }
+
+    fn completion_step(&mut self, down: bool, cx: &mut Context<Self>) {
+        let shown = self.completions().len();
+        let Some(open) = &mut self.completion else { return };
+        if shown == 0 { return; }
+        open.selected = (open.selected + if down { 1 } else { shown - 1 }) % shown;
+        cx.notify();
+    }
+
+    fn completion_accept(&mut self, _: &CompletionAccept, _: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.completion.as_ref().map_or(0, |open| open.selected);
+        self.complete(selected, cx);
+    }
+
+    fn completion_dismiss(&mut self, _: &CompletionDismiss, _: &mut Window, cx: &mut Context<Self>) {
+        self.settled = self.completion.take().map(|open| open.range.start);
+        cx.notify();
+    }
+
+    /// Where the row holding `offset` was last painted, in window coordinates.
+    fn painted_at(&self, offset: usize) -> Option<Point<Pixels>> {
+        let line = self.buffer.line_of(offset);
+        let painted = self.painted.borrow();
+        let row = painted.get(&line)?;
+        Some(row.bounds.origin + row.layout.as_ref()?.position_for_index(offset - self.buffer.line_range(line).start, px(LINE_HEIGHT))?)
+    }
+
+    fn render_completion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.focus.is_focused(window) { return None; }
+        let open = self.completion.as_ref()?;
+        let (start, selected) = (open.range.start, open.selected.min(COMPLETION_ROWS - 1));
+        let rows: Vec<Row> = self.completions().into_iter().cloned().collect();
+        if rows.is_empty() { return None; }
+        let Some(at) = self.painted_at(start) else {
+            // A new `@` has no layout until the frame after it was typed.
+            let open = self.completion.as_mut()?;
+            if open.waited < COMPLETION_WAIT {
+                open.waited += 1;
+                cx.on_next_frame(window, |_, _, cx| cx.notify());
+            }
+            return None;
+        };
+        let rows = rows.into_iter().enumerate().map(|(i, row)| {
+            let on = i == selected;
+            let detail = [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+            let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
+            div().id(("completion", i)).mx(px(5.)).px(px(8.)).py(px(4.)).flex().flex_col().rounded(px(ROW_RADIUS)).cursor_pointer().overflow_hidden()
+                .when(on, |d| d.bg(Theme::menu_highlight()).text_color(gpui::white()))
+                .when(!on, |d| d.hover(|s| s.bg(Theme::fill_hover())))
+                .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(title)))
+                .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(if on { theme::rgbaf(255, 255, 255, 0.8) } else { Theme::text_caption() }).child(ui_text(detail)))
+                .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .on_click(cx.listener(move |e, _, _, cx| e.complete(i, cx)))
+        }).collect::<Vec<_>>();
+        let menu = popover().id("completion").occlude().w(px(380.)).py(px(MENU_PAD_Y)).flex().flex_col().shadow(theme::shadow_panel()).children(rows);
+        Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(1).into_any_element())
     }
 
     fn reveal(&mut self, cx: &mut Context<Self>) {
@@ -202,6 +342,7 @@ impl SourceEditor {
         if extend { self.buffer.select_to(offset); } else { self.buffer.move_to(offset); }
         self.goal_x = None;
         self.reveal(cx);
+        self.refresh_completion(false, cx);
     }
 
     fn delete_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -278,6 +419,7 @@ impl SourceEditor {
 
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
+        self.completion = None;
         let offset = self.outside_fold(self.offset_at(event.position));
         if event.click_count == 2 {
             let word = self.buffer.word_at(offset);
@@ -501,6 +643,7 @@ impl EntityInputHandler for SourceEditor {
         self.marked = None;
         self.buffer.replace(range, text, EditKind::Typing);
         self.changed(cx);
+        self.refresh_completion(true, cx);
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, new_sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
@@ -535,13 +678,18 @@ impl EntityInputHandler for SourceEditor {
 }
 
 impl Render for SourceEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Before `painted` is cleared: the popup sits on last frame's layout.
+        let completion = self.render_completion(window, cx);
+        let mut context = KeyContext::new_with_defaults();
+        context.add("SourceEditor");
+        if completion.is_some() { context.add("completing"); }
         self.painted.borrow_mut().clear();
         let entity = cx.entity();
         let focus = self.focus.clone();
         div()
             .id("source-editor")
-            .key_context("SourceEditor")
+            .key_context(context)
             .track_focus(&self.focus)
             .cursor(CursorStyle::IBeam)
             .relative()
@@ -577,6 +725,10 @@ impl Render for SourceEditor {
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::enter))
             .on_action(cx.listener(Self::tab))
+            .on_action(cx.listener(|e, _: &CompletionUp, _, cx| e.completion_step(false, cx)))
+            .on_action(cx.listener(|e, _: &CompletionDown, _, cx| e.completion_step(true, cx)))
+            .on_action(cx.listener(Self::completion_accept))
+            .on_action(cx.listener(Self::completion_dismiss))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_down))
             .on_mouse_move(cx.listener(Self::on_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_up))
@@ -585,6 +737,7 @@ impl Render for SourceEditor {
             .child(canvas(|_, _, _| (), move |bounds, _, window, cx| {
                 window.handle_input(&focus, ElementInputHandler::new(bounds, entity.clone()), cx);
             }).absolute().size_full())
+            .children(completion)
     }
 }
 

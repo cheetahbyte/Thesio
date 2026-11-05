@@ -7,7 +7,7 @@ use crate::input::{TextField, TextFieldEvent};
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{close_button, dialog, primary_button, scrim, secondary_button};
-use crate::ui::{ROW_RADIUS, icon, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::{HashMap, HashSet};
 
@@ -230,7 +230,7 @@ impl Workspace {
             .border_1()
             .border_color(Theme::line_border())
             .bg(crate::theme::raised(Theme::bg_body()))
-            .child(icon("search", 15., Theme::text_caption()))
+            .child(icon(Icon::Search, 15., Theme::text_caption()))
             .child(div().flex_1().min_w_0().ml(px(6.)).flex().child(dlg.search.clone()));
         // The location column reads like a sidebar: a grey surface and
         // a quiet pill for the selected location.
@@ -252,7 +252,7 @@ impl Workspace {
                     .items_center()
                     .rounded(px(9.))
                     .bg(Theme::fill_hover_strong())
-                    .child(icon("library", 15., Theme::text_code()))
+                    .child(icon(Icon::Library, 15., Theme::text_code()))
                     .child(div().ml(px(8.)).text_size(px(13.)).line_height(px(20.)).child("Vault")),
             );
 
@@ -270,13 +270,13 @@ impl Workspace {
                 .when(!selected, |d| d.hover(|s| s.bg(Theme::fill_hover())))
         };
         let title = |t: String| div().ml(px(9.)).flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(t));
-        let page_icon = |_: &Entry| icon("folder", 16., Theme::text_caption()).into_any_element();
+        let page_icon = |_: &Entry| icon(Icon::Folder, 16., Theme::text_caption()).into_any_element();
         let mut list = div().id("move-tree").flex_1().min_w_0().px(px(8.)).py(px(12.)).overflow_y_scroll().track_scroll(&dlg.scroll);
         if q.is_empty() {
             list = list.child(
                 row("move-root".into(), dlg.target == Some(None))
                     .pl(px(16.))
-                    .child(icon("library", 16., Theme::text_caption()))
+                    .child(icon(Icon::Library, 16., Theme::text_caption()))
                     .child(title("Vault".into()))
                     .on_click(cx.listener(|w, _, _, cx| {
                         if let Some(d) = w.move_dlg.as_mut() {
@@ -305,7 +305,7 @@ impl Workspace {
                                 .rounded(px(5.))
                                 .when(kids, |d| {
                                     d.hover(|s| s.bg(Theme::fill_hover_strong()))
-                                        .child(icon("tree-triangle", 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
+                                        .child(icon(Icon::ChevronRight, 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                                         .on_click(cx.listener(move |w, _, _, cx| {
                                             cx.stop_propagation();
                                             if let Some(d) = w.move_dlg.as_mut()

@@ -6,8 +6,10 @@ use gpui::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
-    svg().path(SharedString::from(format!("icons/{name}.svg"))).size(px(size)).flex_none().text_color(color)
+pub use crate::icon::Icon;
+
+pub fn icon(name: Icon, size: f32, color: Hsla) -> Svg {
+    svg().path(SharedString::from(name.path(size))).size(px(size)).flex_none().text_color(color)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,8 +33,8 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, win
         1.
     };
     let (fill, mark, mark_size) = match kind {
-        ToastKind::Success => (theme::c(craft::old::G500), "check", 10.),
-        ToastKind::Error => (Theme::danger(), "x", 10.),
+        ToastKind::Success => (theme::c(craft::old::G500), Icon::Check, 10.),
+        ToastKind::Error => (Theme::danger(), Icon::Close, 10.),
     };
     let vw = window.viewport_size().width;
     let card = div()
@@ -58,7 +60,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, win
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(icon("circle-filled", 16., fill).absolute().top_0().left_0())
+                .child(icon(Icon::Circle, 16., fill).absolute().top_0().left_0())
                 .child(icon(mark, mark_size, gpui::white())),
         )
         .child(ui_text(crate::settings::label(msg)));
@@ -88,18 +90,6 @@ pub fn popover() -> Div {
         .text_color(Theme::text())
 }
 
-/// Second-level panels (color panel, link editor): white, larger drop.
-/// The header button: a white pill on the note (hairline, 1px drop, radius 12).
-pub fn pill() -> Div {
-    div()
-        .flex_none()
-        .rounded(px(12.))
-        .bg(crate::theme::raised(Theme::bg_body()))
-        .border_1()
-        .border_color(Theme::button_border())
-        .shadow(theme::shadow_button())
-}
-
 /// Column headers of the page lists: tertiary text (measured #88898B on
 /// the name / last-viewed / created columns).
 pub fn list_header_text() -> Hsla {
@@ -120,15 +110,15 @@ pub fn row_hover(s: StyleRefinement) -> StyleRefinement {
 
 /// The window dimmed under a modal dialog: a light black veil.
 pub fn scrim() -> Hsla {
-    theme::ca(craft::N1000, 0.25)
+    theme::rgbaf(0, 0, 0, if theme::dark() { 0.45 } else { 0.25 })
 }
 
 /// The modal dialog: white, radius 16, deep soft drop.
 pub fn dialog(id: &'static str) -> Stateful<Div> {
-    div().id(id).occlude().rounded(px(16.)).bg(crate::theme::raised(Theme::bg_body())).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
+    div().id(id).occlude().rounded(px(16.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
 }
 
-/// The primary button: the accent, a white 13pt semibold label, 30 tall, radius 9.
+/// The primary button: the accent, a white 13pt medium label, 28 tall, radius 8.
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     colored_button(id, label, false)
 }
@@ -141,12 +131,12 @@ fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Statef
     div()
         .id(id)
         .flex_none()
-        .h(px(30.))
-        .px(px(16.))
+        .h(px(BUTTON_H))
+        .px(px(12.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.))
+        .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
         .bg(if danger { Theme::danger() } else { Theme::primary() })
         .shadow(theme::shadow_button())
@@ -154,9 +144,50 @@ fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Statef
         .active(move |s| s.bg(theme::c(if danger { craft::R700 } else { craft::B700 })))
         .text_size(px(13.))
         .line_height(px(20.))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(gpui::white())
         .child(crate::settings::label(label))
+}
+
+/// A primary button led by a glyph.
+pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .h(px(BUTTON_H))
+        .pl(px(9.))
+        .pr(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .rounded(px(BUTTON_RADIUS))
+        .cursor_pointer()
+        .bg(Theme::primary())
+        .shadow(theme::shadow_button())
+        .hover(|s| s.bg(theme::c(craft::B600)))
+        .active(|s| s.bg(theme::c(craft::B700)))
+        .text_size(px(13.))
+        .line_height(px(20.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(gpui::white())
+        .child(icon(glyph, 14., gpui::white()))
+        .child(crate::settings::label(label))
+}
+
+/// A glyph-only toolbar button, the height of the buttons beside it.
+pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
+    div().id(id).flex_none().size(px(BUTTON_H)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 16., Theme::icon()))
+}
+
+/// The well a text field sits in: a quiet fill, no outline.
+pub fn field_well() -> Div {
+    div().h(px(BUTTON_H)).px(px(10.)).flex().items_center().rounded(px(BUTTON_RADIUS)).bg(Theme::fill_hover()).text_size(px(13.))
+}
+
+/// A search field: the glass, then `field`.
+pub fn search_well(field: AnyView) -> Div {
+    field_well().gap(px(6.)).child(icon(Icon::Search, 14., Theme::text_placeholder())).child(div().flex_1().min_w_0().child(field))
 }
 
 #[cfg(test)]
@@ -167,26 +198,24 @@ mod button_tests {
     }
 }
 
-/// The secondary button: white with a hairline and a 1px drop, 30 tall, radius 9.
+/// The secondary button: a quiet fill, so a row of them stays calm. 28 tall, radius 8.
 pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
-        .h(px(30.))
-        .px(px(16.))
+        .h(px(BUTTON_H))
+        .px(px(12.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.))
+        .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
-        .bg(crate::theme::raised(Theme::bg_body()))
-        .border_1()
-        .border_color(Theme::button_border())
-        .shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::N100)))
-        .active(|s| s.bg(theme::c(craft::N200)))
+        .bg(Theme::fill_hover_strong())
+        .hover(|s| s.bg(Theme::fill_pressed()))
+        .active(|s| s.bg(Theme::fill_active()))
         .text_size(px(13.))
         .line_height(px(20.))
+        .font_weight(FontWeight::MEDIUM)
         .text_color(Theme::text())
         .child(crate::settings::label(label))
 }
@@ -205,19 +234,22 @@ pub fn close_button(id: &'static str) -> Stateful<Div> {
         .cursor_pointer()
         .bg(theme::ca(craft::N1000, 0.26))
         .hover(|s| s.bg(theme::ca(craft::N1000, 0.36)))
-        .child(icon("x", 16., gpui::white()))
+        .child(icon(Icon::Close, 16., gpui::white()))
 }
+
+pub const BUTTON_H: f32 = 28.;
+pub const BUTTON_RADIUS: f32 = 8.;
 
 /// Menus and popovers round at 12 (the native menu panel); their
 /// rows at 6, 5pt in from the edge.
 pub const MENU_RADIUS: f32 = 12.;
 pub const ROW_RADIUS: f32 = 6.;
 
-/// A menu row like a native menu's: 26 tall, 13pt label, 16pt glyph;
+/// A menu row like a native menu's: 28 tall, 13pt label, 16pt glyph;
 /// hovering paints the accent. `group` names the row so its glyph
 /// ([`menu_glyph`]) and label ([`menu_label`]) can turn white with it.
-pub const MENU_ROW_H: f32 = 32.;
-pub const MENU_PAD_Y: f32 = 6.;
+pub const MENU_ROW_H: f32 = 28.;
+pub const MENU_PAD_Y: f32 = 5.;
 
 pub fn menu_row(id: impl Into<ElementId>, group: SharedString) -> Stateful<Div> {
     div()
@@ -253,7 +285,7 @@ pub fn menu_label(label: impl Into<SharedString>, group: SharedString, hover: Hs
 }
 
 /// Glyph of a [`menu_row`]: secondary, white while its row is hovered.
-pub fn menu_glyph(name: &str, size: f32, group: SharedString) -> Svg {
+pub fn menu_glyph(name: Icon, size: f32, group: SharedString) -> Svg {
     icon(name, size, Theme::text_code()).group_hover(group, |s| s.text_color(gpui::white()))
 }
 
@@ -279,7 +311,7 @@ pub enum TipSide {
 
 const TIP_GAP: f32 = 8.;
 const TIP_ARROW: f32 = 5.;
-const TIP_PAD: f32 = 12.;
+const TIP_PAD: f32 = 8.;
 const TIP_LINE: f32 = 18.;
 const TIP_BG: u32 = 0x2a2c2f;
 /// Tooltips stay dark in both looks (a step lighter on the dark page).
@@ -289,9 +321,9 @@ impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let lines: Vec<SharedString> = self.label.split('\n').map(|l| SharedString::from(l.to_string())).collect();
         let bubble = div()
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(7.))
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(6.))
             .bg(tip_bg())
             .text_color(gpui::white())
             .text_size(px(12.))
@@ -315,7 +347,7 @@ impl Render for Tooltip {
                 window.text_system().shape_line(l.clone(), px(12.), &runs, None).width
             })
             .fold(px(0.), |a, b| a.max(b));
-        let w = text_w + px(20.);
+        let w = text_w + px(16.);
         let h = px(TIP_PAD + TIP_LINE * lines.len() as f32);
         let vp = window.viewport_size();
         let gap = px(TIP_GAP);
@@ -435,10 +467,10 @@ pub(crate) fn window_controls(window: &Window) -> Option<Div> {
     Some(div().absolute().top_0().right_0().h(px(crate::app::HEADER_H)).flex().items_center().title_bar()
         .child(div().mx(px(12.)).w(px(1.)).h(px(18.)).bg(Theme::line_divider()))
         .child(button("window-minimize", WindowControlArea::Min, "Minimize")
-            .child(icon("minus", 18., Theme::icon())))
-        .child(button("window-maximize", WindowControlArea::Max, if maximized { "Restore" } else { "Maximize" }).child(icon(if maximized { "copy" } else { "expand" }, 18., Theme::icon())))
+            .child(icon(Icon::Minus, 18., Theme::icon())))
+        .child(button("window-maximize", WindowControlArea::Max, if maximized { "Restore" } else { "Maximize" }).child(icon(if maximized { Icon::Copy } else { Icon::Maximize }, 18., Theme::icon())))
         .child(button("window-close", WindowControlArea::Close, "Close")
-            .child(icon("x", 18., Theme::icon()))))
+            .child(icon(Icon::Close, 18., Theme::icon()))))
 }
 
 
@@ -807,8 +839,8 @@ pub fn continuous_surface(radius: f32, color: Hsla) -> Div {
     }).absolute().inset_0())
 }
 
-pub fn header_icon(id: &'static str, name: &'static str) -> Stateful<Div> {
+pub fn header_icon(id: &'static str, name: Icon) -> Stateful<Div> {
     div().id(id).no_drag().size(px(crate::app::HEADER_ACTIONS_H)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(name, 18., Theme::icon()))
+        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(name, 17., Theme::icon()))
 }
 

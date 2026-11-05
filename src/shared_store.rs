@@ -8,6 +8,7 @@ impl gpui::Global for SharedStore {}
 impl SharedStore {
     pub fn open() -> Result<Self> { Ok(Self(Rc::new(RefCell::new(Store::open()?)))) }
     pub fn root(&self) -> PathBuf { self.0.borrow().root().to_path_buf() }
+    pub fn path(&self, id: &str) -> Result<PathBuf> { self.0.borrow().path(id) }
     pub fn take_warnings(&self) -> Vec<String> { std::mem::take(&mut self.0.borrow_mut().warnings) }
     pub fn list(&mut self) -> Vec<Entry> { self.0.borrow_mut().list() }
     pub fn load(&self, id: &str) -> Result<String> { self.0.borrow().load(id) }
@@ -22,6 +23,7 @@ impl SharedStore {
     pub fn import(&mut self, path: &Path) -> Result<String> { self.0.borrow_mut().import(path) }
     pub fn settings(&self) -> Settings { self.0.borrow().settings() }
     pub fn save_settings(&self, s: &Settings) -> Result<()> { self.0.borrow().save_settings(s) }
+    pub fn attach(&mut self, from: &Path, id: &str) -> Result<()> { self.0.borrow_mut().attach(from, id) }
     pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> { self.0.borrow_mut().rename(id, title) }
     pub fn touch(&mut self, id: &str) -> Result<()> { self.0.borrow_mut().touch(id) }
     pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> { self.0.borrow_mut().set_parent(id, parent) }

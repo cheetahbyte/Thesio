@@ -11,7 +11,7 @@ use crate::search::doc_icon;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
 use crate::trash::{empty_state, list_header_text, list_line, menu_label, page_header, row_hover};
-use crate::ui::{ROW_RADIUS, TipExt, icon, menu_glyph, menu_row, popover, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, TipExt, icon, menu_glyph, menu_row, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
 use std::collections::{HashMap};
@@ -149,6 +149,14 @@ fn entry_icon(_: &Entry) -> AnyElement {
     doc_icon().mr(px(12.)).into_any_element()
 }
 
+/// A card's preview: the prose of a document, without its Typst set-up.
+fn card_text(body: &str) -> String {
+    let lines = body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"));
+    lines.map(|l| l.trim_start_matches('=').trim()).take(12).collect::<Vec<_>>().join("\n")
+}
+
+const CARD_RADIUS: f32 = 14.;
+
 impl Workspace {
     fn home_entries(&self) -> Vec<Entry> {
         let mut v: Vec<Entry> = match self.home.tab {
@@ -191,7 +199,7 @@ impl Workspace {
             .cursor_pointer()
             .hover(|s| s.bg(Theme::fill_hover_strong()))
             .when(open, |d| d.bg(Theme::fill_hover_strong()))
-            .child(icon("ellipsis", 16., Theme::text_caption()))
+            .child(icon(Icon::Ellipsis, 16., Theme::text_caption()))
             .child(canvas(move |b, _, _| {
                 rec.borrow_mut().insert(key.clone(), b);
             }, |_, _, _, _| {}).absolute().inset_0())
@@ -219,12 +227,12 @@ impl Workspace {
         // Too narrow for the search box: a search icon beside +, in the same style.
         let search = self.header_search(window, cx);
         let narrow = search.is_none();
-        let header = page_header(self, "Home", 26., cx).relative().children(search)
-            .when(narrow, |d| d.child(crate::ui::header_icon("home-search", "search").mr(px(4.))
+        let header = page_header(self, "Home", None, 26., cx).relative().children(search)
+            .when(narrow, |d| d.child(crate::ui::header_icon("home-search", Icon::Search).mr(px(4.))
                 .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
                 .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx)))))
             .child(
-            crate::ui::header_icon("home-new", "plus")
+            crate::ui::header_icon("home-new", Icon::Plus)
                 .tip("New document", Some(crate::shortcuts::hint("workspace::NewDoc", "⌘ + N")))
                 .on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))).into_any_element()
         );
@@ -251,18 +259,18 @@ impl Workspace {
                     cx.notify();
                 }))
         };
-        let toggle = |id: &'static str, ic: &'static str, on: bool, tip: &'static str, grid: bool| {
+        let toggle = |id: &'static str, ic: Icon, on: bool, tip: &'static str, grid: bool| {
             div()
                 .id(id)
                 .w(px(30.))
-                .h(px(24.))
+                .h(px(22.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(7.))
+                .rounded(px(6.))
                 .cursor_pointer()
-                .when(on, |d| d.bg(Theme::fill_hover_strong()))
-                .when(!on, |d| d.tip(tip, None).hover(|s| s.bg(Theme::fill_hover())))
+                .when(on, |d| d.bg(theme::raised(Theme::bg_body())).shadow(theme::shadow_button()))
+                .when(!on, |d| d.tip(tip, None))
                 .child(icon(ic, 14., if on { Theme::text_code() } else { Theme::text_caption() }))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.home.grid = grid;
@@ -286,25 +294,27 @@ impl Workspace {
                 div().id("home-sort").relative().h(px(28.)).px(px(10.)).flex().items_center().gap(px(6.))
                     .rounded(px(9.)).text_size(px(13.)).text_color(Theme::text_caption()).cursor_pointer()
                     .hover(|s| s.bg(Theme::fill_hover())).when(self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
-                    .child(icon("sort-down", 14., Theme::text_caption())).child(crate::settings::label(self.home.sort.label()))
+                    .child(icon(Icon::Sort, 14., Theme::text_caption())).child(crate::settings::label(self.home.sort.label()))
                     .child(self.home.track("home-sort"))
                     .on_click(cx.listener(|w, _, _, cx| { w.home.sort_menu = !w.home.sort_menu; cx.notify(); })),
             )
             .child(
                 // The view switcher: one white pill, the current view on a quiet fill.
-                crate::ui::pill()
-                    .ml(px(16.))
-                    .p(px(1.))
+                div()
+                    .ml(px(12.))
+                    .p(px(2.))
                     .flex()
+                    .flex_none()
                     .gap(px(2.))
-                    .rounded(px(9.))
-                    .child(toggle("home-grid", "view-grid", self.home.grid, "Switch to grid view", true))
-                    .child(toggle("home-list", "view-list", !self.home.grid, "Switch to list view", false)),
+                    .rounded(px(8.))
+                    .bg(Theme::fill_hover_strong())
+                    .child(toggle("home-grid", Icon::Grid, self.home.grid, "Switch to grid view", true))
+                    .child(toggle("home-list", Icon::List, !self.home.grid, "Switch to list view", false)),
             );
 
         let entries = self.home_entries();
         let body = if entries.is_empty() && (self.home.grid || self.home.tab == HomeTab::Recent) {
-            empty_state("illus/empty-list.svg", "Nothing here yet").into_any_element()
+            empty_state(Icon::Document, "Nothing here yet", "New documents appear here.").into_any_element()
         } else if self.home.grid {
             self.render_home_grid(&entries, window, cx)
         } else {
@@ -363,7 +373,7 @@ impl Workspace {
                         .when(sorted && self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
                         .child(crate::settings::label(c.label()))
                         .when(sorted, |d| {
-                            d.child(icon("sort-down", 12., Theme::text()))
+                            d.child(icon(Icon::Sort, 12., Theme::text()))
                                 .cursor_pointer()
                                 .on_click(cx.listener(|w, _, _, cx| {
                                     w.home.sort_menu = !w.home.sort_menu;
@@ -376,7 +386,7 @@ impl Workspace {
         header = header.child(div().w(px(60.)).flex_none());
         let mut rows = div().id("home-rows").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.home.list_scroll).px(px(24.)).pb(px(24.));
         if entries.is_empty() {
-            rows = rows.child(div().pt(px(72.)).child(empty_state("illus/empty-list.svg", "Nothing here yet")));
+            rows = rows.child(div().pt(px(72.)).child(empty_state(Icon::Document, "Nothing here yet", "New documents appear here.")));
         }
         for (i, e) in entries.iter().enumerate() {
             let (id, id2) = (e.id.clone(), e.id.clone());
@@ -406,7 +416,7 @@ impl Workspace {
                         .items_center()
                         .child(entry_icon(e))
                         .child(div().min_w_0().text_size(px(15.)).line_height(px(22.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(display_title(&e.title))))
-                        .when(e.meta.pinned, |d| d.child(icon("pin-filled", 14., Theme::pinned()).ml(px(6.)))),
+                        .when(e.meta.pinned, |d| d.child(icon(Icon::PinFilled, 14., Theme::pinned()).ml(px(6.)))),
                 );
             for c in &cols {
                 row = row.child(col_cell().pl(px(24.)).text_size(px(13.)).text_color(Theme::text_caption()).whitespace_nowrap().overflow_hidden().child(cell_text(e, *c)));
@@ -447,21 +457,21 @@ impl Workspace {
             let id = e.id.clone();
             let id2 = e.id.clone();
             let body = crate::library::without_block(&e.body);
-            let preview: String = body.lines().filter(|l| !l.trim().is_empty()).take(12).collect::<Vec<_>>().join("\n");
+            let preview: String = card_text(&body);
             let page = div().size_full().p(px(18.)).overflow_hidden().flex().flex_col()
-                .child(div().flex_none().mb(px(8.)).min_w_0().text_size(px(14.)).line_height(px(20.)).font_weight(FontWeight::BOLD).child(display_title(&e.title)))
-                .child(div().flex_1().min_h_0().overflow_hidden().text_size(px(11.)).line_height(px(16.)).font_family(theme::MONO_FONT).text_color(Theme::text_caption()).child(preview));
-            let frame = 4.;
+                .child(div().flex_none().mb(px(8.)).min_w_0().text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).child(display_title(&e.title)))
+                .child(div().flex_1().min_h_0().overflow_hidden().text_size(px(12.)).line_height(px(17.)).text_color(Theme::text_caption()).child(preview));
+            let frame = 1.;
             let menu_on = self.row_menu.as_ref().is_some_and(|m| m.id == e.id);
                 div()
                     .id(SharedString::from(format!("home-card-{}", e.id)))
                     .w_full().min_w_0().h(px(card_h)).relative().group("home-card")
                     .flex_none()
-                    .bg(Theme::bg_overlay()).p(px(frame))
+                    .bg(Theme::fill_pressed()).p(px(frame))
                     .overflow_hidden()
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::fill_hover_strong()))
-                    .when(menu_on, |d| d.bg(Theme::fill_hover_strong()))
+                    .hover(|s| s.bg(Theme::fill_active()))
+                    .when(menu_on, |d| d.bg(Theme::fill_active()))
                     .on_click(cx.listener(move |w, _, window, cx| w.open(&id, window, cx)))
                     .on_mouse_down(
                         MouseButton::Right,
@@ -470,8 +480,8 @@ impl Workspace {
                             cx.notify();
                         }),
                     )
-                    .child(crate::ui::continuous_page(20. - frame).size_full().overflow_hidden().child(page.relative()))
-                    .child(crate::ui::continuous_corner_mask(20., Theme::bg_body()))
+                    .child(crate::ui::continuous_page(CARD_RADIUS - frame).size_full().overflow_hidden().child(page.relative()))
+                    .child(crate::ui::continuous_corner_mask(CARD_RADIUS, Theme::bg_body()))
                     .child(
                         div().absolute().top(px(8.)).right(px(8.))
                             .when(!menu_on, |d| d.opacity(0.).group_hover("home-card", |s| s.opacity(1.)))
@@ -498,7 +508,7 @@ impl Workspace {
                     let g = SharedString::from(format!("home-order-{index}"));
                     menu = menu.child(menu_row(g.clone(), g.clone())
                         .child(menu_label(order.label(), g.clone(), gpui::white()).flex_1())
-                        .when(self.home.sort == order, |d| d.child(menu_glyph("check", 14., g)))
+                        .when(self.home.sort == order, |d| d.child(menu_glyph(Icon::Check, 14., g)))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             w.home.sort = order;
                             w.save_home();

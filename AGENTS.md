@@ -10,6 +10,7 @@ Thesio is Obsidian for Typst: a plain-file vault of `.typ` notes and papers. Rea
 - Plain files come first. Keep app state in `.thesio/` only for what a file cannot hold, and keep the vault readable without the app.
 - `library.yaml` is the source of truth for citations. Never overwrite a library file that failed to parse.
 - All vault paths pass through `Store::path`, which rejects anything leaving the vault.
+- Icons are `Icon` variants in `src/icon.rs`: an SF Symbol for macOS and a file in `assets/icons/` for other platforms. Never ship SF Symbol outlines as files.
 - Colors use `Theme::*` tokens, then the `theme::craft` scale. Shadows use `theme::shadow_*`, menus use `ui::popover` and `ui::menu_row`.
 - Record every `vendor/` change in vendor/PATCHES.md. Patch markers there read `quiet.md:` for provenance.
 - Bump `store::FORMAT` when a change to `.thesio/` would mislead older builds. New Meta fields take `#[serde(default)]`.
