@@ -345,7 +345,13 @@ impl Store {
     /// be rewritten keeps its text and raises a warning.
     fn rewrite_references(&mut self, old: &str, new: &str, before: &Layout, outcome: &mut Moved) {
         for entry in self.list().into_iter().filter(|e| e.typst) {
-            let Ok(text) = self.load(&entry.id) else { continue };
+            let text = match self.load(&entry.id) {
+                Ok(text) => text,
+                Err(e) => {
+                    outcome.warnings.push(format!("Could not update paths in {}: {e}", entry.id));
+                    continue;
+                }
+            };
             let previous = paths::moved(&entry.id, new, old).unwrap_or_else(|| entry.id.clone());
             let main = before.documents.top_document(&previous);
             let Some(updated) = rewrite_paths(&text, &previous, &entry.id, &main, |path| before.files.contains(path), |path| paths::moved(path, old, new)) else { continue };

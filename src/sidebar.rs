@@ -128,7 +128,7 @@ impl Workspace {
     /// be caught by a batch delete or move the user cannot see.
     fn listed_entries(&self) -> impl Iterator<Item = &Entry> {
         use crate::library::PAPERS_DIR;
-        use thesio_core::bibliography::LIBRARY_FILE;
+        use thesio_core::paths::LIBRARY_FILE;
         let hide = crate::preferences::prefs().hide_library_files;
         let inside = format!("{PAPERS_DIR}/");
         // A `sources` folder holding anything else is the user's own.

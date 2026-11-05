@@ -53,6 +53,13 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// The citation library, at the vault root.
+pub const LIBRARY_FILE: &str = "library.yaml";
+/// How every PDF starts.
+pub const PDF_HEADER: &[u8; 5] = b"%PDF-";
+
+pub fn is_pdf(name: &str) -> bool { name.ends_with(".pdf") }
+
 pub fn parent_of(path: &str) -> Option<&str> { path.rsplit_once('/').map(|(parent, _)| parent) }
 pub fn base_name(path: &str) -> &str { path.rsplit_once('/').map_or(path, |(_, name)| name) }
 pub fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }

@@ -3,6 +3,7 @@
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
 use crate::input::{TextField, TextFieldEvent};
+use crate::library::InvalidLibrary;
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme, craft};
 use crate::ui::{Icon, ToastKind, anchored_menu, icon, list_line, menu_action, menu_glyph, menu_label, menu_panel, menu_row, ui_text};
@@ -141,7 +142,7 @@ impl Workspace {
         let result = library.save_fields(&key, &new_key, &fields);
         let found_by_new_id = library.paper_ids(&new_key) != before;
         // Beside the field, the file's path only gets in the way.
-        let error = result.as_ref().err().map(|e| { let e = e.to_string(); e.split_once(" is not a valid library: ").map_or(e.clone(), |(_, why)| why.to_string()) });
+        let error = result.as_ref().err().map(|e| e.downcast_ref::<InvalidLibrary>().map_or_else(|| e.to_string(), |invalid| invalid.reason.clone()));
         if let Some(inspector) = &mut self.citations.details.panel { inspector.error = error; }
         if matches!(result, Ok(true)) {
             // Before the refresh: bibliographies list what documents cite.

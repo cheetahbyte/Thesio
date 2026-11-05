@@ -13,7 +13,7 @@ pub(crate) fn unix_secs(time: std::io::Result<SystemTime>) -> u64 {
     time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
 }
 
-/// Local (fixed +08:00 fallback when TZ unknown) civil time from a unix timestamp.
+/// Local civil time from a unix timestamp.
 pub fn civil(secs: u64) -> (i64, u32, u32, u32, u32) {
     let off = local_offset();
     let t = secs as i64 + off;
@@ -56,6 +56,6 @@ pub fn local_offset() -> i64 {
                 let m: i64 = digits.get(2..4)?.parse().ok()?;
                 Some(sign * (h * 3600 + m * 60))
             })
-            .unwrap_or(8 * 3600)
+            .unwrap_or(0)
     })
 }

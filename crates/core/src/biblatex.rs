@@ -2,13 +2,11 @@
 //! every field name, comes from the table in `source_type.rs`.
 
 use crate::paths::natural_cmp;
-use crate::source_type::{self, ACCESSED, ARTICLE, ARXIV, Field, LANGUAGE, MISC, REPOSITORY, Slot, TITLE, VERSION, WEB, biblatex_type, read, write};
+use crate::source_type::{self, ACCESSED, ARTICLE, ARXIV, EPRINT_TYPE, Field, KEYWORDS, LANGUAGE, MISC, REPOSITORY, Slot, TITLE, VERSION, WEB, biblatex_type, read, write};
 use anyhow::{Context, Result};
 use biblatex::ChunksExt;
 use hayagriva::types::Date;
 use serde_yaml::{Mapping, Value};
-
-const KEYWORDS: &str = "keywords";
 
 /// Hayagriva entries from BibLaTeX text.
 fn parse(text: &str) -> Result<Mapping> {
@@ -83,21 +81,16 @@ fn export_entry(entry: &hayagriva::Entry, raw: &Mapping, schema: &[&'static Fiel
     let kind = biblatex_type(raw);
     let mut fields: Vec<(&str, String)> = vec![];
     for field in schema {
-        let Some(name) = field.biblatex else { continue };
+        let Some(name) = field.biblatex_name(kind) else { continue };
         let value = value(field, entry, raw);
         if value.is_empty() { continue; }
-        let name = match name {
-            "booktitle" if kind == "article" => "journaltitle",
-            "organization" if matches!(kind, "thesis" | "report") => "institution",
-            name => name,
-        };
         // A serial number is the entry's own number, ahead of the issue it may share a name with.
         match fields.iter_mut().find(|(known, _)| *known == name) {
             Some(known) => if matches!(field.slot, Slot::Serial(_)) { known.1 = value; },
             None => fields.push((name, value)),
         }
     }
-    if !read(raw, ARXIV.slot).is_empty() { fields.push(("eprinttype", "arxiv".to_string())); }
+    if !read(raw, ARXIV.slot).is_empty() { fields.push((EPRINT_TYPE.0, EPRINT_TYPE.1.to_string())); }
     fields.push((KEYWORDS, source_type::tags(raw).join(", ")));
     let escape = |text: &str| text.replace('{', "\\{").replace('}', "\\}");
     let body = fields.iter().filter(|(_, value)| !value.is_empty()).map(|(name, value)| format!("  {name} = {{{}}},", escape(value))).collect::<Vec<_>>().join("\n");

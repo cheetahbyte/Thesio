@@ -145,7 +145,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     let mut response = request(url, "application/pdf", PAPER_TIMEOUT)?;
     let bytes = response.body_mut().with_config().limit(PAPER_LIMIT).read_to_vec()?;
     // Publishers often answer a PDF link with a login page.
-    anyhow::ensure!(bytes.starts_with(b"%PDF-"), "the link did not lead to a PDF");
+    anyhow::ensure!(bytes.starts_with(crate::paths::PDF_HEADER), "the link did not lead to a PDF");
     if let Some(dir) = dest.parent() { std::fs::create_dir_all(dir)?; }
     crate::paths::write_atomic(dest, &bytes)
 }

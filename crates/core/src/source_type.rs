@@ -39,9 +39,26 @@ pub struct Field {
     pub biblatex: Option<&'static str>,
 }
 
+impl Field {
+    /// Its name in an entry of BibLaTeX type `kind`.
+    pub fn biblatex_name(&self, kind: &str) -> Option<&'static str> {
+        self.biblatex.map(|name| match name {
+            "booktitle" if kind == "article" => "journaltitle",
+            "organization" if matches!(kind, "thesis" | "report") => "institution",
+            name => name,
+        })
+    }
+}
+
+/// BibLaTeX's field for tags, and the one that says what `eprint` holds.
+pub const KEYWORDS: &str = "keywords";
+pub const EPRINT_TYPE: (&str, &str) = ("eprinttype", "arxiv");
+
 const fn field(label: &'static str, hint: &'static str, slot: Slot, biblatex: &'static str) -> Field { Field { label, hint, long: false, slot, biblatex: Some(biblatex) } }
 const fn wrapped(label: &'static str, slot: Slot, biblatex: &'static str) -> Field { Field { label, hint: "", long: true, slot, biblatex: Some(biblatex) } }
 const fn unexported(label: &'static str, hint: &'static str, slot: Slot) -> Field { Field { label, hint, long: false, slot, biblatex: None } }
+
+const WORK_ID_KINDS: [&str; 4] = ["doi", "arxiv", "pmid", "isbn"];
 
 /// A bare `serial-number` counts as this kind of number.
 const PLAIN_SERIAL: &str = "serial";
@@ -307,11 +324,14 @@ pub fn set_tags(entry: &mut Mapping, tags: Vec<String>) {
     set(entry, "tags", (!tags.is_empty()).then(|| Value::Sequence(tags.into_iter().map(Value::from).collect())));
 }
 
-/// An entry's identifiers as (kind, number), lowercased for comparing. YAML
-/// reads a bare arXiv ID as a number.
-pub fn serial_numbers(entry: &Mapping) -> Vec<(String, String)> {
+/// The identifiers that name one work, as (kind, number), lowercased for
+/// comparing. An ISSN or a version number is shared by many. YAML reads a bare
+/// arXiv ID as a number.
+pub fn work_ids(entry: &Mapping) -> Vec<(String, String)> {
     entry.get("serial-number").and_then(Value::as_mapping).map_or(vec![], |serial| serial.iter().filter_map(|(kind, value)| {
-        Some((kind.as_str()?.to_lowercase(), scalar(value).filter(|number| !number.is_empty())?.to_lowercase()))
+        let kind = kind.as_str()?.to_lowercase();
+        WORK_ID_KINDS.contains(&kind.as_str()).then_some(())?;
+        Some((kind, scalar(value).filter(|number| !number.is_empty())?.to_lowercase()))
     }).collect())
 }
 

@@ -2,11 +2,10 @@
 //! The YAML mapping is the source of truth, so editing an entry keeps every
 //! field the form does not show.
 
-use crate::bibliography::LIBRARY_FILE;
 use crate::biblatex;
 use crate::history::Versions;
 use crate::identifier::PaperIds;
-use crate::paths::{base_name, document_name, natural_cmp, write_atomic};
+use crate::paths::{LIBRARY_FILE, base_name, document_name, natural_cmp, write_atomic};
 use crate::source_type::{self, DOI, Field, MISC, Slot, SourceType, read, write};
 use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -28,7 +27,12 @@ pub fn note_file(paper: &str) -> String {
 
 pub fn paper_file(key: &str) -> String {
     let stem: String = key.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '-' }).collect();
-    format!("{PAPERS_DIR}/{}.pdf", stem.trim_start_matches('.'))
+    paper_named(stem.trim_start_matches('.'))
+}
+
+/// The vault path of a paper with no source, under the name it came with.
+pub fn paper_named(stem: &str) -> String {
+    format!("{PAPERS_DIR}/{stem}.pdf")
 }
 
 /// A table row.
@@ -43,10 +47,20 @@ pub struct Row {
 }
 
 impl Row {
+    /// What to call it: its title, or its key without one.
+    pub fn label(&self) -> &str {
+        if self.title.is_empty() { &self.key } else { &self.title }
+    }
+
     /// Whether a lowercase search `query` finds this row.
     pub fn matches(&self, query: &str) -> bool {
         [&self.title, &self.authors, &self.year, &self.key].into_iter().chain(&self.tags).any(|text| text.to_lowercase().contains(query))
     }
+}
+
+/// The row whose paper is `id`.
+pub fn row_of_paper<'a>(rows: &'a [Row], id: &str) -> Option<&'a Row> {
+    rows.iter().find(|row| paper_file(&row.key) == id)
 }
 
 /// The outcome of adding a looked-up entry.
@@ -63,8 +77,23 @@ pub struct Library {
     parsed: hayagriva::Library,
 }
 
+/// Text Hayagriva or YAML refused as a library.
+#[derive(Debug)]
+pub struct InvalidLibrary {
+    path: PathBuf,
+    pub reason: String,
+}
+
+impl std::fmt::Display for InvalidLibrary {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} is not a valid library: {}", self.path.display(), self.reason)
+    }
+}
+
+impl std::error::Error for InvalidLibrary {}
+
 fn yaml_error(path: &Path, error: impl std::fmt::Display) -> anyhow::Error {
-    anyhow::anyhow!("{} is not a valid library: {error}", path.display())
+    InvalidLibrary { path: path.to_path_buf(), reason: error.to_string() }.into()
 }
 
 impl Library {
@@ -100,10 +129,16 @@ impl Library {
     }
 
     /// Keeps the file as it stands before a change. A run of quick edits keeps
-    /// the state before the first, unless `now`.
+    /// the state before the first, unless `now`. A file that cannot be read
+    /// cannot be kept, which stops the change.
     fn keep_version(&self, now: bool) -> Result<()> {
-        let (text, versions) = (self.text(), self.versions());
+        let text = match std::fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e).with_context(|| format!("Could not read {}", self.path.display())),
+        };
         if text.is_empty() { return Ok(()); }
+        let versions = self.versions();
         (if now { versions.keep(&text) } else { versions.keep_paced(&text) }).map(|_| ())
     }
 
@@ -303,8 +338,8 @@ impl Library {
     }
 
     fn find_duplicate(&self, entry: &Mapping) -> Option<String> {
-        let wanted = source_type::serial_numbers(entry);
-        self.entries.iter().find(|(_, existing)| existing.as_mapping().is_some_and(|map| source_type::serial_numbers(map).iter().any(|n| wanted.contains(n)))).and_then(|(key, _)| key.as_str()).map(str::to_string)
+        let wanted = source_type::work_ids(entry);
+        self.entries.iter().find(|(_, existing)| existing.as_mapping().is_some_and(|map| source_type::work_ids(map).iter().any(|n| wanted.contains(n)))).and_then(|(key, _)| key.as_str()).map(str::to_string)
     }
 
     /// `surname` + `year`, with a letter added when the key is taken.
@@ -467,6 +502,34 @@ mod tests {
         let first = library.add_fetched(entry("type: Article\ntitle: A\nserial-number:\n  arxiv: 2112.12331\n")).unwrap();
         assert_eq!(first, Added::New("entry".to_string()));
         assert_eq!(library.add_fetched(entry("type: Article\ntitle: B\nserial-number:\n  arxiv: 2112.12331\n")).unwrap(), Added::Duplicate("entry".to_string()));
+    }
+
+    #[test]
+    fn numbers_many_works_share_do_not_make_a_duplicate() {
+        let mut library = library("shared-serial");
+        let entry = |doi: &str| serde_yaml::from_str::<Mapping>(&format!("type: Article\ntitle: T\nserial-number:\n  doi: {doi}\n  issn: 1049-331X\n  version: 1\n")).unwrap();
+        library.add_fetched(entry("10.1/a")).unwrap();
+        assert!(matches!(library.add_fetched(entry("10.1/b")).unwrap(), Added::New(_)));
+    }
+
+    #[test]
+    fn a_library_that_cannot_be_read_back_is_not_replaced() {
+        let mut library = library("unreadable");
+        library.import_biblatex("@book{a, title = {A}}").unwrap();
+        let unreadable = [0xff, 0xfe, b'a'];
+        std::fs::write(&library.path, unreadable).unwrap();
+        assert!(library.delete_entries(&["a".to_string()]).is_err());
+        assert_eq!(std::fs::read(&library.path).unwrap(), unreadable);
+    }
+
+    #[test]
+    fn a_refused_edit_gives_its_reason_apart_from_the_path() {
+        let mut library = library("refused");
+        library.import_biblatex("@book{a, title = {A}}").unwrap();
+        let date = (source_type::DATE, "not a date".to_string());
+        let error = library.save_fields("a", "a", &[date]).unwrap_err();
+        let reason = &error.downcast_ref::<InvalidLibrary>().unwrap().reason;
+        assert!(!reason.is_empty() && !reason.contains(LIBRARY_FILE), "{reason}");
     }
 
     #[test]

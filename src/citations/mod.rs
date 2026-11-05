@@ -19,7 +19,7 @@ use gpui::*;
 use inspector::Details;
 use std::path::Path;
 use table::{Table, cell};
-use thesio_core::bibliography::LIBRARY_FILE;
+use thesio_core::paths::LIBRARY_FILE;
 use thesio_core::paths::natural_cmp;
 use thesio_core::references::note_link;
 
