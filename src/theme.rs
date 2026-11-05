@@ -257,6 +257,8 @@ impl Theme {
     pub fn bg_overlay() -> Hsla { c(craft::N100) }
     pub fn line_divider() -> Hsla { ca(craft::N1000, 0.06) }
     pub fn line_border() -> Hsla { ca(craft::N1000, 0.08) }
+    /// Finder's separators: one device pixel at the window's seams.
+    pub fn hairline() -> Hsla { ca(craft::N1000, 0.14) }
     pub fn fill_hover() -> Hsla { ca(craft::N1000, 0.045) }
     pub fn fill_hover_strong() -> Hsla { ca(craft::N1000, 0.06) }
     pub fn fill_pressed() -> Hsla { ca(craft::N1000, 0.09) }

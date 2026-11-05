@@ -1120,7 +1120,10 @@ impl Render for Workspace {
         // right and bottom edges. The sidebar sits sunken on the window
         // surface beside it; the change of value is the only line between
         // them (no gutter, radius, border or shadow).
-        let note = div().id("note").relative().flex_1().min_w_0().h_full().flex().bg(Theme::bg_body()).child(main);
+        let hairline = px(1. / window.scale_factor());
+        let note = div().id("note").relative().flex_1().min_w_0().h_full().flex().bg(Theme::bg_body()).child(main)
+            .child(div().absolute().top(px(HEADER_H)).left_0().right_0().h(hairline).bg(Theme::hairline()))
+            .when(self.sidebar_open, |d| d.child(div().absolute().top_0().bottom_0().left_0().w(hairline).bg(Theme::hairline())));
         div()
             .id("workspace")
             .key_context("Workspace")

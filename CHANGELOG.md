@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Draw hairlines between the sidebar and the content, and under the header, as Finder does.
 - Keep the editor's scroll position while typing, saving, and folding the bibliography. It used to jump to the top once you were more than a screen down.
 - Restyle the sidebar after Finder: chevrons sit at the end of the line, and the hover buttons are gone. Right-click the list for New document, New folder, and Select documents, or a row for its actions.
 - Choose from 19 source types in the Library, such as Journal Article, Book, Thesis, and Web Page. Each shows the fields that type has.
