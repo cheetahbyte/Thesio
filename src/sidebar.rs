@@ -91,6 +91,20 @@ fn checkbox(state: Check, disabled: bool, group: &'static str) -> Div {
         .when(state == Check::Partial, |d| d.child(div().w(px(8.)).h(px(2.)).rounded(px(1.)).bg(white)))
 }
 
+/// A sidebar row being dragged.
+#[derive(Clone)]
+pub(crate) struct DraggedRow {
+    id: String,
+    title: SharedString,
+}
+
+impl Render for DraggedRow {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().px(px(10.)).py(px(4.)).rounded(px(6.)).bg(Theme::bg_body()).border_1().border_color(Theme::line_border())
+            .shadow(theme::shadow_s4_down()).text_size(px(13.)).text_color(Theme::text()).child(self.title.clone())
+    }
+}
+
 impl Workspace {
     /// Sidebar width for the current window: the dragged width, kept between
     /// 268 and min(800, window − 540).
@@ -170,16 +184,16 @@ impl Workspace {
             list = list.child(self.section(0, "Pinned", cx));
             if !self.folded[0] {
                 for e in pinned {
-                    list = list.child(self.doc_row(e, "pinned", 0, false, cx));
+                    list = list.child(self.doc_row(e, "pinned", 0, cx));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
         }
-        list = list.child(self.section(1, "My documents", cx));
+        list = list.child(self.section(1, "Files", cx));
         if !self.folded[1] {
             let tree = crate::tree::Tree::new(&entries);
             for (e, depth) in tree.rows(|id| self.expanded.contains(id)) {
-                list = list.child(self.doc_row(e, "doc", depth, tree.has_children(&e.id), cx));
+                list = list.child(self.doc_row(e, "doc", depth, cx));
             }
         }
 
@@ -242,7 +256,10 @@ impl Workspace {
             .flex_col()
             .child(header)
             .child(nav)
-            .child(div().id("doc-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.list_scroll).child(list))
+            .child(div().id("doc-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.list_scroll).child(list)
+                // A drop that no row takes lands in the vault root.
+                .drag_over::<DraggedRow>(|s, _, _, _| s.bg(Theme::sidebar_hover()))
+                .on_drop(cx.listener(|w, row: &DraggedRow, _, cx| w.move_docs(std::slice::from_ref(&row.id), None, cx))))
             .child(footer)
             .into_any_element()
     }
@@ -422,6 +439,7 @@ impl Workspace {
                 w.row_menu = None;
                 cx.notify();
             })))
+            .child(trigger("section-add-folder", "folder-plus").ml(px(2.)).tip("New folder", None).on_click(cx.listener(|w, _, window, cx| w.new_folder(None, window, cx))))
             .child(trigger("section-add", "plus").ml(px(2.)).mr(px(4.)).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))))
         })
     }
@@ -453,7 +471,7 @@ impl Workspace {
         if ids.is_empty() {
             return;
         }
-        for id in &ids {
+        for id in ids.iter().filter(|id| id.ends_with(".typ")) {
             self.copy_doc(id, cx);
         }
         self.entries = self.store.list();
@@ -489,22 +507,19 @@ impl Workspace {
             .mb(px(ROW_GAP))
             .rounded(px(ROW_R))
             .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
-                    if w.rename.as_ref().is_some_and(|r| r.id == id) {
-                        return;
-                    }
-                    w.row_menu = None;
-                    // In 批量操作 a click checks the row; Shift-click enters it.
-                    if in_lib && (w.batch.is_some() || ev.modifiers.shift) {
-                        w.toggle_check(&id);
-                        cx.notify();
-                        return;
-                    }
-                    w.open(&id, window, cx);
-                }),
-            )
+            .on_click(cx.listener(move |w, ev: &ClickEvent, window, cx| {
+                if w.rename.as_ref().is_some_and(|r| r.id == id) {
+                    return;
+                }
+                w.row_menu = None;
+                // In selection mode a click checks the row; Shift-click enters it.
+                if in_lib && (w.batch.is_some() || ev.modifiers().shift) {
+                    w.toggle_check(&id);
+                    cx.notify();
+                    return;
+                }
+                w.open(&id, window, cx);
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
@@ -512,7 +527,7 @@ impl Workspace {
                     if batch && !w.batch.as_ref().is_some_and(|b| b.contains(&id2)) && !w.toggle_check(&id2) {
                         return;
                     }
-                    w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, sub: false, batch });
+                    w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, batch });
                     cx.notify();
                 }),
             )
@@ -547,7 +562,7 @@ impl Workspace {
                     // Hang the menu from the button; a negative x marks "from the button".
                     let b = lookup.borrow().get(&slot2).copied();
                     let pos = b.map_or(ev.position, |b| point(-b.left() - px(1.), b.top()));
-                    w.row_menu = Some(RowMenu { id: id.clone(), pos, corner: Corner::TopLeft, sub: false, batch: false });
+                    w.row_menu = Some(RowMenu { id: id.clone(), pos, corner: Corner::TopLeft, batch: false });
                     cx.notify();
                 }),
             )
@@ -574,7 +589,7 @@ impl Workspace {
             }))
     }
 
-    fn doc_row(&self, e: &Entry, key: &str, depth: usize, kids: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn doc_row(&self, e: &Entry, key: &str, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.view == View::Doc && self.current.as_deref() == Some(e.id.as_str());
         let renaming = self.rename.as_ref().filter(|r| r.id == e.id).map(|r| r.field.clone());
         let title = match renaming {
@@ -618,7 +633,15 @@ impl Workspace {
             .items_center()
             .when(selected || checked, |d| d.bg(Theme::sidebar_selected()))
             .when(!selected && !checked, |d| d.hover(|s| s.bg(Theme::sidebar_hover())))
-            .pl(px(6. + 18. * depth as f32))
+            .pl(px(6. + 16. * depth as f32))
+            .when(key == "doc" && !renaming && batch.is_none(), |d| {
+                // Dropping on a file means the folder it sits in.
+                let target = if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() };
+                let dragged = DraggedRow { id: e.id.clone(), title: display_title(&e.title).into() };
+                d.on_drag(dragged, |row, _, _, cx| cx.new(|_| row.clone()))
+                    .drag_over::<DraggedRow>(|s, _, _, _| s.bg(Theme::sidebar_selected()))
+                    .on_drop(cx.listener(move |w, row: &DraggedRow, _, cx| w.move_docs(std::slice::from_ref(&row.id), target.clone(), cx)))
+            })
             .when(batch.is_some(), |d| {
                 d.child(
                     div()
@@ -633,52 +656,40 @@ impl Workspace {
                         .child(checkbox(if checked { Check::On } else { Check::Off }, blocked, "doc-row")),
                 )
             })
-            .child({
-                // The icon shares 搜索/主页's column, so there is no arrow column:
-                // on pages with children, hovering the row swaps the icon for
-                // a 10px expand triangle.
-                let glyph = div().size(px(20.)).flex().items_center().justify_center()
-                    .child(icon(if e.folder { "folder" } else { "doc" }, ROW_ICON, if selected { Theme::text() } else { Theme::text_caption() }));
-                let slot = div().id(SharedString::from(format!("arrow-{key}-{}", e.id))).relative().size(px(20.)).flex_none().rounded(px(5.));
-                if kids {
-                    let open = self.expanded.contains(&e.id);
+            .when(key == "doc", |d| {
+                let slot = div().id(SharedString::from(format!("arrow-{}", e.id))).size(px(16.)).flex_none().flex().items_center().justify_center().rounded(px(4.));
+                d.child(if e.folder {
                     let toggle = e.id.clone();
+                    let open = self.expanded.contains(&e.id);
                     slot.hover(|s| s.bg(Theme::sidebar_selected()))
-                        .active(|s| s.bg(Theme::fill_pressed()))
-                        .child(glyph.group_hover("doc-row", |s| s.opacity(0.)))
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .opacity(0.)
-                                .group_hover("doc-row", |s| s.opacity(1.))
-                                .child(icon("tree-triangle", 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2))))),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |w, _, _, cx| {
-                                cx.stop_propagation();
-                                if !w.expanded.remove(&toggle) {
-                                    w.expanded.insert(toggle.clone());
-                                }
-                                cx.notify();
-                            }),
-                        )
+                        .child(icon("tree-triangle", 9., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |w, _, _, cx| {
+                            cx.stop_propagation();
+                            w.toggle_folder(&toggle, cx);
+                        }))
                 } else {
-                    slot.child(glyph)
-                }
+                    slot
+                })
             })
+            .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().child(icon(
+                match (e.folder, e.typst) {
+                    (true, _) if self.expanded.contains(&e.id) => "folder-open",
+                    (true, _) => "folder",
+                    (_, true) => "doc",
+                    _ => "file",
+                },
+                ROW_ICON,
+                if selected { Theme::text() } else { Theme::text_caption() },
+            )))
             .child(title)
-            .when(!renaming && batch.is_none() && key == "doc", |d| d.child(self.add_button(e, key, cx)))
+            .when(!renaming && batch.is_none() && key == "doc" && e.folder, |d| d.child(self.add_button(e, key, cx)))
             .when(!renaming && batch.is_none(), |d| d.child(self.more_button(e, key, cx).when(key == "doc", |d| d.ml(px(2.)))))
     }
 
     pub(crate) fn render_row_menu(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(m) = self.row_menu.clone() else { return vec![] };
-        let Some((pinned, starred)) = self.entries.iter().find(|e| e.id == m.id).map(|e| (e.meta.pinned, e.meta.starred > 0)) else { return vec![] };
+        let Some((pinned, starred, folder, typst)) = self.entries.iter().find(|e| e.id == m.id).map(|e| (e.meta.pinned, e.meta.starred > 0, e.folder, e.typst)) else { return vec![] };
         // The context menu: accent highlight with a white label.
         let item_c = |id: &'static str, ic: &'static str, label: &'static str, color: Hsla, icon_color: Hsla| {
             let g = SharedString::from(id);
@@ -713,82 +724,76 @@ impl Workspace {
                     .into_any_element(),
             ];
         }
-        // Hovering 下载 opens its submenu; hovering any other item closes it.
-        let set_sub = |open: bool| {
-            cx.listener(move |w: &mut Workspace, hovered: &bool, _, cx| {
-                if let Some(m) = w.row_menu.as_mut().filter(|m| *hovered && m.sub != open) {
-                    m.sub = open;
-                    cx.notify();
-                }
-            })
-        };
-        let (dup, mv, pin, star, dl, ren, del) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
-        let new_window = m.id.clone();
-        let sub_bounds = self.row_sub_bounds.clone();
-        // The row menu leaves out the cloud entries 在新标签页打开, 分享,
-        // 复制链接, 添加快捷方式到, 转移所有权, 设置密级.
-        let menu = popover()
-            .id("row-menu")
-            .occlude()
-            .w(px(ROW_MENU_W))
-            .px(px(5.))
-            .py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                if sub_bounds.get().is_none_or(|b| !b.contains(&ev.position)) {
+        let id = m.id.clone();
+        let close = cx.listener(|w: &mut Workspace, _: &MouseDownEvent, _, cx| {
+            w.row_menu = None;
+            cx.notify();
+        });
+        let mut menu = popover().id("row-menu").occlude().w(px(ROW_MENU_W)).px(px(5.)).py(px(crate::ui::MENU_PAD_Y)).on_mouse_down_out(close);
+        let (mut items, mut dividers) = (0, 0);
+        let root = self.store.root();
+        let reveal = id.clone();
+        let reveal_item = item("rm-reveal", "folder-input", if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in file manager" }).on_click(cx.listener(move |w, _, _, cx| {
+            w.row_menu = None;
+            cx.reveal_path(&root.join(&reveal));
+            cx.notify();
+        }));
+        if folder {
+            let (doc, sub, mv, ren, del) = (id.clone(), id.clone(), id.clone(), id.clone(), id);
+            menu = menu
+                .child(item("rm-new", "plus", "New document").on_click(cx.listener(move |w, _, window, cx| {
                     w.row_menu = None;
-                    cx.notify();
-                }
-            }))
-            .child(
-                item("rm-window", "copy", "Open in new window")
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, _, cx| {
+                    w.new_child(&doc, window, cx);
+                })))
+                .child(item("rm-new-folder", "folder-plus", "New folder").on_click(cx.listener(move |w, _, window, cx| {
+                    w.row_menu = None;
+                    w.new_folder(Some(&sub), window, cx);
+                })))
+                .child(divider())
+                .child(item("rm-rename", "square-pen", "Rename").on_click(cx.listener(move |w, _, window, cx| w.start_rename(&ren, window, cx))))
+                .child(item("rm-move", "folder-input", "Move to").on_click(cx.listener(move |w, _, window, cx| w.open_move(vec![mv.clone()], window, cx))))
+                .child(reveal_item)
+                .child(divider())
+                .child(item_c("rm-del", "bin", "Delete", Theme::danger(), Theme::danger()).on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))));
+            items += 6;
+            dividers += 2;
+        } else {
+            let (dup, mv, pin, star, pdf, ren, del, new_window) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
+            if typst {
+                menu = menu
+                    .child(item("rm-window", "copy", "Open in new window").on_click(cx.listener(move |w, _, _, cx| {
                         w.row_menu = None;
                         let id = new_window.clone();
                         cx.defer(move |cx| crate::open_main_window(false, Some(id), cx));
                         cx.notify();
-                    })),
-            )
-            .child(
-                item("rm-copy", "copy", "Duplicate")
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup, window, cx))),
-            )
-            .child(
-                item("rm-move", "folder-input", "Move to")
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, window, cx| w.open_move(vec![mv.clone()], window, cx))),
-            )
-            .child(
-                item("rm-pin", if pinned { "pin-off" } else { "pin" }, if pinned { "Unpin" } else { "Pin" })
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, _, cx| w.toggle_pin(&pin, cx))),
-            )
-            .child(
-                item("rm-star", if starred { "star-off" } else { "star" }, if starred { "Remove from favorites" } else { "Add to favorites" })
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star, cx))),
-            )
-            .child(divider())
-            .child(
-                item("rm-download", "export", "Download")
-                    .when(m.sub, |d| d.bg(Theme::menu_highlight()).text_color(gpui::white()))
-                    .child(icon("chevron-right", 10., if m.sub { gpui::white() } else { Theme::text_caption() }).group_hover("rm-download", |s| s.text_color(gpui::white())))
-                    .on_hover(set_sub(true)),
-            )
-            .child(
-                item("rm-rename", "square-pen", "Rename")
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, window, cx| w.start_rename(&ren, window, cx))),
-            )
-            .child(divider())
-            .child(
-                item_c("rm-del", "bin", "Delete", Theme::danger(), Theme::danger())
-                    .on_hover(set_sub(false))
-                    .on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))),
-            );
+                    })))
+                    .child(item("rm-copy", "copy", "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup, window, cx))));
+                items += 2;
+            }
+            menu = menu
+                .child(item("rm-move", "folder-input", "Move to").on_click(cx.listener(move |w, _, window, cx| w.open_move(vec![mv.clone()], window, cx))))
+                .child(item("rm-pin", if pinned { "pin-off" } else { "pin" }, if pinned { "Unpin" } else { "Pin" }).on_click(cx.listener(move |w, _, _, cx| w.toggle_pin(&pin, cx))))
+                .child(item("rm-star", if starred { "star-off" } else { "star" }, if starred { "Remove from favorites" } else { "Add to favorites" }).on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star, cx))))
+                .child(divider());
+            items += 3;
+            dividers += 1;
+            if typst {
+                menu = menu.child(item("rm-pdf", "export", "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
+                    w.row_menu = None;
+                    w.export_pdf(&pdf, cx);
+                })));
+                items += 1;
+            }
+            menu = menu
+                .child(item("rm-rename", "square-pen", "Rename").on_click(cx.listener(move |w, _, window, cx| w.start_rename(&ren, window, cx))))
+                .child(reveal_item)
+                .child(divider())
+                .child(item_c("rm-del", "bin", "Delete", Theme::danger(), Theme::danger()).on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))));
+            items += 3;
+            dividers += 1;
+        }
         let vh = f32::from(window.viewport_size().height);
-        let menu_h = row_menu_height(8, 2);
+        let menu_h = row_menu_height(items, dividers);
         // From the "…" button: hang 2px below it, or sit 2px above it when
         // there's no room below. From a right-click: at the pointer.
         let (origin, corner) = if m.pos.x < px(0.) {
@@ -801,44 +806,10 @@ impl Workspace {
         } else {
             (m.pos, m.corner)
         };
-        let menu_top = match corner {
-            Corner::BottomLeft | Corner::BottomRight => f32::from(origin.y) - menu_h,
-            _ => f32::from(origin.y),
-        };
-        let mut out = vec![
+        vec![
             deferred(anchored().anchor(corner).position(origin).snap_to_window_with_margin(px(8.)).child(menu))
                 .with_priority(2)
                 .into_any_element(),
-        ];
-        if m.sub {
-            let record = self.row_sub_bounds.clone();
-            record.set(None);
-            // Level the submenu's first item with 下载 (the 5th item, after one divider).
-            let top = menu_top + 4. * ROW_ITEM + ROW_DIVIDER;
-            let left = match corner {
-                Corner::TopRight | Corner::BottomRight => origin.x - px(ROW_MENU_W),
-                _ => origin.x,
-            };
-            let x = left + px(ROW_MENU_W + 4.);
-            out.push(
-                deferred(
-                    anchored().anchor(Corner::TopLeft).position(point(x, px(top))).snap_to_window_with_margin(px(8.)).child(
-                        popover()
-                            .id("rm-download-menu")
-                            .occlude()
-                            .w(px(130.))
-                            .px(px(5.))
-                            .py(px(crate::ui::MENU_PAD_Y))
-                            .child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
-                            .child(crate::ui::menu_row("rm-pdf", "rm-pdf".into()).mx(px(0.)).child(crate::ui::menu_label("PDF", "rm-pdf".into(), gpui::white())).on_click(cx.listener(move |w, _, _, cx| { w.row_menu = None; w.export_pdf(&dl, cx); }))),
-                    ),
-                )
-                .with_priority(2)
-                .into_any_element(),
-            );
-        } else {
-            self.row_sub_bounds.set(None);
-        }
-        out
+        ]
     }
 }

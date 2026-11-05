@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -39,10 +40,6 @@ pub struct Meta {
 
 fn is_zero(v: &u64) -> bool { *v == 0 }
 
-impl Meta {
-    /// Position among siblings.
-    pub fn sibling_key(&self) -> u64 { self.created }
-}
 
 /// Window-level UI state (`.thesio/settings.json`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -57,6 +54,9 @@ pub struct Settings {
     pub home_sort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<[f32; 2]>,
+    /// Folders open in the sidebar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expanded: Vec<String>,
 }
 
 /// A trashed file or folder, as kept in `.thesio/trash.json`.
@@ -90,7 +90,9 @@ pub struct Entry {
     pub meta: Meta,
     pub title: String,
     pub folder: bool,
-    /// File text, for search and snippets.
+    /// A `.typ` document, as opposed to a folder or another kind of file.
+    pub typst: bool,
+    /// A document's text, for search and snippets.
     pub body: String,
 }
 
@@ -182,6 +184,36 @@ fn file_stem(title: &str) -> String {
     if clean.is_empty() { UNTITLED.to_string() } else { clean.to_string() }
 }
 
+/// Orders names as people read them: ignoring case, with runs of digits
+/// compared by value, so "Chapter 2" sorts before "Chapter 10".
+pub fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return a.cmp(b),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(p), Some(q)) if p.is_ascii_digit() && q.is_ascii_digit() => {
+                let take = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut digits = String::new();
+                    while let Some(d) = it.next_if(char::is_ascii_digit) { digits.push(d); }
+                    digits
+                };
+                let (m, n) = (take(&mut x), take(&mut y));
+                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                let order = m.len().cmp(&n.len()).then_with(|| m.cmp(n));
+                if order != Ordering::Equal { return order; }
+            }
+            (Some(p), Some(q)) => {
+                let order = p.to_lowercase().cmp(q.to_lowercase());
+                if order != Ordering::Equal { return order; }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
 fn parent_of(id: &str) -> Option<&str> { id.rsplit_once('/').map(|(parent, _)| parent) }
 fn base_name(id: &str) -> &str { id.rsplit_once('/').map_or(id, |(_, name)| name) }
 fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }
@@ -224,7 +256,7 @@ impl Store {
     fn save_index(&self) -> Result<()> { save_json(&self.root.join(STATE_DIR).join("index.json"), &self.index) }
     fn save_trash(&self) -> Result<()> { save_json(&self.root.join(STATE_DIR).join("trash.json"), &self.trash) }
 
-    /// Every `.typ` file and visible folder, parents before children.
+    /// Every visible file and folder, parents before children.
     pub fn list(&mut self) -> Vec<Entry> {
         let mut out = vec![];
         self.scan(&self.root.clone(), None, &mut out);
@@ -245,9 +277,11 @@ impl Store {
             meta.modified = unix_secs(info.modified());
             meta.parent = parent.map(str::to_string);
             if info.is_dir() {
-                out.push(Entry { id: id.clone(), meta, title: name, folder: true, body: String::new() });
+                out.push(Entry { id: id.clone(), meta, title: name, folder: true, typst: false, body: String::new() });
                 self.scan(&item.path(), Some(&id), out);
-            } else if item.path().extension().is_some_and(|e| e == EXTENSION) {
+            } else if !item.path().extension().is_some_and(|e| e == EXTENSION) {
+                out.push(Entry { id, meta, title: name, folder: false, typst: false, body: String::new() });
+            } else {
                 let stamp = (meta.modified, info.len());
                 let fresh = self.bodies.get(&id).filter(|b| b.stamp == stamp).map(|b| b.text.clone());
                 let body = fresh.unwrap_or_else(|| {
@@ -256,7 +290,7 @@ impl Store {
                     text
                 });
                 let title = name.strip_suffix(".typ").unwrap_or(&name).to_string();
-                out.push(Entry { id, meta, title, folder: false, body });
+                out.push(Entry { id, meta, title, folder: false, typst: true, body });
             }
         }
     }
@@ -322,8 +356,9 @@ impl Store {
 
     /// Renames a file or folder in place and returns its new id.
     pub fn rename(&mut self, id: &str, title: &str) -> Result<String> {
-        let is_file = self.path(id)?.is_file();
-        let name = if is_file { format!("{}.{EXTENSION}", file_stem(title)) } else { file_stem(title) };
+        // A document's title leaves out the extension; other names are whole.
+        let typst = self.path(id)?.is_file() && id.ends_with(".typ");
+        let name = if typst { format!("{}.{EXTENSION}", file_stem(title)) } else { file_stem(title) };
         let new = join(parent_of(id), &name);
         self.relocate(id, &new)?;
         Ok(new)

@@ -49,6 +49,10 @@ A failed save keeps the changes pending, shows the error in the top bar, and ask
 
 A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates the open document, so its editor and undo history survive. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
 
+## Sidebar
+
+`tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`store::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
+
 ## Limits
 
 - Fonts are the set bundled with Typst.

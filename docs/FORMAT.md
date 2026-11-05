@@ -6,12 +6,12 @@ A vault is a plain folder, by default `~/Documents/Thesio`. Set `THESIO_HOME` to
 Thesio/
 ├── notes/reading.typ      Documents, in any folders you like
 ├── thesis.typ
-├── references.bib         Any other files; the sidebar lists only .typ files and folders
+├── references.bib         Any other files; text files open in the editor without a preview
 ├── .thesio/               App state
 │   ├── format.json        {"format": 1}: store::FORMAT
 │   ├── index.json         Vault path to Meta
 │   ├── trash.json         Trash key to Trashed
-│   ├── settings.json      Window state
+│   ├── settings.json      Window state and open folders
 │   ├── preferences.json   Appearance
 │   └── shortcuts.json     Custom shortcuts
 └── .trash/<key>/<name>    Deleted files and folders

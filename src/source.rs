@@ -69,6 +69,8 @@ type Painted = Rc<RefCell<HashMap<usize, PaintedLine>>>;
 
 pub struct SourceEditor {
     pub buffer: Buffer,
+    /// Highlight as Typst; other text files stay plain.
+    typst: bool,
     focus: FocusHandle,
     list: ListState,
     painted: Painted,
@@ -86,11 +88,11 @@ impl Focusable for SourceEditor {
 }
 
 impl SourceEditor {
-    pub fn new(text: String, cx: &mut Context<Self>) -> Self {
+    pub fn new(text: String, typst: bool, cx: &mut Context<Self>) -> Self {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
-        let spans = highlights(buffer.text());
-        Self { buffer, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None }
+        let spans = if typst { highlights(buffer.text()) } else { vec![] };
+        Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None }
     }
 
     pub fn focus(&self, window: &mut Window) { window.focus(&self.focus); }
@@ -103,7 +105,7 @@ impl SourceEditor {
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
-        self.spans = highlights(self.buffer.text());
+        if self.typst { self.spans = highlights(self.buffer.text()); }
         self.list.reset(self.buffer.line_count());
         self.goal_x = None;
         self.reveal(cx);

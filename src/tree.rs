@@ -1,6 +1,5 @@
-//! 我的文档 as a page tree: parent links kept in the
-//! index, the sidebar's expand state, 新建子页面, 移动到 and its dialog, and
-//! the ancestor chain used by the header breadcrumbs.
+//! The vault as a tree: folders first, then names in natural order. Also the
+//! expand state, new files inside folders, moving, and the breadcrumb chain.
 
 use crate::app::Workspace;
 use crate::settings::display_title;
@@ -12,9 +11,8 @@ use crate::ui::{ROW_RADIUS, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::{HashMap, HashSet};
 
-/// Children of every page, keyed by parent (`None`: the top level, in list
-/// order); siblings oldest first. A page whose parent is gone, or that sits
-/// in a parent cycle, is shown at the top level.
+/// Children of every folder, keyed by parent (`None`: the vault root). An
+/// entry whose parent is missing is shown at the top level.
 pub(crate) struct Tree<'a> {
     roots: Vec<&'a Entry>,
     kids: HashMap<&'a str, Vec<&'a Entry>>,
@@ -23,7 +21,7 @@ pub(crate) struct Tree<'a> {
 impl<'a> Tree<'a> {
     pub fn new(entries: &'a [Entry]) -> Self {
         let ids: HashSet<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-        let parent = |e: &'a Entry| e.meta.parent.as_deref().filter(|p| ids.contains(p) && *p != e.id);
+        let parent = |e: &'a Entry| e.meta.parent.as_deref().filter(|p| ids.contains(p));
         let mut roots: Vec<&Entry> = vec![];
         let mut kids: HashMap<&str, Vec<&Entry>> = HashMap::new();
         for e in entries {
@@ -32,25 +30,10 @@ impl<'a> Tree<'a> {
                 None => roots.push(e),
             }
         }
-        // Lift pages unreachable from the top level (cycles).
-        let mut seen: HashSet<&str> = HashSet::new();
-        let mut stack: Vec<&str> = roots.iter().map(|e| e.id.as_str()).collect();
-        while let Some(id) = stack.pop() {
-            if seen.insert(id) {
-                stack.extend(kids.get(id).map_or(vec![], |v| v.iter().map(|e| e.id.as_str()).collect()));
-            }
-        }
-        for e in entries {
-            if !seen.contains(e.id.as_str()) {
-                seen.insert(&e.id);
-                if let Some(v) = parent(e).and_then(|p| kids.get_mut(p)) {
-                    v.retain(|x| x.id != e.id);
-                }
-                roots.push(e);
-            }
-        }
+        let order = |a: &&Entry, b: &&Entry| b.folder.cmp(&a.folder).then_with(|| crate::store::natural_cmp(&a.title, &b.title));
+        roots.sort_by(order);
         for v in kids.values_mut() {
-            v.sort_by_key(|e| e.meta.sibling_key());
+            v.sort_by(order);
         }
         Tree { roots, kids }
     }
@@ -62,9 +45,6 @@ impl<'a> Tree<'a> {
         }
     }
 
-    pub fn has_children(&self, id: &str) -> bool {
-        !self.children(Some(id)).is_empty()
-    }
 
     /// Pre-order rows with their depth, descending into pages `open` says yes to.
     pub fn rows(&self, open: impl Fn(&str) -> bool) -> Vec<(&'a Entry, usize)> {
@@ -123,11 +103,11 @@ impl Workspace {
     /// Expand the sidebar down to `id`.
     pub(crate) fn reveal_in_tree(&mut self, id: &str) {
         let ids: Vec<String> = self.ancestors(id).iter().map(|e| e.id.clone()).collect();
-        self.expanded.extend(ids);
+        for id in ids { self.set_expanded(&id, true); }
     }
 
 
-    /// The row "+" → 文档: a new page under `parent`, opened.
+    /// A new document in the folder `parent`, or beside it when it is a file.
     pub fn new_child(&mut self, parent: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Only folders hold files: a file's "+" adds a sibling.
         let parent = self.entries.iter().find(|e| e.id == parent).and_then(|e| if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() });
@@ -140,7 +120,7 @@ impl Workspace {
             Ok(id) => {
                 self.entries = self.store.list();
                 self.sort();
-                if let Some(parent) = parent { self.expanded.insert(parent.to_string()); }
+                if let Some(parent) = parent { self.set_expanded(parent, true); }
                 self.open(&id, window, cx);
             }
             Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not create document: {}", crate::settings::diagnostic(&e.to_string()))),
@@ -174,26 +154,50 @@ impl Workspace {
         cx.notify();
     }
 
-    /// 移动到: hang each page under `target` (`None`: top level), skipping
-    /// moves into its own subtree.
+    /// Moves files and folders into `target` (`None`: the vault root), skipping
+    /// what is already there and moves of a folder into itself.
     pub(crate) fn move_docs(&mut self, ids: &[String], target: Option<String>, cx: &mut Context<Self>) {
-        for id in ids {
-            let inside = target.as_ref().is_some_and(|t| Tree::new(&self.entries).subtree(id).contains(t));
-            if inside {
+        self.flush(cx);
+        let mut moved = 0;
+        // An item inside another selected folder goes with it.
+        for id in ids.iter().filter(|id| !ids.iter().any(|o| id.starts_with(&format!("{o}/")))) {
+            let parent = self.entries.iter().find(|e| &e.id == id).and_then(|e| e.meta.parent.clone());
+            let inside = target.as_ref().is_some_and(|t| t == id || t.starts_with(&format!("{id}/")));
+            if inside || parent == target {
                 continue;
             }
-            self.flush(cx);
             match self.store.set_parent(id, target.as_deref()) {
-                Ok(new) => self.path_changed(id, &new, cx),
-                Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move document: {}", crate::settings::diagnostic(&e.to_string()))),
+                Ok(new) => {
+                    self.path_changed(id, &new, cx);
+                    moved += 1;
+                }
+                Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move: {}", crate::settings::diagnostic(&e.to_string()))),
             }
         }
         if let Some(t) = &target {
-            self.expanded.insert(t.clone());
+            self.set_expanded(t, true);
             self.reveal_in_tree(&t.clone());
         }
-        self.show_toast("Moved successfully", cx);
+        if moved > 0 { self.show_toast("Moved successfully", cx); }
         cx.notify();
+    }
+
+    /// Opens or closes a folder and remembers it for the next launch.
+    pub(crate) fn set_expanded(&mut self, id: &str, open: bool) {
+        let changed = if open { self.expanded.insert(id.to_string()) } else { self.expanded.remove(id) };
+        if changed { self.save_expanded(); }
+    }
+
+    pub(crate) fn toggle_folder(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.set_expanded(id, !self.expanded.contains(id));
+        cx.notify();
+    }
+
+    pub(crate) fn save_expanded(&self) {
+        let mut settings = self.store.settings();
+        settings.expanded = self.expanded.iter().cloned().collect();
+        settings.expanded.sort();
+        let _ = self.store.save_settings(&settings);
     }
 
     /// The 移动到 dialog: 我的文档 on the left, its page tree on the right.
@@ -242,7 +246,7 @@ impl Workspace {
                     .rounded(px(9.))
                     .bg(Theme::fill_hover_strong())
                     .child(icon("library", 15., Theme::text_code()))
-                    .child(div().ml(px(8.)).text_size(px(13.)).line_height(px(20.)).child("My documents")),
+                    .child(div().ml(px(8.)).text_size(px(13.)).line_height(px(20.)).child("Vault")),
             );
 
         let row = |key: String, selected: bool| {
@@ -266,7 +270,7 @@ impl Workspace {
                 row("move-root".into(), dlg.target == Some(None))
                     .pl(px(16.))
                     .child(icon("library", 16., Theme::text_caption()))
-                    .child(title("My documents".into()))
+                    .child(title("Vault".into()))
                     .on_click(cx.listener(|w, _, _, cx| {
                         if let Some(d) = w.move_dlg.as_mut() {
                             d.target = Some(None);

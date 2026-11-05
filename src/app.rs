@@ -147,8 +147,6 @@ pub struct RowMenu {
     pub pos: Point<Pixels>,
     /// Which corner of the menu sits at `pos`.
     pub corner: Corner,
-    /// 下载 submenu open.
-    pub sub: bool,
     /// The 批量操作 menu for the checked rows.
     pub batch: bool,
 }
@@ -219,8 +217,6 @@ pub struct Workspace {
     pub doc_menu: bool,
     pub list_scroll: ScrollHandle,
     pub search_scroll: ScrollHandle,
-    /// Last-frame bounds of the row menu's 下载 submenu.
-    pub row_sub_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// 批量操作 mode: the checked docs of 我的文档, in check order.
     pub batch: Option<Vec<String>>,
     /// The open confirmation dialog.
@@ -312,6 +308,7 @@ impl Workspace {
             this.update(cx, |w, cx| { w.cancel_shortcut_recording(cx); w.save_before(cx, |_, window, _| window.remove_window()) }).unwrap_or(true)
         });
         let sidebar_width = store.settings().sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
+        let store_expanded: HashSet<String> = store.settings().expanded.into_iter().collect();
         let mut ws = Workspace {
             shortcut_recording: None,
             shortcut_strokes: vec![],
@@ -336,7 +333,6 @@ impl Workspace {
             doc_menu: false,
             list_scroll: ScrollHandle::new(),
             search_scroll: ScrollHandle::new(),
-            row_sub_bounds: Rc::new(Cell::new(None)),
             batch: None,
             confirm: None,
             view: View::Doc,
@@ -349,7 +345,7 @@ impl Workspace {
             more_btn_bounds: Rc::new(Cell::new(None)),
             native_sidebar: Default::default(),
             folded: [false; 2],
-            expanded: HashSet::new(),
+            expanded: store_expanded,
             move_dlg: None,
             focus: cx.focus_handle(),
             save_task: None,
@@ -360,7 +356,7 @@ impl Workspace {
         };
         ws.sort();
         ws.load_home();
-        match document.or_else(|| ws.entries.iter().find(|e| !e.folder).map(|e| e.id.clone())) {
+        match document.or_else(|| ws.first_document()) {
             Some(id) => ws.open(&id, window, cx),
             None => ws.new_doc(window, cx),
         }
@@ -398,8 +394,7 @@ impl Workspace {
             return true;
         }
         if self.entries.iter().any(|e| e.id == id && e.folder) {
-            if !self.expanded.remove(id) { self.expanded.insert(id.to_string()); }
-            cx.notify();
+            self.toggle_folder(id, cx);
             return false;
         }
         let target = id.to_string();
@@ -411,26 +406,34 @@ impl Workspace {
         let text = match self.store.load(id) {
             Ok(text) => text,
             Err(e) => {
-                self.show_toast_kind(ToastKind::Error, &format!("Could not open document: {}", crate::settings::diagnostic(&e.to_string())), cx);
+                // Binary files belong to the system's apps; scripted runs must not start any.
+                if !id.ends_with(".typ") && std::env::var_os("THESIO_SCRIPT").is_none() {
+                    cx.open_with_system(&self.store.root().join(id));
+                } else {
+                    self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {}", crate::settings::diagnostic(&e.to_string())), cx);
+                }
                 cx.notify();
                 return false;
             }
         };
-        let editor = cx.new(|cx| SourceEditor::new(text.clone(), cx));
+        let typst = id.ends_with(".typ");
+        let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.root();
-        let preview = cx.new(|_| Preview::new(root, id.to_string()));
-        preview.update(cx, |p, cx| p.update(text, cx));
+        let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string())));
+        if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
         self.editor_subs = vec![
             cx.subscribe_in(&editor, window, |this, editor, _: &SourceEvent, window, cx| {
                 let text = editor.read(cx).buffer.text().to_string();
                 if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
                 this.schedule_save(window, cx);
             }),
-            cx.subscribe_in(&preview, window, |this, _, ev: &PreviewEvent, window, cx| {
+        ];
+        if let Some(preview) = &preview {
+            self.editor_subs.push(cx.subscribe_in(preview, window, |this, _, ev: &PreviewEvent, window, cx| {
                 let PreviewEvent::Jump(offset) = ev;
                 if let Some(editor) = &this.editor { editor.update(cx, |e, cx| e.go_to(*offset, window, cx)); }
-            }),
-        ];
+            }));
+        }
         // Opening a document puts the caret in it, unless the user is typing a search.
         if !self.search_open {
             editor.read(cx).focus(window);
@@ -440,7 +443,7 @@ impl Workspace {
                 e.meta.opened = crate::time::now();
             }
         self.editor = Some(editor);
-        self.preview = Some(preview);
+        self.preview = preview;
         self.current = Some(id.to_string());
         self.reveal_in_tree(id);
         self.status = SaveStatus::Idle;
@@ -458,8 +461,19 @@ impl Workspace {
             self.current = Some(path.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path)); }
         }
+        let prefix = format!("{old}/");
+        let renamed: Vec<String> = self.expanded.iter().filter(|e| *e == old || e.starts_with(&prefix)).cloned().collect();
+        for path in renamed {
+            self.expanded.remove(&path);
+            self.expanded.insert(format!("{new}{}", &path[old.len()..]));
+        }
+        self.save_expanded();
         self.entries = self.store.list();
         self.sort();
+    }
+
+    fn first_document(&self) -> Option<String> {
+        self.entries.iter().find(|e| e.typst).map(|e| e.id.clone())
     }
 
     pub fn new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -483,9 +497,9 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A new folder at the vault root, with its name ready to edit.
-    pub fn new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.store.create_folder(None, "New folder") {
+    /// A new folder, with its name ready to edit.
+    pub fn new_folder(&mut self, parent: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
+        match self.store.create_folder(parent, "New folder") {
             Ok(id) => {
                 self.entries = self.store.list();
                 self.sort();
@@ -540,7 +554,7 @@ impl Workspace {
         if self.current.is_none() {
             // Stay on Home or Trash if that's where the delete came from.
             let view = self.view;
-            match self.entries.iter().find(|e| !e.folder).map(|e| e.id.clone()) {
+            match self.first_document() {
                 Some(next) => self.open(&next, window, cx),
                 None => self.new_doc(window, cx),
             }
@@ -1044,7 +1058,7 @@ impl Render for Workspace {
                                 .h_full()
                                 .children(self.editor.clone()),
                         )
-                        .child(div().relative().flex_1().min_w_0().h_full().children(self.preview.clone())),
+                        .when_some(self.preview.clone(), |d, preview| d.child(div().relative().flex_1().min_w_0().h_full().child(preview))),
                 )
                 .into_any_element(),
             View::Home => self.render_home(window, cx),
@@ -1080,7 +1094,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|w, _: &OpenAbout, _, cx| w.open_settings(crate::settings::Page::About, cx)))
             .on_action(cx.listener(|w, _: &GoHome, _, cx| w.show_view(View::Home, cx)))
             .on_action(cx.listener(|w, _: &NewDoc, window, cx| w.new_doc(window, cx)))
-            .on_action(cx.listener(|w, _: &NewFolder, window, cx| w.new_folder(window, cx)))
+            .on_action(cx.listener(|w, _: &NewFolder, window, cx| w.new_folder(None, window, cx)))
             .on_action(cx.listener(|w, _: &ImportDoc, window, cx| w.open_import(window, cx)))
             .on_action(cx.listener(|w, _: &ToggleSidebar, _, cx| {
                 w.sidebar_open = !w.sidebar_open;

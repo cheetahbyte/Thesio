@@ -3,7 +3,7 @@
 use crate::app::Workspace;
 use crate::theme::{self, Theme};
 use crate::ui::popover;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 
 const MENU_W: f32 = 200.;
 /// Gap between the "…" button and the menu.
@@ -70,6 +70,7 @@ impl Workspace {
         let entry = self.entries.iter().find(|e| e.id == id);
         let pinned = entry.is_some_and(|e| e.meta.pinned);
         let starred = entry.is_some_and(|e| e.meta.starred > 0);
+        let typst = entry.is_some_and(|e| e.typst);
         let (pin_id, star_id, mv_id, del_id, dup_id, pdf_id) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
         let menu = popover()
             .id("doc-menu")
@@ -90,12 +91,12 @@ impl Workspace {
             })))
             .child(menu_item("dm-star", if starred { "star-off" } else { "star" }, if starred { "Remove from favorites" } else { "Add to favorites" })
                 .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star_id, cx))))
-            .child(divider())
-            .child(menu_item("dm-copy", "copy", "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
-            .child(menu_item("dm-pdf", "export", "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
-                w.close_doc_menu(cx);
-                w.export_pdf(&pdf_id, cx);
-            })))
+            .when(typst, |d| d.child(divider())
+                .child(menu_item("dm-copy", "copy", "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
+                .child(menu_item("dm-pdf", "export", "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
+                    w.close_doc_menu(cx);
+                    w.export_pdf(&pdf_id, cx);
+                }))))
             .child(divider())
             .child(menu_item("dm-delete", "bin", "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))))
             .child(divider())

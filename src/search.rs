@@ -259,7 +259,7 @@ impl Workspace {
     pub fn search_results(&self, cx: &App) -> Vec<&Entry> {
         let q = self.query(cx);
         if q.is_empty() {
-            let mut recent: Vec<&Entry> = self.entries.iter().collect();
+            let mut recent: Vec<&Entry> = self.entries.iter().filter(|e| e.typst).collect();
             recent.sort_by_key(|e| std::cmp::Reverse(e.meta.opened.max(e.meta.modified)));
             recent.truncate(RECENT);
             return recent;
@@ -268,6 +268,7 @@ impl Workspace {
             .entries
             .iter()
             .filter_map(|e| {
+                if e.folder { return None; }
                 if e.title.to_lowercase().contains(&q) {
                     Some((0, e))
                 } else if e.body.to_lowercase().contains(&q) {

@@ -152,8 +152,8 @@ fn entry_icon(_: &Entry) -> AnyElement {
 impl Workspace {
     fn home_entries(&self) -> Vec<Entry> {
         let mut v: Vec<Entry> = match self.home.tab {
-            HomeTab::Recent => self.entries.iter().filter(|e| !e.folder).cloned().collect(),
-            HomeTab::Starred => self.entries.iter().filter(|e| !e.folder && e.meta.starred > 0).cloned().collect(),
+            HomeTab::Recent => self.entries.iter().filter(|e| e.typst).cloned().collect(),
+            HomeTab::Starred => self.entries.iter().filter(|e| e.typst && e.meta.starred > 0).cloned().collect(),
         };
         v.sort_by(|a, b| {
             let order = match self.home.sort {
@@ -171,7 +171,7 @@ impl Workspace {
     fn open_row_menu(&mut self, id: &str, key: &str, cx: &mut Context<Self>) {
         let b = self.more_bounds.borrow().get(key).copied();
         let Some(b) = b else { return };
-        self.row_menu = Some(RowMenu { id: id.to_string(), pos: point(b.right(), b.bottom() + px(2.)), corner: Corner::TopRight, sub: false, batch: false });
+        self.row_menu = Some(RowMenu { id: id.to_string(), pos: point(b.right(), b.bottom() + px(2.)), corner: Corner::TopRight, batch: false });
         cx.notify();
     }
 
@@ -394,7 +394,7 @@ impl Workspace {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                        w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, sub: false, batch: false });
+                        w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, batch: false });
                         cx.notify();
                     }),
                 )
@@ -465,7 +465,7 @@ impl Workspace {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                            w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, sub: false, batch: false });
+                            w.row_menu = Some(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, batch: false });
                             cx.notify();
                         }),
                     )
