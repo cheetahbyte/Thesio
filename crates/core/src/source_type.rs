@@ -98,6 +98,15 @@ pub static SOURCE_TYPES: &[SourceType] = &[
 
 fn same(a: &str, b: &str) -> bool { a.eq_ignore_ascii_case(b) }
 
+const PREPRINT: &str = "Preprint";
+
+/// An article with no journal is a preprint only if something says so. Most
+/// are journal articles still missing their journal.
+fn is_preprint(entry: &Value) -> bool {
+    !read(entry, Slot::Serial("arxiv")).is_empty() || !read(entry, Slot::Own("archive")).is_empty() || read(entry, Slot::Own("genre")) == PREPRINT
+        || matches!(crate::lookup::identify(&read(entry, Slot::Url)), Some(crate::lookup::Identifier::Arxiv(_)))
+}
+
 /// The type this table knows a Hayagriva type by. `@incollection` imports as
 /// an anthos in an anthology, which is a Book Section here.
 fn alias(kind: &str) -> &str {
@@ -144,7 +153,7 @@ impl SourceType {
         let candidates = || SOURCE_TYPES.iter().filter(|t| same(t.entry, kind));
         candidates().find(|t| match (t.parent, parent) {
             (Some(a), Some(b)) => same(a, b),
-            (None, None) => true,
+            (None, None) => t.label != PREPRINT || is_preprint(entry),
             _ => false,
         }).or_else(|| candidates().next()).unwrap_or_else(|| SOURCE_TYPES.last().expect("the table has entries"))
     }
@@ -158,6 +167,8 @@ impl SourceType {
     /// the old type, or it would be cited but could not be edited.
     pub fn apply(&self, entry: &mut Mapping) {
         entry.insert("type".into(), self.entry.into());
+        if text(entry.get("genre")) == PREPRINT { entry.remove("genre"); }
+        if self.label == PREPRINT { entry.insert("genre".into(), PREPRINT.into()); }
         match self.parent {
             Some(kind) => {
                 if parent_of_mut(entry).is_none() { entry.insert("parent".into(), Value::Mapping(Mapping::new())); }

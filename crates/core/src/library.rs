@@ -653,6 +653,24 @@ mod tests {
     }
 
     #[test]
+    fn an_article_without_a_journal_is_a_preprint_only_if_something_says_so() {
+        let of = |yaml: &str| SourceType::of(&serde_yaml::from_str::<Value>(yaml).unwrap()).label;
+        assert_eq!(of("type: Article\ntitle: T"), "Journal Article");
+        assert_eq!(of("type: Article\nserial-number:\n  arxiv: 2112.12331"), "Preprint");
+        assert_eq!(of("type: Article\nurl: https://arxiv.org/abs/2112.12331"), "Preprint");
+        assert_eq!(of("type: Article\narchive: SSRN"), "Preprint");
+        let preprint = crate::source_type::SOURCE_TYPES.iter().find(|kind| kind.label == "Preprint").unwrap();
+        let journal = &crate::source_type::SOURCE_TYPES[0];
+        let mut library = library("preprint");
+        library.import_biblatex("@article{a, title = {A}}").unwrap();
+        library.set_source_type("a", preprint).unwrap();
+        assert_eq!(library.source_type("a").unwrap().label, "Preprint", "choosing it sticks");
+        library.set_source_type("a", journal).unwrap();
+        assert_eq!(library.source_type("a").unwrap().label, "Journal Article");
+        assert!(library.entries["a"].get("genre").is_none());
+    }
+
+    #[test]
     fn every_offered_style_exists() {
         for (_, style) in CITATION_STYLES { assert!(hayagriva::archive::ArchivedStyle::by_name(style).is_some(), "{style}"); }
     }

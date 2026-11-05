@@ -689,8 +689,10 @@ impl Workspace {
         self.citations.inspector = wanted.and_then(|key| self.build_inspector(key, window, cx));
     }
 
-    fn inspector_field(&mut self, hint: &'static str, text: &str, wrap: bool, subs: &mut Vec<Subscription>, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextField> {
+    fn inspector_field(&mut self, example: &str, text: &str, wrap: bool, subs: &mut Vec<Subscription>, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextField> {
         let field = cx.new(|cx| {
+            // Worded as an example: a bare value in an empty field reads as data.
+            let hint = if example.is_empty() { String::new() } else { format!("e.g. {example}") };
             let mut f = TextField::new(hint, cx);
             f.placeholder_color = Theme::text_disabled();
             f.tab_events = true;
