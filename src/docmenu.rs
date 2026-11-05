@@ -28,36 +28,26 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A document's text as it stands: the open editor's copy, or the file.
-    pub(crate) fn text_of(&mut self, id: &str, cx: &mut Context<Self>) -> Option<String> {
-        if self.current.as_deref() == Some(id) {
-            self.flush(cx);
-            return self.editor.as_ref().map(|ed| ed.read(cx).buffer.text().to_string());
-        }
-        self.store.borrow().load(id).ok()
-    }
-
     /// Duplicates a document beside the original and opens the copy.
     pub fn duplicate_doc(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.close_doc_menu(cx);
         self.row_menu = None;
         if let Some(new) = self.copy_doc(id, cx) {
-            self.entries = self.store.borrow_mut().list();
-            self.sort();
+            self.refresh_entries();
             self.open(&new, window, cx);
         }
         cx.notify();
     }
 
     pub(crate) fn copy_doc(&mut self, id: &str, cx: &mut Context<Self>) -> Option<String> {
-        let text = self.text_of(id, cx)?;
+        let text = self.text_of(id, cx).ok()?;
         let entry = self.entries.iter().find(|e| e.id == id)?;
         let (title, parent) = (format!("{} copy", entry.title), entry.parent.clone());
         let result = self.store.borrow_mut().create_from(parent.as_deref(), &title, &text);
         match result {
             Ok(new) => Some(new),
             Err(e) => {
-                self.status = crate::app::SaveStatus::Failed(format!("Could not duplicate document: {}", crate::settings::diagnostic(&e.to_string())));
+                self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not duplicate document: {e}"), cx);
                 None
             }
         }

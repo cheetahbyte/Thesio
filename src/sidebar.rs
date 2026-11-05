@@ -343,7 +343,8 @@ impl Workspace {
         let end = |ws: &mut Workspace, cx: &mut Context<Workspace>| {
             ws.sidebar_drag = false;
             let width = ws.sidebar_width;
-            let _ = ws.store.borrow().update_settings(|s| s.sidebar_width = Some(width));
+            let result = ws.store.borrow().update_settings(|s| s.sidebar_width = Some(width));
+            if let Err(e) = result { ws.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not remember the sidebar width: {e}"), cx); }
             cx.notify();
         };
         Some(
@@ -473,8 +474,7 @@ impl Workspace {
         for id in ids.iter().filter(|id| thesio_core::paths::is_document(id)) {
             self.copy_doc(id, cx);
         }
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
+        self.refresh_entries();
         self.batch = None;
         self.row_menu = None;
         cx.notify();
@@ -703,11 +703,10 @@ impl Workspace {
             cx.notify();
         });
         let mut menu = popover().id("row-menu").occlude().w(px(ROW_MENU_W)).px(px(5.)).py(px(crate::ui::MENU_PAD_Y)).on_mouse_down_out(close);
-        let root = self.store.borrow().root().to_path_buf();
-        let reveal = id.clone();
+        let reveal = self.store.borrow().path(&id).ok();
         let reveal_item = item("rm-reveal", Icon::Move, if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in file manager" }).on_click(cx.listener(move |w, _, _, cx| {
             w.row_menu = None;
-            cx.reveal_path(&root.join(&reveal));
+            if let Some(path) = &reveal { cx.reveal_path(path); }
             cx.notify();
         }));
         if folder {

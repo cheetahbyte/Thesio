@@ -2,6 +2,7 @@
 //! changed since each, and restoring one.
 
 use crate::app::Workspace;
+use crate::document::Edit;
 use crate::library::Library;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_line, primary_button, scrim, secondary_button};
@@ -52,7 +53,7 @@ impl Workspace {
     fn history_text(&self, cx: &App) -> Option<String> {
         match self.history.as_ref()?.library {
             true => self.citations.library.as_ref().map(Library::text),
-            false => self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string()),
+            false => self.text_of(self.current.as_ref()?, cx).ok(),
         }
     }
 
@@ -104,10 +105,9 @@ impl Workspace {
             }
             self.library_restored(&text, cx);
         } else {
-            let (Some(id), Some(current), Some(editor)) = (self.current.clone(), self.history_text(cx), self.editor.clone()) else { return };
+            let (Some(id), Some(current)) = (self.current.clone(), self.history_text(cx)) else { return };
             self.keep_version(&id, &current, true, cx);
-            editor.update(cx, |e, cx| e.reload(&text, cx));
-            self.flush(cx);
+            if let Err(e) = self.write_document(&id, &text, Edit::Undoable, cx) { self.show_toast_kind(ToastKind::Error, &format!("Could not save {id}: {e}"), cx); }
         }
         self.history = None;
         self.show_toast(&format!("Restored the version from {}", format_visit(time)), cx);

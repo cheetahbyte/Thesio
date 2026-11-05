@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Ask before ⌘Q quits with a document that could not be saved. It used to quit and lose the changes.
+- Report every failed operation in a toast, including failed pins, favorites, and saved folder state, and show a failed save away from the document too.
+- Keep unsaved text when the library changes after a failed save.
+- Keep a paper and its notes open when their folder moves, and keep writing notes to their new path after a key change.
+- Leave notes and `preferences.json` alone when they cannot be read, instead of replacing them.
+- Leave generated bibliography data out of the word count on Home.
 - Search sources and PDF highlights along with documents. Enter opens a source in the Library, or a paper at the highlight.
 - Compile on a thread with a large stack. A document embedding a PDF with colour profiles could crash a debug build, and other builds had less margin than they should.
 - Link notes: type `[[` to pick a document, which writes a plain Typst `#link`. ⌘-click it in the editor or click it in the preview to open it, and see what links to a document under Linked From in the sidebar. Links follow files that move.

@@ -229,14 +229,11 @@ impl Workspace {
                 self.show_toast(if restored.renamed { "Restored. Some documents were moved to My documents because their original location no longer exists." } else { "Restored successfully" }, cx);
             }
             Err(e) => {
-                let detail = e.chain().map(|cause| crate::settings::diagnostic(&cause.to_string())).collect::<Vec<_>>().join(": ");
-                let msg = format!("Could not restore document: {}", detail);
-                self.show_toast_kind(crate::ui::ToastKind::Error, &msg, cx);
-                self.status = crate::app::SaveStatus::Failed(msg);
+                let detail = e.chain().map(ToString::to_string).collect::<Vec<_>>().join(": ");
+                self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not restore document: {detail}"), cx);
             }
         }
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
+        self.refresh_entries();
         self.refresh_trash(cx);
         self.show_warnings(&warnings, cx);
     }
@@ -245,7 +242,7 @@ impl Workspace {
         let result = self.store.borrow_mut().purge(id);
         match result {
             Ok(()) => self.show_toast("Permanently deleted", cx),
-            Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not delete document: {}", crate::settings::diagnostic(&e.to_string()))),
+            Err(e) => self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not delete document: {e}"), cx),
         }
         self.refresh_trash(cx);
     }
@@ -259,9 +256,7 @@ impl Workspace {
 
     pub(crate) fn show_warnings(&mut self, warnings: &[String], cx: &mut Context<Self>) {
         if !warnings.is_empty() {
-            let msg = warnings.iter().map(|s| crate::settings::diagnostic(s)).collect::<Vec<_>>().join("; ");
-            self.show_toast_kind(crate::ui::ToastKind::Error, &msg, cx);
-            self.status = crate::app::SaveStatus::Failed(msg);
+            self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx);
         }
     }
 

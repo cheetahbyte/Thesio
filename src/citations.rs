@@ -2,6 +2,7 @@
 //! document's bibliography in step with the library.
 
 use crate::app::{Confirm, View, Workspace};
+use crate::document::Edit;
 use crate::input::{TextField, TextFieldEvent};
 use crate::app::RowMenu;
 use crate::library::{Added, Library, PAPERS_DIR, Row, note_file, paper_file};
@@ -385,17 +386,17 @@ impl Workspace {
     }
 
     /// Every key cited in a document and the files it includes.
-    fn cited_in(&self, id: &str) -> BTreeSet<String> {
+    fn cited_in(&self, id: &str, cx: &App) -> BTreeSet<String> {
         let mut keys = BTreeSet::new();
-        for (_, text) in Project::open(id, &mut |file| self.store.borrow().load(file).ok()).files() {
+        for (_, text) in Project::open(id, &mut |file| self.text_of(file, cx).ok()).files() {
             keys.extend(cited_keys(text));
         }
         keys
     }
 
     /// Every document, for asking which includes which.
-    fn documents(&self) -> Documents {
-        Documents::load(self.entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |file| self.store.borrow().load(file).ok())
+    fn documents(&self, cx: &App) -> Documents {
+        Documents::load(self.entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |file| self.text_of(file, cx).ok())
     }
 
     /// Rewrites each generated block to hold what its document cites.
@@ -404,57 +405,44 @@ impl Workspace {
         let documents: Vec<String> = self.entries.iter().filter(|e| e.typst && bibliography::block_range(&e.body).is_some()).map(|e| e.id.clone()).collect();
         let mut updates = vec![];
         for id in documents {
-            let keys: BTreeSet<String> = self.cited_in(&id).into_iter().filter(|k| library.contains(k)).collect();
-            let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.store.borrow().load(&id)) else { continue };
+            let keys: BTreeSet<String> = self.cited_in(&id, cx).into_iter().filter(|k| library.contains(k)).collect();
+            let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.text_of(&id, cx)) else { continue };
             if let Some(updated) = bibliography::sync_block(&text, &yaml) {
                 updates.push((id, updated));
             }
         }
-        let changed = !updates.is_empty();
         for (id, text) in updates {
-            let result = self.store.borrow_mut().save(&id, &text);
-            if let Err(e) = result {
+            if let Err(e) = self.write_document(&id, &text, Edit::Generated, cx) {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the bibliography in {id}: {e}"), cx);
-                continue;
             }
-            if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) { entry.body = text.clone(); }
-            if self.current.as_deref() == Some(id.as_str()) && let Some(editor) = &self.editor {
-                editor.update(cx, |e, cx| e.sync_text(&text, cx));
-            }
-        }
-        // An included file's preview shows the document whose block just changed.
-        if changed && let (Some(editor), Some(preview)) = (self.editor.clone(), self.preview.clone()) {
-            let text = editor.read(cx).buffer.text().to_string();
-            preview.update(cx, |p, cx| p.update(text, cx));
         }
     }
 
     pub(crate) fn bibliography_mode(&self, cx: &App) -> Mode {
-        match (&self.current, &self.editor) {
-            (Some(id), Some(editor)) => bibliography::mode(editor.read(cx).buffer.text(), id),
-            _ => Mode::None,
-        }
+        self.current.as_ref().and_then(|id| Some(bibliography::mode(&self.text_of(id, cx).ok()?, id))).unwrap_or(Mode::None)
     }
 
     /// Switches the open document's bibliography as one undoable edit.
     pub(crate) fn set_bibliography(&mut self, target: Mode, cx: &mut Context<Self>) {
-        let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone()) else { return };
-        let text = bibliography::remove(editor.read(cx).buffer.text(), &id);
+        let Some(id) = self.current.clone() else { return };
+        let Ok(text) = self.text_of(&id, cx) else { return };
+        let text = bibliography::remove(&text, &id);
         let text = match target {
             Mode::Embedded => bibliography::embed(&text, ""),
             Mode::Linked => bibliography::link(&text, &id),
             _ => text,
         };
-        editor.update(cx, |e, cx| e.reload(&text, cx));
-        self.flush(cx);
+        if let Err(e) = self.write_document(&id, &text, Edit::Undoable, cx) {
+            self.show_toast_kind(ToastKind::Error, &format!("Could not save {id}: {e}"), cx);
+        }
     }
 
     /// The document holding the open file's bibliography, and its style. A
     /// chapter's bibliography is usually in the document that includes it.
     pub(crate) fn style_owner(&self, cx: &App) -> Option<(String, String)> {
         let id = self.current.clone()?;
-        [id.clone(), self.top_document(&id)].into_iter().find_map(|doc| {
-            let text = self.text_of_saved(&doc, cx)?;
+        [id.clone(), self.top_document(&id, cx)].into_iter().find_map(|doc| {
+            let text = self.text_of(&doc, cx).ok()?;
             let mode = bibliography::mode(&text, &doc);
             (mode != Mode::None).then(|| {
                 let style = bibliography::style(&text).unwrap_or_else(|| bibliography::DEFAULT_STYLE.to_string());
@@ -463,61 +451,32 @@ impl Workspace {
         })
     }
 
-    /// A document's text without saving: the open editor's copy, or the file.
-    fn text_of_saved(&self, id: &str, cx: &App) -> Option<String> {
-        match (&self.current, &self.editor) {
-            (Some(current), Some(editor)) if current == id => Some(editor.read(cx).buffer.text().to_string()),
-            _ => self.store.borrow().load(id).ok(),
-        }
-    }
-
     /// Gives the open file's bibliography a citation style.
     pub(crate) fn set_citation_style(&mut self, style: &str, cx: &mut Context<Self>) {
         self.style_menu = false;
         let Some((doc, _)) = self.style_owner(cx) else { return cx.notify() };
-        let Some(updated) = self.text_of_saved(&doc, cx).and_then(|text| bibliography::set_style(&text, style)) else { return };
-        if self.current.as_deref() == Some(doc.as_str()) && let Some(editor) = self.editor.clone() {
-            editor.update(cx, |e, cx| e.reload(&updated, cx));
-            self.flush(cx);
-        } else {
-            let result = self.store.borrow_mut().save(&doc, &updated);
-            if let Err(e) = result {
-                return self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
-            }
-            if let Some(entry) = self.entries.iter_mut().find(|e| e.id == doc) { entry.body = updated; }
-            if let (Some(editor), Some(preview)) = (self.editor.clone(), self.preview.clone()) {
-                let text = editor.read(cx).buffer.text().to_string();
-                preview.update(cx, |p, cx| p.update(text, cx));
-            }
+        let Some(updated) = self.text_of(&doc, cx).ok().and_then(|text| bibliography::set_style(&text, style)) else { return };
+        if let Err(e) = self.write_document(&doc, &updated, Edit::Undoable, cx) {
+            self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
         }
-        cx.notify();
     }
 
     /// The top-level document `id` belongs to: a document has one bibliography,
     /// so it goes there and not in an included chapter.
-    pub(crate) fn top_document(&self, id: &str) -> String {
-        self.documents().top_document(id)
+    pub(crate) fn top_document(&self, id: &str, cx: &App) -> String {
+        self.documents(cx).top_document(id)
     }
 
     /// Embeds a bibliography in `id`'s top-level document unless the document
     /// or any file above it already has one.
     fn ensure_bibliography(&mut self, id: &str, cx: &mut Context<Self>) {
-        let body = |w: &Self, doc: &str| w.entries.iter().find(|e| e.id == doc).map_or(String::new(), |e| e.body.clone());
         if self.bibliography_mode(cx) != Mode::None { return; }
-        if self.documents().includers(id).iter().any(|doc| bibliography::mode(&body(self, doc), doc) != Mode::None) { return; }
-        let top = self.top_document(id);
-        if top == id {
-            let Some(editor) = self.editor.clone() else { return };
-            let text = bibliography::embed(editor.read(cx).buffer.text(), "");
-            editor.update(cx, |e, cx| e.sync_text(&text, cx));
-        } else {
-            let Ok(text) = self.store.borrow().load(&top) else { return };
-            let text = bibliography::embed(&text, "");
-            let result = self.store.borrow_mut().save(&top, &text);
-            if let Err(e) = result {
-                return self.show_toast_kind(ToastKind::Error, &format!("Could not add a bibliography to {top}: {e}"), cx);
-            }
-            if let Some(entry) = self.entries.iter_mut().find(|e| e.id == top) { entry.body = text; }
+        let documents = self.documents(cx);
+        if documents.includers(id).iter().any(|doc| self.text_of(doc, cx).is_ok_and(|text| bibliography::mode(&text, doc) != Mode::None)) { return; }
+        let top = documents.top_document(id);
+        let Ok(text) = self.text_of(&top, cx) else { return };
+        if let Err(e) = self.write_document(&top, &bibliography::embed(&text, ""), Edit::Generated, cx) {
+            self.show_toast_kind(ToastKind::Error, &format!("Could not add a bibliography to {top}: {e}"), cx);
         }
     }
 
@@ -539,7 +498,6 @@ impl Workspace {
 
     /// Saves a new citation and makes sure its document has a bibliography.
     pub(crate) fn citation_added(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.flush(cx);
         self.ensure_bibliography(id, cx);
         self.mark_unsaved(cx);
     }
@@ -761,18 +719,12 @@ impl Workspace {
     fn rename_citations(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
         let mut changed = 0;
         for id in self.entries.iter().filter(|e| e.typst).map(|e| e.id.clone()).collect::<Vec<_>>() {
-            let open = self.editor.clone().filter(|_| self.current.as_deref() == Some(id.as_str()));
-            let text = match &open {
-                Some(editor) => editor.read(cx).buffer.text().to_string(),
-                None => self.store.borrow().load(&id).unwrap_or_default(),
-            };
+            let Ok(text) = self.text_of(&id, cx) else { continue };
             let Some(updated) = rename_citation(&text, old, new) else { continue };
-            let result = self.store.borrow_mut().save(&id, &updated);
-            if let Err(e) = result {
+            if let Err(e) = self.write_document(&id, &updated, Edit::Undoable, cx) {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the citation in {id}: {e}"), cx);
                 continue;
             }
-            if let Some(editor) = &open { editor.update(cx, |e, cx| e.reload(&updated, cx)); }
             changed += 1;
         }
         match changed {
@@ -821,14 +773,11 @@ impl Workspace {
         self.citations.inspector = None;
         self.citations.selected.clear();
         self.refresh_after_library_change(cx);
-        if self.current.as_deref() == Some(bibliography::LIBRARY_FILE) && let Some(editor) = self.editor.clone() {
-            editor.update(cx, |e, cx| e.reload(text, cx));
-        }
+        self.show_text(bibliography::LIBRARY_FILE, text, Edit::Undoable, cx);
     }
 
     fn refresh_after_library_change(&mut self, cx: &mut Context<Self>) {
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
+        self.refresh_entries();
         self.sync_bibliographies(cx);
     }
 
@@ -1177,7 +1126,8 @@ impl Workspace {
 
     /// Scripted runs must not start other apps.
     pub(crate) fn open_paper_externally(&self, id: &str, cx: &App) {
-        if std::env::var_os("THESIO_SCRIPT").is_none() { cx.open_with_system(&self.store.borrow().root().join(id)); }
+        if std::env::var_os("THESIO_SCRIPT").is_some() { return; }
+        if let Ok(path) = self.store.borrow().path(id) { cx.open_with_system(&path); }
     }
 
     /// The name a paper goes by: its source's title, or its file name.
@@ -1223,8 +1173,7 @@ impl Workspace {
         let result = self.store.borrow_mut().attach(path, id);
         match result {
             Ok(()) => {
-                self.entries = self.store.borrow_mut().list();
-                self.sort();
+                self.refresh_entries();
                 self.show_toast("Added the paper", cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not add the paper: {e}"), cx),
@@ -1258,8 +1207,6 @@ impl Workspace {
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename {from}: {e}"), cx),
         }
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
     }
 
     /// Downloads open-access papers for `keys`, one after another, skipping
@@ -1289,10 +1236,7 @@ impl Workspace {
                 if let Err(e) = result { problem = Some(e.to_string()); }
                 let _ = this.update(cx, |w, cx| {
                     w.citations.fetching -= 1;
-                    if downloaded {
-                        w.entries = w.store.borrow_mut().list();
-                        w.sort();
-                    }
+                    if downloaded { w.refresh_entries(); }
                     cx.notify();
                 });
             }

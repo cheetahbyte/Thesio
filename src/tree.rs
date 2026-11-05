@@ -102,9 +102,9 @@ impl Workspace {
     }
 
     /// Expand the sidebar down to `id`.
-    pub(crate) fn reveal_in_tree(&mut self, id: &str) {
+    pub(crate) fn reveal_in_tree(&mut self, id: &str, cx: &mut Context<Self>) {
         let ids: Vec<String> = self.ancestors(id).iter().map(|e| e.id.clone()).collect();
-        for id in ids { self.set_expanded(&id, true); }
+        for id in ids { self.set_expanded(&id, true, cx); }
     }
 
 
@@ -112,22 +112,7 @@ impl Workspace {
     pub fn new_child(&mut self, parent: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Only folders hold files: a file's "+" adds a sibling.
         let parent = self.entries.iter().find(|e| e.id == parent).and_then(|e| if e.folder { Some(e.id.clone()) } else { e.parent.clone() });
-        let parent = parent.as_deref();
-        let p = parent.map(str::to_string);
-        if !self.save_before(cx, move |w, window, cx| match &p { Some(p) => w.new_child(p, window, cx), None => w.new_doc(window, cx) }) {
-            return;
-        }
-        let result = self.store.borrow_mut().create(parent);
-        match result {
-            Ok(id) => {
-                self.entries = self.store.borrow_mut().list();
-                self.sort();
-                if let Some(parent) = parent { self.set_expanded(parent, true); }
-                self.open(&id, window, cx);
-            }
-            Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not create document: {}", crate::settings::diagnostic(&e.to_string()))),
-        }
-        cx.notify();
+        self.when_saved(window, cx, move |w, window, cx| w.create_doc(parent.as_deref(), window, cx));
     }
 
     pub(crate) fn open_move(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -160,7 +145,7 @@ impl Workspace {
     /// what is already there and moves of a folder into itself.
     pub(crate) fn move_docs(&mut self, ids: &[String], target: Option<String>, cx: &mut Context<Self>) {
         self.flush(cx);
-        let (mut moved, mut updated, mut warnings) = (0, 0, vec![]);
+        let (mut moved, mut updated, mut problems) = (0, 0, vec![]);
         // An item inside another selected folder goes with it.
         for id in ids.iter().filter(|id| !ids.iter().any(|o| o != *id && is_within(id, o))) {
             let parent = self.entries.iter().find(|e| &e.id == id).and_then(|e| e.parent.clone());
@@ -174,39 +159,40 @@ impl Workspace {
                     self.path_changed(id, &outcome.id, &outcome.rewritten, cx);
                     moved += 1;
                     updated += outcome.rewritten.len();
-                    warnings.extend(outcome.warnings);
+                    problems.extend(outcome.warnings);
                 }
-                Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move: {}", crate::settings::diagnostic(&e.to_string()))),
+                Err(e) => problems.push(format!("Could not move: {e}")),
             }
         }
         if let Some(t) = &target {
-            self.set_expanded(t, true);
-            self.reveal_in_tree(&t.clone());
+            self.set_expanded(t, true, cx);
+            self.reveal_in_tree(t, cx);
         }
         if updated > 0 {
             self.show_toast(&crate::app::updated_paths(updated), cx);
         } else if moved > 0 {
             self.show_toast("Moved successfully", cx);
         }
-        if !warnings.is_empty() { self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx); }
+        self.show_warnings(&problems, cx);
         cx.notify();
     }
 
     /// Opens or closes a folder and remembers it for the next launch.
-    pub(crate) fn set_expanded(&mut self, id: &str, open: bool) {
+    pub(crate) fn set_expanded(&mut self, id: &str, open: bool, cx: &mut Context<Self>) {
         let changed = if open { self.expanded.insert(id.to_string()) } else { self.expanded.remove(id) };
-        if changed { self.save_expanded(); }
+        if changed { self.save_expanded(cx); }
     }
 
     pub(crate) fn toggle_folder(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.set_expanded(id, !self.expanded.contains(id));
+        self.set_expanded(id, !self.expanded.contains(id), cx);
         cx.notify();
     }
 
-    pub(crate) fn save_expanded(&self) {
+    pub(crate) fn save_expanded(&mut self, cx: &mut Context<Self>) {
         let mut expanded: Vec<String> = self.expanded.iter().cloned().collect();
         expanded.sort();
-        let _ = self.store.borrow().update_settings(|s| s.expanded = expanded);
+        let result = self.store.borrow().update_settings(|s| s.expanded = expanded);
+        if let Err(e) = result { self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not remember open folders: {e}"), cx); }
     }
 
     /// The Move to dialog: My documents on the left, its page tree on the right.

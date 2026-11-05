@@ -2,6 +2,7 @@
 //! (see `sidebar.rs`) and the editor on the right, with the
 //! 64px top bar (breadcrumb title + save status) above the page.
 
+use crate::document::Edit;
 use crate::preview::{Preview, PreviewEvent};
 use crate::source::{SourceEditor, SourceEvent};
 use crate::input::{TextField, TextFieldEvent};
@@ -112,24 +113,22 @@ pub fn bind_keys(cx: &mut App) {
         if let Some(handle) = cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
             // Key dispatch already borrows this window; close after it returns.
             cx.defer(move |cx| {
-                if let Err(e) = handle.update(cx, |ws, window, cx| {
-                    crate::window_size::persist(&ws.store, cx);
-                    if ws.save_before(cx, |_, window, _| window.remove_window()) { window.remove_window(); }
-                }) { eprintln!("Could not close document window: {e}"); }
+                if let Err(e) = handle.update(cx, |ws, window, cx| if ws.ready_to_close(cx) { window.remove_window(); }) { eprintln!("Could not close document window: {e}"); }
             });
         }
     });
-    cx.on_action(|_: &Quit, cx| quit(cx));
+    // Key dispatch holds the window, and a window on the update stack cannot be asked to save.
+    cx.on_action(|_: &Quit, cx| cx.defer(quit));
 }
 
 /// Quit: the open document is saved first; when that fails its dialog asks
-/// (Retry / Discard changes) and quits afterwards. Call it outside any window update
-/// (`cx.defer`): a window on the update stack cannot be asked to save.
-pub fn quit(cx: &mut App) {
+/// (Retry / Discard changes) and quits afterwards.
+fn quit(cx: &mut App) {
     let ready = cx
         .windows()
         .into_iter()
         .filter_map(|w| w.downcast::<Workspace>())
+        // A window that is gone has nothing left to save.
         .all(|w| w.update(cx, |ws, _, cx| ws.save_before(cx, |_, _, cx| cx.quit())).unwrap_or(true));
     if ready {
         cx.quit();
@@ -274,10 +273,10 @@ pub struct Workspace {
     /// The header "…" button, which the doc menu hangs from.
     pub more_btn_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     pub(crate) focus: FocusHandle,
-    save_task: Option<Task<()>>,
+    pub(crate) save_task: Option<Task<()>>,
     /// The open document has changes not yet on disk (cleared only by a
     /// successful save or by Discard changes).
-    unsaved: bool,
+    pub(crate) unsaved: bool,
     /// Held back by a failed save: runs after Retry succeeds or Discard changes.
     pub(crate) after_save: Option<AfterSave>,
     editor_subs: Vec<Subscription>,
@@ -303,8 +302,8 @@ impl Workspace {
             cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.entries = this.store.borrow_mut().list(); this.sort(); this.reload_library(); cx.notify(); }
-                else { this.flush(cx); }
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.refresh_entries(); this.reload_library(); cx.notify(); }
+                else { this.save_all(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
                 match ev {
@@ -328,16 +327,14 @@ impl Workspace {
             // go through `save_before` and ask when the save fails.
             cx.on_app_quit(|this, cx| {
                 crate::window_size::persist(&this.store, cx);
-                this.flush(cx);
+                this.save_all(cx);
                 async {}
             }),
         ];
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
-            this.update(cx, |w, cx| {
-                crate::window_size::persist(&w.store, cx);
-                w.save_before(cx, |_, window, _| window.remove_window())
-            }).unwrap_or(true)
+            // A window that is gone has nothing left to save.
+            this.update(cx, |w, cx| w.ready_to_close(cx)).unwrap_or(true)
         });
         let settings = store.borrow().settings();
         let sidebar_width = settings.sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
@@ -403,7 +400,6 @@ impl Workspace {
             Some(id) => ws.open(&id, window, cx),
             None => ws.new_doc(window, cx),
         }
-        // Kept in the top bar (not just a toast): the user should notice.
         let warnings = ws.store.take_opening_warnings();
         ws.show_warnings(&warnings, cx);
         ws
@@ -414,57 +410,55 @@ impl Workspace {
         self.entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     }
 
+    /// Reads the vault's entries again.
+    pub(crate) fn refresh_entries(&mut self) {
+        self.entries = self.store.borrow_mut().list();
+        self.sort();
+    }
+
     pub fn query(&self, cx: &App) -> String {
         self.search.read(cx).text.trim().to_lowercase()
     }
 
+    /// Shows `id`, once the open document is safely saved.
     pub fn open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.try_open(id, window, cx);
-    }
-
-    /// Show `id`; false when it could not be opened (or the open document
-    /// could not be saved first, see [`Self::save_before`]).
-    pub fn try_open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.view != View::Doc {
             self.view = View::Doc;
             cx.notify();
         }
         if self.current.as_deref() == Some(id) {
-            return true;
+            return;
         }
         if self.entries.iter().any(|e| e.id == id && e.folder) {
-            self.toggle_folder(id, cx);
-            return false;
+            return self.toggle_folder(id, cx);
         }
         let target = id.to_string();
-        if !self.save_before(cx, move |w, window, cx| {
-            w.open(&target, window, cx);
-        }) {
-            return false;
-        }
+        self.when_saved(window, cx, move |w, window, cx| w.load_document(&target, window, cx));
+    }
+
+    /// Replaces the open document with `id`, which holds nothing unsaved.
+    fn load_document(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if id.ends_with(".pdf") && crate::native_pdf::supported() {
-            self.open_paper(id, cx);
-            return false;
+            return self.open_paper(id, cx);
         }
         let loaded = self.store.borrow().load(id);
         let text = match loaded {
             Ok(text) => text,
             Err(e) => {
                 // Binary files belong to the system's apps; scripted runs must not start any.
-                if !paths::is_document(id) && std::env::var_os("THESIO_SCRIPT").is_none() {
-                    cx.open_with_system(&self.store.borrow().root().join(id));
-                } else {
-                    self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {}", crate::settings::diagnostic(&e.to_string())), cx);
+                let path = self.store.borrow().path(id);
+                match path {
+                    Ok(path) if !paths::is_document(id) && std::env::var_os("THESIO_SCRIPT").is_none() => cx.open_with_system(&path),
+                    _ => self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {e}"), cx),
                 }
-                cx.notify();
-                return false;
+                return cx.notify();
             }
         };
         let typst = paths::is_document(id);
         let opened_text = text.clone();
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.borrow().root().to_path_buf();
-        let main = self.top_document(id);
+        let main = self.top_document(id, cx);
         let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string(), main)));
         if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
         self.editor_subs = vec![
@@ -503,50 +497,55 @@ impl Workspace {
         if !self.search_open {
             editor.read(cx).focus(window);
         }
-        if self.store.borrow_mut().touch(id).is_ok()
-            && let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-                e.meta.opened = crate::time::now();
-            }
+        let touched = self.store.borrow_mut().touch(id);
+        match touched {
+            Ok(()) => if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) { e.meta.opened = crate::time::now(); },
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not record opening {id}: {e}"), cx),
+        }
         self.editor = Some(editor);
         self.preview = preview;
         self.current = Some(id.to_string());
         self.keep_version(id, &opened_text, true, cx);
-        self.outline_root = typst.then(|| self.top_document(id));
+        self.outline_root = typst.then(|| self.top_document(id, cx));
         self.refresh_outline(cx);
-        self.reveal_in_tree(id);
+        self.reveal_in_tree(id, cx);
         self.status = SaveStatus::Idle;
         self.row_menu = None;
         self.doc_menu = false;
         cx.notify();
-        true
     }
 
-    /// Follows a rename or move: the entry list, and the open document if it
-    /// or a folder above it changed path. Its editor and undo history stay.
+    /// Follows a rename or move through everything that holds a vault path.
+    /// The open document's editor and undo history stay.
     pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
+        self.refresh_entries();
         let moved = self.current.as_deref().and_then(|c| paths::moved(c, old, new));
         if let Some(path) = moved {
             self.current = Some(path.clone());
-            self.entries = self.store.borrow_mut().list();
-            let main = self.top_document(&path);
-            self.outline_root = Some(main.clone());
+            let main = self.top_document(&path, cx);
+            self.outline_root = paths::is_document(&path).then(|| main.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
-        if self.paper.as_deref() == Some(old) { self.paper = Some(new.to_string()); }
+        if let Some(path) = self.paper.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.paper = Some(path); }
+        self.paper_panel.path_changed(old, new);
+        self.paper_index = std::mem::take(&mut self.paper_index).into_iter().map(|(id, paper)| (paths::moved(&id, old, new).unwrap_or(id), paper)).collect();
+        if let Some(batch) = &mut self.batch {
+            for id in batch.iter_mut() {
+                if let Some(path) = paths::moved(id, old, new) { *id = path; }
+            }
+        }
         let renamed: Vec<String> = self.expanded.iter().filter(|e| paths::is_within(e, old)).cloned().collect();
         for path in renamed {
             self.expanded.remove(&path);
             self.expanded.insert(format!("{new}{}", &path[old.len()..]));
         }
-        self.save_expanded();
-        // The open document's paths changed on disk: its editor takes them in.
-        if let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone())
-            && rewritten.contains(&id) {
-                let text = self.store.borrow().load(&id);
-                if let Ok(text) = text { editor.update(cx, |e, cx| e.reload(&text, cx)); }
-            }
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
+        self.save_expanded(cx);
+        // Their paths changed on disk: open editors take them in.
+        for id in rewritten {
+            let text = self.store.borrow().load(id);
+            if let Ok(text) = text { self.show_text(id, &text, Edit::Undoable, cx); }
+        }
+        self.refresh_outline(cx);
     }
 
     /// Goes to a place in a document, opening it if another one is open.
@@ -596,22 +595,21 @@ impl Workspace {
     }
 
     pub fn new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.save_before(cx, |w, window, cx| w.new_doc(window, cx)) {
-            return;
-        }
-        let result = self.store.borrow_mut().create(None);
+        self.when_saved(window, cx, |w, window, cx| w.create_doc(None, window, cx));
+    }
+
+    /// A new document in `parent`, opened.
+    pub(crate) fn create_doc(&mut self, parent: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
+        let result = self.store.borrow_mut().create(parent);
         match result {
             Ok(id) => {
                 self.search_open = false;
-                self.entries = self.store.borrow_mut().list();
-                self.sort();
+                self.refresh_entries();
                 self.search.update(cx, |s, cx| s.set_text("", cx));
+                if let Some(parent) = parent { self.set_expanded(parent, true, cx); }
                 self.open(&id, window, cx);
-                if let Some(ed) = &self.editor {
-                    ed.read(cx).focus(window);
-                }
             }
-            Err(e) => self.status = SaveStatus::Failed(format!("Could not create document: {}", crate::settings::diagnostic(&e.to_string()))),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not create document: {e}"), cx),
         }
         cx.notify();
     }
@@ -621,8 +619,7 @@ impl Workspace {
         let result = self.store.borrow_mut().create_folder(parent, "New folder");
         match result {
             Ok(id) => {
-                self.entries = self.store.borrow_mut().list();
-                self.sort();
+                self.refresh_entries();
                 self.start_rename(&id, window, cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not create folder: {e}"), cx),
@@ -640,13 +637,16 @@ impl Workspace {
 
     /// Moves files and folders to the Trash; if the open one goes, opens the next.
     pub fn delete_docs(&mut self, ids: &[String], window: &mut Window, cx: &mut Context<Self>) {
-        let inside = |doc: &str, id: &String| paths::is_within(doc, id);
-        if self.current.as_ref().is_some_and(|c| ids.iter().any(|id| inside(c, id))) {
-            let retry = ids.to_vec();
-            if !self.save_before(cx, move |w, window, cx| w.delete_docs(&retry, window, cx)) {
-                return;
-            }
+        if self.current.as_ref().is_some_and(|c| ids.iter().any(|id| paths::is_within(c, id))) {
+            let ids = ids.to_vec();
+            self.when_saved(window, cx, move |w, window, cx| w.trash_docs(&ids, window, cx));
+        } else {
+            self.trash_docs(ids, window, cx);
         }
+    }
+
+    fn trash_docs(&mut self, ids: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        let inside = |doc: &str, id: &String| paths::is_within(doc, id);
         // An item inside another selected folder goes with it.
         let topmost: Vec<&String> = ids.iter().filter(|id| !ids.iter().any(|o| o != *id && paths::is_within(id, o))).collect();
         let mut deleted: Vec<String> = vec![];
@@ -658,7 +658,7 @@ impl Workspace {
                     deleted.push(id.clone());
                     errors.extend(warnings);
                 }
-                Err(e) => errors.push(format!("Could not delete document: {}", crate::settings::diagnostic(&e.to_string()))),
+                Err(e) => errors.push(format!("Could not delete document: {e}")),
             }
         }
         if self.current.as_ref().is_some_and(|c| deleted.iter().any(|id| inside(c, id))) {
@@ -669,8 +669,7 @@ impl Workspace {
             self.preview = None;
             self.editor_subs.clear();
         }
-        self.entries = self.store.borrow_mut().list();
-        self.sort();
+        self.refresh_entries();
         if let Some(b) = self.batch.as_mut() {
             b.retain(|id| !deleted.iter().any(|d| inside(id, d)));
         }
@@ -691,16 +690,14 @@ impl Workspace {
         if errors.is_empty() {
             self.show_toast("Deleted successfully", cx);
         } else {
-            let msg = errors.join("; ");
-            self.show_toast_kind(ToastKind::Error, &msg, cx);
-            self.status = SaveStatus::Failed(msg);
+            self.show_toast_kind(ToastKind::Error, &errors.join("; "), cx);
         }
         cx.notify();
     }
 
     /// Asks where to save, then compiles the document's current text to a PDF.
     pub fn export_pdf(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(text) = self.text_of(id, cx) else { return };
+        let Ok(text) = self.text_of(id, cx) else { return };
         let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(crate::store::UNTITLED, |e| e.title.as_str()));
         let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
         let picked = crate::devtools::take_pick().and_then(|p| p.into_iter().next());
@@ -748,8 +745,7 @@ impl Workspace {
                         Err(e) => w.show_toast_kind(ToastKind::Error, &format!("Could not import {}: {e}", path.display()), cx),
                     }
                 }
-                w.entries = w.store.borrow_mut().list();
-                w.sort();
+                w.refresh_entries();
                 if let Some(id) = first { w.open(&id, window, cx); }
                 cx.notify();
             });
@@ -757,15 +753,15 @@ impl Workspace {
     }
 
     pub fn toggle_pin(&mut self, id: &str, cx: &mut Context<Self>) {
-        let mut on = false;
-        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-            e.meta.pinned = !e.meta.pinned;
-            on = e.meta.pinned;
-            let _ = self.store.borrow_mut().set_pinned(id, e.meta.pinned);
-        }
-        self.sort();
+        let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { return };
+        let on = !e.meta.pinned;
+        let result = self.store.borrow_mut().set_pinned(id, on);
+        if result.is_ok() { e.meta.pinned = on; }
         self.row_menu = None;
-        self.show_toast(if on { "Pinned" } else { "Unpinned" }, cx);
+        match result {
+            Ok(()) => self.show_toast(if on { "Pinned" } else { "Unpinned" }, cx),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not pin {id}: {e}"), cx),
+        }
         cx.notify();
     }
 
@@ -773,12 +769,14 @@ impl Workspace {
     pub fn toggle_star(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { return };
         let on = e.meta.starred == 0;
-        if let Ok(t) = self.store.borrow_mut().set_starred(id, on) {
-            e.meta.starred = t;
-        }
+        let result = self.store.borrow_mut().set_starred(id, on);
+        if let Ok(time) = result { e.meta.starred = time; }
         self.row_menu = None;
         self.doc_menu = false;
-        self.show_toast(if on { "Added to favorites" } else { "Removed from favorites" }, cx);
+        match result {
+            Ok(_) => self.show_toast(if on { "Added to favorites" } else { "Removed from favorites" }, cx),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not change favorites: {e}"), cx),
+        }
         cx.notify();
     }
 
@@ -788,7 +786,7 @@ impl Workspace {
             self.refresh_trash(cx);
         }
         if matches!(view, View::Library | View::Sources) {
-            self.flush(cx);
+            self.save_all(cx);
             self.reload_library();
             // Rebuilt on the next frame, with what documents cite now.
             self.citations.close_inspector();
@@ -840,7 +838,7 @@ impl Workspace {
         self.rename = Some(Rename { id: id.to_string(), field, _subs: subs });
         // From Home the row may be hidden: show it in the sidebar.
         self.sidebar_open = true;
-        self.reveal_in_tree(id);
+        self.reveal_in_tree(id, cx);
         self.row_menu = None;
         cx.notify();
     }
@@ -859,7 +857,7 @@ impl Workspace {
                     if !moved.rewritten.is_empty() { self.show_toast(&updated_paths(moved.rewritten.len()), cx); }
                     self.show_warnings(&moved.warnings, cx);
                 }
-                Err(e) => self.status = SaveStatus::Failed(format!("Could not rename document: {}", crate::settings::diagnostic(&e.to_string()))),
+                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename document: {e}"), cx),
             }
         }
         if refocus
@@ -868,102 +866,6 @@ impl Workspace {
             }
         cx.notify();
     }
-
-
-
-    /// Writes the open document again after text changed without an edit.
-    pub(crate) fn mark_unsaved(&mut self, cx: &mut Context<Self>) {
-        self.unsaved = true;
-        self.flush(cx);
-    }
-
-    fn schedule_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.status = SaveStatus::Saving;
-        self.unsaved = true;
-        self.save_task = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            let _ = this.update(cx, |w, cx| w.flush(cx));
-        }));
-        cx.notify();
-    }
-
-
-    /// Write the open document to disk if it has unsaved changes. False when
-    /// that failed: the changes stay pending (a later save retries them) and
-    /// the top bar shows the error.
-    pub fn flush(&mut self, cx: &mut Context<Self>) -> bool {
-        self.save_inspector(cx);
-        self.save_task = None;
-        if !self.unsaved {
-            return true;
-        }
-        let (Some(id), Some(ed)) = (self.current.clone(), self.editor.clone()) else {
-            self.unsaved = false;
-            return true;
-        };
-        let text = ed.read(cx).buffer.text().to_string();
-        let saved_text = text.clone();
-        let result = self.store.borrow_mut().save(&id, &text);
-        match result {
-            Ok(()) => {
-                if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-                    e.body = text;
-                    e.modified = crate::time::now();
-                }
-                self.status = SaveStatus::Saved;
-                self.unsaved = false;
-                self.keep_version(&id, &saved_text, false, cx);
-                self.sort();
-                self.sync_bibliographies(cx);
-                self.refresh_outline(cx);
-            }
-            Err(e) => self.status = SaveStatus::Failed(format!("Could not save: {}", crate::settings::diagnostic(&e.to_string()))),
-        }
-        cx.notify();
-        !self.unsaved
-    }
-
-    /// Save the open document before something replaces it. When the save
-    /// fails nothing is replaced: the Save failed dialog offers Retry / Discard changes
-    /// and runs `then` after either.
-    pub fn save_before(&mut self, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) -> bool {
-        if self.flush(cx) {
-            return true;
-        }
-        self.after_save = Some(Box::new(then));
-        self.confirm = Some(Confirm::SaveFailed);
-        cx.notify();
-        false
-    }
-
-    /// The Save failed dialog's choices: `retry` saves again, otherwise the
-    /// changes are given up. Either way the held-back action runs once the
-    /// document no longer needs saving.
-    pub(crate) fn resolve_save_failed(&mut self, retry: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if retry {
-            if !self.flush(cx) {
-                self.confirm = Some(Confirm::SaveFailed);
-                return;
-            }
-        } else {
-            self.unsaved = false;
-            self.status = SaveStatus::Idle;
-        }
-        if let Some(then) = self.after_save.take() {
-            then(self, window, cx);
-        }
-        cx.notify();
-    }
-
-    /// The error of the last failed save, for the Save failed dialog.
-    pub(crate) fn save_error(&self) -> String {
-        match &self.status {
-            SaveStatus::Failed(e) => e.clone(),
-            _ => "Save failed".to_string(),
-        }
-    }
-
-
 
 
 
@@ -1250,10 +1152,7 @@ impl Render for Workspace {
             .text_color(Theme::text())
             // Window keys act on the window they were pressed in, not on
             // whichever window macOS considers active.
-            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| {
-                crate::window_size::persist(&w.store, cx);
-                if w.save_before(cx, |_, window, _| window.remove_window()) { window.remove_window(); }
-            }))
+            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| if w.ready_to_close(cx) { window.remove_window(); }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())

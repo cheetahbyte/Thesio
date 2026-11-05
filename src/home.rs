@@ -6,6 +6,7 @@ use crate::library::{NOTES_DIR, paper_file};
 use thesio_core::references::cited_keys;
 use crate::settings::display_title;
 use crate::store::Entry;
+use thesio_core::bibliography::without_block;
 use crate::theme::Theme;
 use crate::trash::{empty_state, page_header, primary_button, secondary_button};
 use crate::ui::{Icon, TipExt, format_visit};
@@ -83,7 +84,7 @@ impl Workspace {
             (row.key, title)
         }).collect();
         uncited.sort_by(|a, b| a.1.cmp(&b.1));
-        Overview { documents: writing.len(), words: writing.iter().map(|e| words(&e.body)).sum(), sources, papers, uncited }
+        Overview { documents: writing.len(), words: writing.iter().map(|e| words(&without_block(&e.body))).sum(), sources, papers, uncited }
     }
 
     fn document_rows(&self, entries: Vec<&Entry>, key: &'static str, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {

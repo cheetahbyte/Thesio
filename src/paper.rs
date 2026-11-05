@@ -2,9 +2,11 @@
 //! Highlights live in the PDF (`native_pdf`), notes in `notes/<key>.typ`.
 
 use crate::app::Workspace;
+use crate::document::Edit;
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::{NOTES_DIR, note_file, paper_file};
 use thesio_core::bibliography::{self, Mode};
+use thesio_core::paths::{is_document, moved};
 use crate::native_pdf::Highlight;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::theme::Theme;
@@ -23,10 +25,17 @@ pub enum PaperTab { #[default] Notes, Highlights }
 pub struct PaperPanel {
     hidden: bool,
     tab: PaperTab,
-    notes: Option<(Entity<SourceEditor>, Subscription)>,
+    notes: Option<Notes>,
     /// The highlight whose comment is being written.
     comment: Option<(Highlight, Entity<TextField>, Subscription)>,
     quote: Option<QuoteDialog>,
+}
+
+/// The paper's notes: `id` follows the file, which appears once something is written.
+struct Notes {
+    id: String,
+    editor: Entity<SourceEditor>,
+    _subscription: Subscription,
 }
 
 /// The review step before a highlight enters a document: PDF text can be wrong.
@@ -42,6 +51,14 @@ struct QuoteDialog {
 
 impl PaperPanel {
     pub(crate) fn quoting(&self) -> bool { self.quote.is_some() }
+
+    pub(crate) fn notes_editor(&self, id: &str) -> Option<Entity<SourceEditor>> {
+        self.notes.as_ref().filter(|notes| notes.id == id).map(|notes| notes.editor.clone())
+    }
+
+    pub(crate) fn path_changed(&mut self, old: &str, new: &str) {
+        if let Some(notes) = &mut self.notes && let Some(path) = moved(&notes.id, old, new) { notes.id = path; }
+    }
 }
 
 impl Default for PaperPanel {
@@ -54,48 +71,54 @@ impl Workspace {
     pub(crate) fn load_paper_notes(&mut self, id: &str, cx: &mut Context<Self>) {
         self.flush(cx);
         let note = note_file(id);
-        let text = self.store.borrow().load(&note).unwrap_or_else(|_| format!("= {}\n\n", self.paper_title(id)));
+        let exists = self.store.borrow().path(&note).is_ok_and(|path| path.exists());
+        let loaded = self.store.borrow().load(&note);
+        let text = match loaded {
+            Ok(text) => text,
+            Err(_) if !exists => format!("= {}\n\n", self.paper_title(id)),
+            // No editor: the next keystroke would replace a file nobody could read.
+            Err(e) => {
+                self.paper_panel.notes = None;
+                return self.show_toast_kind(ToastKind::Error, &format!("Could not read the notes: {e}"), cx);
+            }
+        };
         let editor = cx.new(|cx| {
             let mut editor = SourceEditor::new(text, true, cx);
             // Inside the panel: the viewer would hide what crosses onto it.
             editor.completion_w = PANEL_W - 40.;
             editor
         });
-        let subscription = cx.subscribe(&editor, move |w, editor, event: &SourceEvent, cx| match event {
-            SourceEvent::Changed => w.save_note(&note, &editor, cx),
-            SourceEvent::Citing => w.offer_sources(&editor, cx),
-            SourceEvent::Cited => w.link_note_library(&note, &editor, cx),
-            SourceEvent::Caret | SourceEvent::Follow(_) => {}
+        let subscription = cx.subscribe(&editor, |w, editor, event: &SourceEvent, cx| {
+            let Some(note) = w.paper_panel.notes.as_ref().map(|notes| notes.id.clone()) else { return };
+            match event {
+                SourceEvent::Changed => { let text = editor.read(cx).buffer.text().to_string(); w.save_note(&note, &text, cx); }
+                SourceEvent::Citing => w.offer_sources(&editor, cx),
+                SourceEvent::Cited => w.link_note_library(&note, &editor, cx),
+                SourceEvent::Caret | SourceEvent::Follow(_) => {}
+            }
         });
-        self.paper_panel.notes = Some((editor, subscription));
+        self.paper_panel.notes = Some(Notes { id: note, editor, _subscription: subscription });
         self.paper_panel.comment = None;
     }
 
-    fn save_note(&mut self, id: &str, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
-        let text = editor.read(cx).buffer.text().to_string();
+    /// Writes a notes file, which may be new. The same file may be open as a document too.
+    fn save_note(&mut self, id: &str, text: &str, cx: &mut Context<Self>) {
         let new = !self.entries.iter().any(|e| e.id == id);
-        if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.borrow_mut().save(id, &text)) {
+        if let Err(e) = self.ensure_notes_dir().and_then(|()| self.write_document(id, text, Edit::Generated, cx)) {
             return self.show_toast_kind(ToastKind::Error, &format!("Could not save the notes: {e}"), cx);
         }
-        if new {
-            self.entries = self.store.borrow_mut().list();
-            self.sort();
-        }
-        // The same file may be open as a document too.
-        if self.current.as_deref() == Some(id) && let Some(open) = self.editor.clone() { open.update(cx, |e, cx| e.sync_text(&text, cx)); }
+        if new { self.refresh_entries(); }
     }
 
     /// Notes that cite the library read it directly, so they compile on their own.
     fn link_note_library(&mut self, id: &str, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
         let text = editor.read(cx).buffer.text().to_string();
         if bibliography::mode(&text, id) != Mode::None { return; }
-        let linked = bibliography::link(&text, id);
-        editor.update(cx, |e, cx| e.sync_text(&linked, cx));
-        self.save_note(id, editor, cx);
+        self.save_note(id, &bibliography::link(&text, id), cx);
     }
 
     fn ensure_notes_dir(&self) -> anyhow::Result<()> {
-        Ok(std::fs::create_dir_all(self.store.borrow().root().join(NOTES_DIR))?)
+        Ok(std::fs::create_dir_all(self.store.borrow().path(NOTES_DIR)?)?)
     }
 
     /// Opens the notes of `key` as a document, starting them if there are none.
@@ -103,11 +126,11 @@ impl Workspace {
         let id = note_file(&paper_file(key));
         if !self.entries.iter().any(|e| e.id == id) {
             let title = self.paper_title(&paper_file(key));
-            if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.borrow_mut().save(&id, &format!("= {title}\n\n"))) {
+            let text = format!("= {title}\n\n");
+            if let Err(e) = self.ensure_notes_dir().and_then(|()| self.write_document(&id, &text, Edit::Generated, cx)) {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not create the notes: {e}"), cx);
             }
-            self.entries = self.store.borrow_mut().list();
-            self.sort();
+            self.refresh_entries();
         }
         self.open(&id, window, cx);
     }
@@ -159,10 +182,10 @@ impl Workspace {
 
     /// The document a quote goes to: the open one, else this paper's notes.
     fn quote_target(&self) -> Option<(String, Entity<SourceEditor>)> {
-        let note = self.paper.as_deref().map(note_file);
+        let notes = self.paper_panel.notes.as_ref();
         match (&self.current, &self.editor) {
-            (Some(id), Some(editor)) if thesio_core::paths::is_document(id) && Some(id) != note.as_ref() => Some((id.clone(), editor.clone())),
-            _ => Some((note?, self.paper_panel.notes.as_ref()?.0.clone())),
+            (Some(id), Some(editor)) if is_document(id) && Some(id) != notes.map(|notes| &notes.id) => Some((id.clone(), editor.clone())),
+            _ => notes.map(|notes| (notes.id.clone(), notes.editor.clone())),
         }
     }
 
@@ -215,11 +238,10 @@ impl Workspace {
             if let Err(e) = result {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not save the page numbering: {e}"), cx);
             }
-            self.entries = self.store.borrow_mut().list();
-            self.sort();
+            self.refresh_entries();
         }
         editor.update(cx, |e, cx| e.insert_quote(&markup, block, cx));
-        if self.paper.as_deref().map(note_file).as_ref() == Some(&target) {
+        if self.paper_panel.notes_editor(&target).is_some() {
             self.link_note_library(&target, &editor, cx);
         } else {
             self.citation_added(&target, cx);
@@ -302,7 +324,7 @@ impl Workspace {
         let empty = highlights.is_empty();
         let rows = highlights.into_iter().enumerate().map(|(i, highlight)| self.render_highlight(i, highlight, window, cx)).collect::<Vec<_>>();
         let body = match tab {
-            PaperTab::Notes => div().flex_1().min_h_0().children(self.paper_panel.notes.as_ref().map(|(editor, _)| editor.clone())).into_any_element(),
+            PaperTab::Notes => div().flex_1().min_h_0().children(self.paper_panel.notes.as_ref().map(|notes| notes.editor.clone())).into_any_element(),
             PaperTab::Highlights if empty => div().flex_1().flex().flex_col().items_center().justify_center().px(px(32.)).pb(px(64.))
                 .child(icon(Icon::Highlight, 32., Theme::text_placeholder()))
                 .child(div().mt(px(10.)).text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("No highlights yet"))

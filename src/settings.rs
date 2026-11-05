@@ -14,6 +14,8 @@ use std::sync::{Arc, LazyLock, RwLock};
 // ---- preferences
 
 static PREFS: RwLock<Option<Preferences>> = RwLock::new(None);
+/// Why `preferences.json` could not be read. Nothing writes to it meanwhile.
+static UNREADABLE: RwLock<Option<String>> = RwLock::new(None);
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -42,8 +44,17 @@ impl Default for Preferences {
 fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(STATE_DIR).join("preferences.json") }
 
 pub fn load() {
-    let p = std::fs::read(path()).ok().and_then(|b| serde_json::from_slice::<Preferences>(&b).ok()).unwrap_or_default();
-    apply(p);
+    let read = match std::fs::read(path()) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Preferences::default()),
+        Err(e) => Err(e.to_string()),
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+    };
+    let (preferences, problem) = match read {
+        Ok(preferences) => (preferences, None),
+        Err(problem) => (Preferences::default(), Some(problem)),
+    };
+    *UNREADABLE.write().unwrap() = problem;
+    apply(preferences);
 }
 
 fn apply(p: Preferences) {
@@ -86,6 +97,7 @@ pub fn prefs() -> Preferences {
 }
 
 fn save(p: &Preferences) -> anyhow::Result<()> {
+    if let Some(problem) = &*UNREADABLE.read().unwrap() { anyhow::bail!("preferences.json could not be read and was left alone: {problem}"); }
     std::fs::create_dir_all(crate::store::Store::root_dir().join(STATE_DIR))?;
     write_atomic(&path(), &serde_json::to_vec_pretty(p)?)?;
     apply(p.clone());
@@ -373,5 +385,3 @@ pub fn display_title(title: &str) -> String {
     if title.is_empty() { crate::store::UNTITLED.to_string() } else { title.to_string() }
 }
 
-/// Preserve core diagnostics and their captured paths, IDs, and OS errors.
-pub fn diagnostic(message: &str) -> String { message.to_string() }
