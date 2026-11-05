@@ -6,6 +6,7 @@ use crate::app::{Confirm, RowMenu, View, Workspace};
 use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
+use thesio_core::references::Heading;
 use crate::ui::{Icon, TipExt, TitleBarExt, icon, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 
@@ -14,6 +15,8 @@ use gpui::{prelude::FluentBuilder, *};
 pub(crate) const ROW_MENU_W: f32 = 180.;
 const ROW_ITEM: f32 = crate::ui::MENU_ROW_H;
 const CHEVRON_SLOT: f32 = 16.;
+const OUTLINE_ROW_H: f32 = 26.;
+const OUTLINE_INDENT: f32 = 12.;
 const CHEVRON_R: f32 = 6.;
 
 /// Sidebar geometry (measured from the window edge), shared by the
@@ -192,6 +195,16 @@ impl Workspace {
             if !self.folded[0] {
                 for e in pinned {
                     list = list.child(self.doc_row(e, "pinned", 0, cx));
+                }
+            }
+            list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
+        }
+        if self.view == View::Doc && !self.outline.is_empty() {
+            list = list.child(self.section(2, "Outline", cx));
+            if !self.folded[2] {
+                let top = self.outline.iter().map(|heading| heading.level).min().unwrap_or(1);
+                for (i, heading) in self.outline.iter().enumerate() {
+                    list = list.child(self.outline_row(i, heading, top, cx));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
@@ -471,6 +484,17 @@ impl Workspace {
             self.row_menu = None;
             cx.notify();
         }
+    }
+
+    fn outline_row(&self, i: usize, heading: &Heading, top: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (path, offset) = (heading.path.clone(), heading.offset);
+        let active = self.outline_active == Some(i);
+        div().id(("outline", i)).h(px(OUTLINE_ROW_H)).pl(px(8. + OUTLINE_INDENT * (heading.level - top) as f32)).pr(px(CHEVRON_R)).flex().items_center().rounded(px(ROW_R)).cursor_pointer()
+            .text_size(px(13.))
+            .text_color(if active { Theme::text() } else { Theme::sidebar_section() })
+            .when(active, |d| d.font_weight(FontWeight::MEDIUM))
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(heading.title.clone())))
+            .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx)))
     }
 
     fn row_base(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> Stateful<Div> {

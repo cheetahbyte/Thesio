@@ -637,6 +637,19 @@ mod tests {
     }
 
     #[test]
+    fn an_outline_reads_through_includes_in_order() {
+        let files = [
+            ("main.typ", "= One <one>\n#include \"ch/a.typ\"\n== Two\n#include \"ch/b.typ\"\n// = Not a heading\n`= Nor this`\n"),
+            ("ch/a.typ", "= In A\nText\n#include \"../main.typ\"\n"),
+            ("ch/b.typ", "=== In *B*\n"),
+        ];
+        let mut read = |path: &str| files.iter().find(|(file, _)| *file == path).map(|(_, text)| text.to_string());
+        let headings = references::outline("main.typ", &mut read);
+        let summary: Vec<(&str, usize, &str)> = headings.iter().map(|h| (h.path.as_str(), h.level, h.title.as_str())).collect();
+        assert_eq!(summary, [("main.typ", 1, "One"), ("ch/a.typ", 1, "In A"), ("main.typ", 2, "Two"), ("ch/b.typ", 3, "In *B*")]);
+    }
+
+    #[test]
     fn renaming_a_key_changes_only_its_citations() {
         let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
         assert_eq!(references::rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");

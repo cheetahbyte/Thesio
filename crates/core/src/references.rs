@@ -144,6 +144,52 @@ pub fn cited_keys(text: &str) -> Vec<String> {
     keys
 }
 
+/// A heading in a document's outline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heading {
+    /// The file it is written in, and where.
+    pub path: String,
+    pub offset: usize,
+    /// 1 for `=`.
+    pub level: usize,
+    pub title: String,
+}
+
+/// The headings of `root` and the files it includes, in reading order. `read`
+/// gives a file's text. A file that includes itself is followed once.
+pub fn outline(root: &str, read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<Heading> {
+    fn collect(file: &str, read: &mut dyn FnMut(&str) -> Option<String>, open: &mut Vec<String>, out: &mut Vec<Heading>) {
+        if open.iter().any(|path| path == file) { return; }
+        let Some(text) = read(file) else { return };
+        let source = Source::detached(text);
+        let dir = dir_of(file);
+        let (mut headings, mut includes) = (vec![], vec![]);
+        walk(&LinkedNode::new(source.root()), &mut |node| match node.kind() {
+            SyntaxKind::Heading => {
+                let Some(heading) = ast::Heading::from_untyped(node.get()) else { return };
+                let body = heading.body().to_untyped().full_text();
+                let title = body.split(" <").next().unwrap_or_default().trim().to_string();
+                if !title.is_empty() { headings.push(Heading { path: file.to_string(), offset: node.offset(), level: heading.depth().get(), title }); }
+            }
+            SyntaxKind::Str if node.parent_kind() == Some(SyntaxKind::ModuleInclude) => {
+                if let Some(path) = ast::Str::from_untyped(node.get()).and_then(|value| resolve(&dir, &value.get())) { includes.push((node.offset(), path)); }
+            }
+            _ => {}
+        });
+        open.push(file.to_string());
+        let mut includes = includes.into_iter().peekable();
+        for heading in headings {
+            while let Some((_, path)) = includes.next_if(|(offset, _)| *offset < heading.offset) { collect(&path, read, open, out); }
+            out.push(heading);
+        }
+        for (_, path) in includes { collect(&path, read, open, out); }
+        open.pop();
+    }
+    let mut out = vec![];
+    collect(root, read, &mut vec![], &mut out);
+    out
+}
+
 /// `text` with every citation of `old` changed to `new`, or `None` without any.
 pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
     let source = Source::detached(text);

@@ -9,6 +9,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
+use thesio_core::references::{Heading, outline};
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::Cell;
@@ -248,7 +249,13 @@ pub struct Workspace {
     pub toast: Option<(ToastKind, SharedString, Instant)>,
     toast_task: Option<Task<()>>,
     /// Folded sidebar sections: Pinned, My documents.
-    pub folded: [bool; 2],
+    pub folded: [bool; 3],
+    /// The open document's headings, through the files it includes.
+    pub outline: Vec<Heading>,
+    /// The document the outline starts from.
+    pub outline_root: Option<String>,
+    /// The heading the caret is under.
+    pub outline_active: Option<usize>,
     /// Expanded pages of the My documents tree.
     pub expanded: HashSet<String>,
     pub move_dlg: Option<crate::tree::MoveDialog>,
@@ -358,7 +365,10 @@ impl Workspace {
             paper_failed: Default::default(),
             pdf: Default::default(),
             paper_panel: Default::default(),
-            folded: [false; 2],
+            folded: [false; 3],
+            outline: vec![],
+            outline_root: None,
+            outline_active: None,
             expanded: store_expanded,
             move_dlg: None,
             focus: cx.focus_handle(),
@@ -449,6 +459,7 @@ impl Workspace {
                 SourceEvent::Caret => {
                     let caret = editor.read(cx).buffer.caret();
                     if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.follow(caret, cx)); }
+                    this.mark_outline(caret, cx);
                 }
                 SourceEvent::Citing => this.offer_sources(editor, cx),
                 SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
@@ -456,15 +467,12 @@ impl Workspace {
         ];
         if let Some(preview) = &preview {
             self.editor_subs.push(cx.subscribe_in(preview, window, |this, _, ev: &PreviewEvent, window, cx| {
-                let offset = match ev {
-                    PreviewEvent::Jump(offset) => *offset,
-                    PreviewEvent::Source(path, offset) => {
-                        if this.current.as_ref() != Some(path) { this.open(path, window, cx); }
-                        if this.current.as_ref() != Some(path) { return; }
-                        *offset
-                    }
+                let (path, offset) = match ev {
+                    PreviewEvent::Jump(offset) => (None, *offset),
+                    PreviewEvent::Source(path, offset) => (Some(path.clone()), *offset),
                 };
-                if let Some(editor) = &this.editor { editor.update(cx, |e, cx| e.go_to(offset, window, cx)); }
+                let path = path.or_else(|| this.current.clone());
+                if let Some(path) = path { this.go_to_source(&path, offset, window, cx); }
             }));
         }
         // Opening a document puts the caret in it, unless the user is typing a search.
@@ -478,6 +486,8 @@ impl Workspace {
         self.editor = Some(editor);
         self.preview = preview;
         self.current = Some(id.to_string());
+        self.outline_root = typst.then(|| self.top_document(id));
+        self.refresh_outline(cx);
         self.reveal_in_tree(id);
         self.status = SaveStatus::Idle;
         self.row_menu = None;
@@ -494,6 +504,7 @@ impl Workspace {
             self.current = Some(path.clone());
             self.entries = self.store.list();
             let main = self.top_document(&path);
+            self.outline_root = Some(main.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
         if self.paper.as_deref() == Some(old) { self.paper = Some(new.to_string()); }
@@ -512,6 +523,40 @@ impl Workspace {
             }
         self.entries = self.store.list();
         self.sort();
+    }
+
+    /// Goes to a place in a document, opening it if another one is open.
+    pub(crate) fn go_to_source(&mut self, path: &str, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current.as_deref() != Some(path) { self.open(path, window, cx); }
+        if self.current.as_deref() != Some(path) { return; }
+        self.view = View::Doc;
+        if let Some(editor) = &self.editor { editor.update(cx, |e, cx| e.go_to(offset, window, cx)); }
+    }
+
+    /// Reads the outline again: the open file from its editor, others from memory.
+    pub(crate) fn refresh_outline(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.outline_root.clone() else {
+            self.outline.clear();
+            return;
+        };
+        let open = self.current.clone().zip(self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string()));
+        let entries = &self.entries;
+        self.outline = outline(&root, &mut |path| match &open {
+            Some((id, text)) if id == path => Some(text.clone()),
+            _ => entries.iter().find(|e| e.id == path).map(|e| e.body.clone()),
+        });
+        let caret = self.editor.as_ref().map_or(0, |editor| editor.read(cx).buffer.caret());
+        self.mark_outline(caret, cx);
+    }
+
+    /// Marks the heading the caret is under.
+    fn mark_outline(&mut self, caret: usize, cx: &mut Context<Self>) {
+        let current = self.current.as_deref();
+        let active = self.outline.iter().rposition(|h| Some(h.path.as_str()) == current && h.offset <= caret);
+        if active != self.outline_active {
+            self.outline_active = active;
+            cx.notify();
+        }
     }
 
     fn first_document(&self) -> Option<String> {
@@ -823,6 +868,7 @@ impl Workspace {
                 self.unsaved = false;
                 self.sort();
                 self.sync_bibliographies(cx);
+                self.refresh_outline(cx);
             }
             Err(e) => self.status = SaveStatus::Failed(format!("Could not save: {}", crate::settings::diagnostic(&e.to_string()))),
         }

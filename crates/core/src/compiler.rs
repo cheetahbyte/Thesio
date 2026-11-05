@@ -24,7 +24,7 @@ pub use typst_layout::PagedDocument;
 
 /// Memoized results older than this many compilations are dropped.
 const CACHE_AGE: usize = 10;
-/// How far back to look for text when the caret is on none, in bytes.
+/// How far to look for text when the caret is on none, in bytes.
 const NEAREST_TEXT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,9 +101,10 @@ impl Compiler {
     pub fn position_of(&self, path: &str, offset: usize) -> Option<(usize, f32)> {
         let source = self.world.source(file_id(path).ok()?).ok()?;
         let document = self.last.as_ref()?;
-        // Spaces and empty lines draw nothing: use the nearest text before them.
-        let start = offset.saturating_sub(NEAREST_TEXT);
-        let position = (start..=offset.min(source.text().len())).rev().filter(|at| source.text().is_char_boundary(*at))
+        // Spaces, empty lines, and a heading's `=` draw nothing: use the nearest text.
+        let text = source.text();
+        let position = (0..=NEAREST_TEXT).flat_map(|distance| [offset.checked_sub(distance), Some(offset + distance)]).flatten()
+            .filter(|at| *at <= text.len() && text.is_char_boundary(*at))
             .find_map(|at| typst_ide::jump_from_cursor(document, &source, at).into_iter().next())?;
         Some((position.page.get() - 1, position.point.y.to_pt() as f32))
     }
@@ -344,7 +345,8 @@ mod tests {
     fn the_preview_and_the_source_point_at_each_other() {
         let page_of_text = "Word ".repeat(600);
         let root = vault("jump", &[
-            ("main.typ", "#include \"chapters/one.typ\"\n#pagebreak()\n#include \"chapters/two.typ\"\n"),
+            ("main.typ", "#include \"chapters/one.typ\"\n#pagebreak()\n#include \"chapters/two.typ\"\n#pagebreak()\n#include \"chapters/three.typ\"\n"),
+            ("chapters/three.typ", "= Third\n"),
             ("chapters/one.typ", "First chapter.\n"),
             ("chapters/two.typ", &format!("Second chapter.\n\n\n{page_of_text}\n")),
         ]);
@@ -357,6 +359,8 @@ mod tests {
         assert!(offset < "Second chapter.".len(), "{offset}");
         // The blank lines draw nothing, so the text before them stands in.
         assert_eq!(compiler.position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
+        // Nor does a heading's marker, at the very start of a file.
+        assert_eq!(compiler.position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
         assert_eq!(compiler.source_at(page, 1., 1.), None);
     }
 

@@ -55,6 +55,8 @@ A document's id is its vault-relative path. Renaming or moving a file therefore 
 
 ## Sidebar
 
+The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`references::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
+
 `tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`store::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
 
 A rename or move also updates the paths in every vault document: `#include`, `#import`, and the path arguments of `image`, `bibliography`, `read`, and the data loaders. A moved file's own relative paths are adjusted too. If the open document changes, its editor takes the new text as one undoable edit.
