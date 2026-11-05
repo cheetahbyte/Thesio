@@ -32,6 +32,35 @@ pub struct Change {
     pub new_lines: usize,
 }
 
+/// Where two texts differ, on char boundaries of both: the bytes of `old`, and
+/// the length of what replaced them.
+pub fn difference(old: &str, new: &str) -> (Range<usize>, usize) {
+    let mut start = old.bytes().zip(new.bytes()).take_while(|(a, b)| a == b).count();
+    while !old.is_char_boundary(start) || !new.is_char_boundary(start) { start -= 1; }
+    let longest = old.len().min(new.len()) - start;
+    let mut tail = old.bytes().rev().zip(new.bytes().rev()).take(longest).take_while(|(a, b)| a == b).count();
+    while !old.is_char_boundary(old.len() - tail) || !new.is_char_boundary(new.len() - tail) { tail -= 1; }
+    (start..old.len() - tail, new.len() - tail - start)
+}
+
+/// Moves `range` with an edit around it, which replaced the bytes `edit` with
+/// `new_len` others. False when the edit reached into it.
+pub fn follow(range: &mut Range<usize>, edit: &Range<usize>, new_len: usize) -> bool {
+    if range.end <= edit.start { return true; }
+    if range.start < edit.end { return false; }
+    *range = range.start + new_len - edit.len()..range.end + new_len - edit.len();
+    true
+}
+
+/// `follow` for a range that describes text rather than holds it: an edit
+/// wholly inside resizes it, unless nothing is left.
+pub fn stretch(range: &mut Range<usize>, edit: &Range<usize>, new_len: usize) -> bool {
+    let beside = range.end <= edit.start || edit.end <= range.start;
+    if beside || edit.start < range.start || range.end < edit.end { return follow(range, edit, new_len); }
+    range.end = range.end + new_len - edit.len();
+    range.start < range.end
+}
+
 pub struct Buffer {
     text: String,
     line_starts: Vec<usize>,
@@ -73,6 +102,20 @@ impl Buffer {
 
     pub fn line_of(&self, offset: usize) -> usize {
         self.line_starts.partition_point(|start| *start <= offset) - 1
+    }
+
+    /// `offset` in the text and on a char boundary, whatever text it came from.
+    pub fn snapped(&self, offset: usize) -> usize { self.text.floor_char_boundary(offset) }
+
+    /// `range`, or the text beside it when it covers nothing that can be
+    /// underlined: Typst puts a missing token between two characters.
+    pub fn visible(&self, range: Range<usize>) -> Range<usize> {
+        if !self.text[range.clone()].trim_matches(['\r', '\n']).is_empty() { return range; }
+        let at = range.start;
+        let line = self.line_range(self.line_of(at));
+        if !self.text[at..line.end].trim_end().is_empty() { return at..self.next_grapheme(at); }
+        let end = self.text[..at].trim_end().len();
+        self.prev_grapheme(end)..end
     }
 
     pub fn move_to(&mut self, offset: usize) {
@@ -207,6 +250,70 @@ mod tests {
         assert!(buffer.undo().is_some());
         assert_eq!(buffer.text(), "text\nfresh");
         assert!(buffer.undo().is_none());
+    }
+
+    #[test]
+    fn the_difference_of_two_texts_never_splits_a_character() {
+        let cases = [("a€b", "a₭b", 1..4, 3), ("£", "㣣", 0..2, 3), ("same", "same", 4..4, 0), ("ab", "aXb", 1..1, 1), ("aXb", "ab", 1..2, 0), ("aa", "a", 1..2, 0), ("", "é", 0..0, 2)];
+        for (old, new, edit, new_len) in cases {
+            assert_eq!(difference(old, new), (edit, new_len), "{old} to {new}");
+        }
+    }
+
+    #[test]
+    fn a_range_follows_edits_outside_it_and_ends_at_one_reaching_in() {
+        let moved = |edit: Range<usize>, new_len| {
+            let mut range = 4..8;
+            follow(&mut range, &edit, new_len).then_some(range)
+        };
+        assert_eq!(moved(8..8, 3), Some(4..8), "after it");
+        assert_eq!(moved(4..4, 3), Some(7..11), "at its start");
+        assert_eq!(moved(1..3, 0), Some(2..6), "before it");
+        assert_eq!(moved(5..6, 1), None);
+        assert_eq!(moved(2..5, 3), None);
+    }
+
+    #[test]
+    fn a_stretching_range_grows_and_shrinks_with_edits_inside_it() {
+        let moved = |edit: Range<usize>, new_len| {
+            let mut range = 4..8;
+            stretch(&mut range, &edit, new_len).then_some(range)
+        };
+        assert_eq!(moved(5..5, 3), Some(4..11));
+        assert_eq!(moved(7..8, 0), Some(4..7), "its last character");
+        assert_eq!(moved(4..5, 0), Some(4..7), "its first character");
+        assert_eq!(moved(8..8, 3), Some(4..8), "typing after it");
+        assert_eq!(moved(4..4, 3), Some(7..11), "typing before it");
+        assert_eq!(moved(4..8, 0), None, "all of it");
+        assert_eq!(moved(2..5, 3), None, "across its edge");
+        assert_eq!(moved(7..9, 1), None, "across its edge");
+    }
+
+    #[test]
+    fn an_offset_from_older_text_lands_on_a_character() {
+        let buffer = Buffer::new("aé");
+        assert_eq!(buffer.snapped(2), 1);
+        assert_eq!(buffer.snapped(3), 3);
+        assert_eq!(buffer.snapped(99), 3);
+    }
+
+    #[test]
+    fn what_covers_nothing_is_shown_on_the_text_beside_it() {
+        let visible = |text: &str, range: Range<usize>| {
+            let buffer = Buffer::new(text);
+            let shown = buffer.visible(range);
+            buffer.text()[shown].to_string()
+        };
+        assert_eq!(visible("#let x", 1..4), "let", "a range with text stays");
+        assert_eq!(visible("ab cd", 3..3), "c", "the next character");
+        assert_eq!(visible("e\u{301}x", 0..0), "e\u{301}", "a whole grapheme");
+        assert_eq!(visible("ab\ncd", 2..2), "b", "at a line's end");
+        assert_eq!(visible("ab\ncd", 2..3), "b", "only a newline");
+        assert_eq!(visible("ab\r\ncd", 2..2), "b", "before a carriage return");
+        assert_eq!(visible("ab  \n\n", 6..6), "b", "past blank lines at the end");
+        assert_eq!(visible("日本", 6..6), "本", "at the end of the text");
+        assert_eq!(visible("\n\n", 1..1), "", "nothing to show");
+        assert_eq!(visible("", 0..0), "");
     }
 
     #[test]

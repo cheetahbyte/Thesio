@@ -5,6 +5,7 @@
 //! Compiling never reaches the network: a package not on disk is reported in
 //! `Compilation::missing`, for the caller to fetch off the compile.
 
+use crate::buffer::{difference, follow, stretch};
 use crate::packages::{PackageSpec, Packages};
 use crate::paths::visit_vault;
 use crate::project::{self, Project};
@@ -85,6 +86,27 @@ impl Compilation {
     /// Downloads a package from `missing`, on the calling thread. A failure is
     /// not returned: the next compile reports it where the import is.
     pub fn fetch(&self, spec: &PackageSpec) { self.world.resources.packages.fetch(spec); }
+
+    /// Those of `diagnostics` in `path`, moved from the text this compile read
+    /// onto `text`. Any that newer text no longer holds are left out.
+    pub fn placed(&self, diagnostics: &[Diagnostic], path: &str, text: &str) -> Vec<Diagnostic> {
+        let own = diagnostics.iter().filter(|d| d.range.is_some() && d.path.as_deref() == Some(path));
+        let Some(compiled) = self.world.text(path) else { return vec![] };
+        let (edit, new_len) = difference(&compiled, text);
+        own.filter_map(|d| {
+            let mut range = d.range.clone()?;
+            stretch(&mut range, &edit, new_len).then(|| Diagnostic { range: Some(range), ..d.clone() })
+        }).collect()
+    }
+
+    /// Byte `offset` of the text this compile read of `path`, in `text`: where
+    /// the edit that replaced it starts, if one did.
+    pub fn moved(&self, path: &str, offset: usize, text: &str) -> usize {
+        let Some(compiled) = self.world.text(path) else { return offset };
+        let (edit, new_len) = difference(&compiled, text);
+        let mut at = offset..offset;
+        if follow(&mut at, &edit, new_len) { at.start } else { edit.start }
+    }
 
     /// Where byte `offset` of `path` appears: its page and height in points.
     pub fn position_of(&self, path: &str, offset: usize) -> Option<(usize, f32)> {
@@ -652,6 +674,41 @@ mod tests {
         assert_eq!(compilation.pages_from("ch/one.typ"), [false, true, false]);
         assert_eq!(compilation.pages_from("main.typ"), [true, true, true]);
         assert_eq!(compilation.pages_from("ch/defs.typ"), [true, true, true], "nothing drawn: every page");
+    }
+
+    fn range_in(diagnostic: &Diagnostic, text: &str) -> String { text[diagnostic.range.clone().unwrap()].to_string() }
+
+    #[test]
+    fn a_diagnostic_moves_onto_newer_text() {
+        let text = "é #nope\n";
+        let compilation = Compiler::new(vault("placed", &[("main.typ", text)])).compile("main.typ").unwrap();
+        let place = |text: &str| compilation.placed(&compilation.diagnostics, "main.typ", text);
+        assert_eq!(range_in(&place(text)[0], text), "nope");
+        let above = format!("日本語 {text}");
+        assert_eq!(range_in(&place(&above)[0], &above), "nope", "text added before it");
+        let below = format!("{text}more\n");
+        assert_eq!(range_in(&place(&below)[0], &below), "nope", "text added after it");
+        assert_eq!(range_in(&place("é #nopes\n")[0], "é #nopes\n"), "nope", "typed right after it");
+        assert_eq!(range_in(&place("é #nxpe\n")[0], "é #nxpe\n"), "nxpe", "changed inside it");
+        assert!(place("é\n").is_empty(), "deleted");
+    }
+
+    #[test]
+    fn a_diagnostic_stays_with_the_file_it_points_into() {
+        let chapter = "é #nope\n";
+        let root = vault("placed-chapter", &[("main.typ", "#include \"ch.typ\"\n"), ("ch.typ", chapter)]);
+        let compilation = Compiler::new(root).compile("main.typ").unwrap();
+        assert_eq!(compilation.diagnostics.len(), 1);
+        assert_eq!(range_in(&compilation.placed(&compilation.diagnostics, "ch.typ", chapter)[0], chapter), "nope");
+        assert!(compilation.placed(&compilation.diagnostics, "main.typ", "#include \"ch.typ\"\n").is_empty());
+    }
+
+    #[test]
+    fn an_offset_follows_newer_text_or_stops_where_it_changed() {
+        let compilation = Compiler::new(vault("moved", &[("main.typ", "ab #nope cd\n")])).compile("main.typ").unwrap();
+        assert_eq!(compilation.moved("main.typ", 4, "日 ab #nope cd\n"), 8, "after an edit");
+        assert_eq!(compilation.moved("main.typ", 4, "ab #nope cd!\n"), 4, "before an edit");
+        assert_eq!(compilation.moved("main.typ", 6, "ab #ne cd\n"), 5, "inside an edit");
     }
 
     #[test]

@@ -2,13 +2,13 @@
 //! wrapped, with the selection and caret painted by each row.
 
 use crate::completion::{Completion, CompletionKind, Found, Item, Provider, Query, Reach};
-use crate::session::DocumentSession;
+use crate::session::{DocumentSession, SessionEvent};
 use crate::text::{CaretMark, LineMarks, PaintedLine, Shaped, from_utf16, paint_line, plain_newlines, range_from_utf16, range_to_utf16, request_line, to_utf16};
 use crate::theme::{self, MONO_FONT, Theme, c, craft};
 use crate::ui::{MENU_PAD_Y, menu_row, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, time::Duration};
-use thesio_core::buffer::{Buffer, Change, EditKind};
+use thesio_core::buffer::{Buffer, Change, EditKind, difference, follow, stretch};
 use thesio_core::bibliography;
 use thesio_core::ide::{Hover, word_around};
 use thesio_core::syntax::{SyntaxTag, highlights};
@@ -99,20 +99,20 @@ enum Trigger {
     Asked,
 }
 
-/// An underline over bytes of the text, which follows edits around it. An
-/// edit into its range ends it.
+/// An underline over bytes of the text, and what it means. It follows edits
+/// and resizes with one inside it, so typing in an error keeps it until the
+/// next compile; an edit across its edge ends it.
+#[derive(Clone, PartialEq)]
 pub struct Decoration {
     pub range: Range<usize>,
-    pub color: Hsla,
+    pub error: bool,
+    pub message: String,
+    pub hints: Vec<String>,
 }
 
-/// Moves `range` with an edit around it. False when the edit reached into it.
-fn follow(range: &mut Range<usize>, change: &Change) -> bool {
-    if range.end <= change.range.start { return true; }
-    if range.start < change.range.end { return false; }
-    let (removed, added) = (change.range.len(), change.new_len);
-    *range = range.start + added - removed..range.end + added - removed;
-    true
+impl Decoration {
+    fn color(&self) -> Hsla { if self.error { Theme::danger() } else { Theme::caution() } }
+    fn meets(&self, range: &Range<usize>) -> bool { self.range.start < range.end && self.range.end > range.start }
 }
 
 /// The lines of the last frame, kept whole until the next one paints, so
@@ -192,10 +192,22 @@ struct Reveal {
     frame: u64,
 }
 
-/// The word under the pointer, and what is known about it once that arrives.
+/// What the popover says about what is under the pointer.
+enum Said {
+    Docs(Hover),
+    /// Most serious first.
+    Problems(Vec<Decoration>),
+}
+
+/// The word or underline under the pointer, and what is known about it once
+/// that arrives.
 struct Pointed {
     word: Range<usize>,
-    shown: Option<Hover>,
+    /// The start of the part the pointer's line shows, for the popover.
+    anchor: usize,
+    /// It is an underline, which is said before anything about the word.
+    problem: bool,
+    shown: Option<Said>,
     /// Waits out the delay, then asks. Replacing it drops the question.
     _pending: Option<Task<()>>,
 }
@@ -227,10 +239,11 @@ pub struct SourceEditor {
     /// other than Tab ends them.
     stops: Vec<Range<usize>>,
     pointed: Option<Pointed>,
-    /// Sorted, and not overlapping.
+    /// Errors last, to paint over a warning in the same place.
     decorations: Vec<Decoration>,
-    /// This text's compiles, which answer hover. Only Typst has them.
+    /// This text's compiles, which answer hover and underline it. Only Typst has them.
     session: Option<Entity<DocumentSession>>,
+    _session_events: Option<Subscription>,
 }
 
 impl EventEmitter<SourceEvent> for SourceEditor {}
@@ -244,7 +257,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { reveal: None, buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, providers, completion_w: 380., completion: None, settled: None, stops: vec![], pointed: None, decorations: vec![], session: None };
+        let mut editor = Self { reveal: None, buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, providers, completion_w: 380., completion: None, settled: None, stops: vec![], pointed: None, decorations: vec![], session: None, _session_events: None };
         editor.refold();
         editor
     }
@@ -281,41 +294,56 @@ impl SourceEditor {
     pub fn text(&self) -> &str { self.buffer.text() }
     pub fn caret(&self) -> usize { self.buffer.caret() }
 
-    pub fn set_session(&mut self, session: Entity<DocumentSession>) { self.session = Some(session); }
+    pub fn set_session(&mut self, session: Entity<DocumentSession>, cx: &mut Context<Self>) {
+        self._session_events = Some(cx.subscribe(&session, |editor, _, event: &SessionEvent, cx| {
+            if matches!(event, SessionEvent::Diagnostics) { editor.take_diagnostics(cx); }
+        }));
+        self.session = Some(session);
+    }
 
-    /// Replaces the underlines, as diagnostics will.
-    #[expect(dead_code, reason = "the first caller is inline diagnostics")]
+    /// Underlines the newest result, which replaces the last one only now, so
+    /// nothing disappears while a compile runs.
+    fn take_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = &self.session else { return };
+        let problems = session.read(cx).problems(self.buffer.text());
+        let mut decorations: Vec<Decoration> = problems.into_iter().filter_map(|problem| {
+            Some(Decoration { range: self.buffer.visible(problem.range?), error: problem.error, message: problem.message, hints: problem.hints })
+        }).collect();
+        decorations.sort_by_key(|decoration| (decoration.error, decoration.range.start));
+        self.set_decorations(decorations, cx);
+    }
+
+    /// Replaces the underlines. What the popover says may be gone with them.
     pub fn set_decorations(&mut self, decorations: Vec<Decoration>, cx: &mut Context<Self>) {
+        if self.decorations == decorations { return; }
         self.decorations = decorations;
+        self.pointed = None;
         cx.notify();
     }
 
     /// The byte under `position` if the pointer is on text itself, for hover.
+    /// The fold's row is painted when an underline in it needs pointing at.
     fn text_at(&self, position: Point<Pixels>) -> Option<usize> {
         let painted = self.painted.borrow();
         let (line, row) = painted.lines.iter().find(|(_, row)| row.bounds.contains(&position))?;
+        if let Some(fold) = &self.folded && fold.lines.contains(line) { return Some(fold.bytes.start); }
         Some(self.buffer.line_range(*line).start + row.text_at(position)?)
     }
 
     /// Moves the caret, as when a diagnostic is clicked.
     pub fn go_to(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.focus(window);
-        self.go(offset.min(self.buffer.text().len()), false, cx);
+        self.go(self.buffer.snapped(offset), false, cx);
     }
 
     /// The differing span between the buffer and `text`, and where the caret
     /// lands: `(old range, new end, caret)`.
     fn diff(&self, text: &str) -> (std::ops::Range<usize>, usize, usize) {
-        let old = self.buffer.text();
-        let mut start = old.bytes().zip(text.bytes()).take_while(|(a, b)| a == b).count();
-        while !old.is_char_boundary(start) || !text.is_char_boundary(start) { start -= 1; }
-        let longest = old.len().min(text.len()) - start;
-        let mut tail = old.bytes().rev().zip(text.bytes().rev()).take(longest).take_while(|(a, b)| a == b).count();
-        while !old.is_char_boundary(old.len() - tail) || !text.is_char_boundary(text.len() - tail) { tail -= 1; }
-        let (old_end, new_end) = (old.len() - tail, text.len() - tail);
+        let (range, new_len) = difference(self.buffer.text(), text);
+        let (start, old_end, new_end) = (range.start, range.end, range.start + new_len);
         let caret = self.buffer.caret();
         let caret = if caret <= start { caret } else if caret >= old_end { caret + new_end - old_end } else { new_end };
-        (start..old_end, new_end, caret)
+        (range, new_end, caret)
     }
 
     /// Takes in text changed on disk as one undoable edit, keeping the caret
@@ -379,8 +407,8 @@ impl SourceEditor {
     fn text_changed(&mut self, change: Change) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();
-        self.decorations.retain_mut(|decoration| follow(&mut decoration.range, &change));
-        self.stops.retain_mut(|stop| follow(stop, &change));
+        self.decorations.retain_mut(|decoration| stretch(&mut decoration.range, &change.range, change.new_len));
+        self.stops.retain_mut(|stop| follow(stop, &change.range, change.new_len));
         self.pointed = None;
         self.splice_rows(change.lines, change.new_lines);
     }
@@ -483,6 +511,7 @@ impl SourceEditor {
     /// Where the row holding `offset` was last painted, in window coordinates.
     fn painted_at(&self, offset: usize) -> Option<Point<Pixels>> {
         let line = self.buffer.line_of(offset);
+        let line = self.folded.as_ref().filter(|fold| fold.lines.contains(&line)).map_or(line, |fold| fold.lines.start);
         let painted = self.painted.borrow();
         let row = painted.lines.get(&line)?;
         Some(row.bounds.origin + row.position(offset - self.buffer.line_range(line).start)?)
@@ -518,24 +547,52 @@ impl SourceEditor {
         Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
     }
 
-    /// Follows the pointer: on a new word it waits, then asks what that word is.
+    /// Follows the pointer: on a new word or underline it waits, then says what
+    /// the underline means or asks what the word is.
     fn point_at(&mut self, at: Option<usize>, cx: &mut Context<Self>) {
         let Some(at) = at.filter(|_| self.session.is_some() && self.completion.is_none()) else { return self.stop_pointing(cx) };
-        if self.pointed.as_ref().is_some_and(|pointed| pointed.word.contains(&at)) { return; }
-        let pending = cx.spawn(async move |this, cx| {
+        let place = self.folded.as_ref().filter(|fold| fold.holds(at)).map_or(at..at + 1, |fold| fold.bytes.clone());
+        let problems: Vec<Decoration> = self.decorations.iter().rev().filter(|decoration| decoration.meets(&place)).cloned().collect();
+        let problem = !problems.is_empty();
+        if self.pointed.as_ref().is_some_and(|pointed| pointed.word.contains(&at) && pointed.problem == problem) { return; }
+        let line = self.buffer.line_range(self.buffer.line_of(at)).start;
+        let (word, anchor, pending) = if problem {
+            let word = problems.iter().fold(place, |word, decoration| word.start.min(decoration.range.start)..word.end.max(decoration.range.end));
+            let start = word.start.max(line);
+            // An underline over wrapped rows: the popover goes under the row pointed at.
+            let anchor = if self.painted_at(start).map(|p| p.y) == self.painted_at(at).map(|p| p.y) { start } else { at };
+            (word, anchor, self.say_problems(problems, cx))
+        } else {
+            let word = word_around(self.buffer.text(), at);
+            let anchor = word.start;
+            (word, anchor, self.ask_about(at, cx))
+        };
+        self.stop_pointing(cx);
+        self.pointed = Some(Pointed { word, anchor, problem, shown: None, _pending: Some(pending) });
+    }
+
+    fn say_problems(&self, problems: Vec<Decoration>, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOVER_DELAY).await;
+            let _ = this.update(cx, |this, cx| this.answered(Some(Said::Problems(problems)), cx));
+        })
+    }
+
+    fn ask_about(&self, at: usize, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(HOVER_DELAY).await;
             let Ok(Some(answer)) = this.update(cx, |this, cx| {
                 let session = this.session.as_ref()?.read(cx);
                 Some(session.hover(this.buffer.text().to_string(), at, cx))
             }) else { return };
             let shown = answer.await;
-            let _ = this.update(cx, |this, cx| {
-                if let Some(pointed) = &mut this.pointed { pointed.shown = shown; }
-                cx.notify();
-            });
-        });
-        self.stop_pointing(cx);
-        self.pointed = Some(Pointed { word: word_around(self.buffer.text(), at), shown: None, _pending: Some(pending) });
+            let _ = this.update(cx, |this, cx| this.answered(shown.map(Said::Docs), cx));
+        })
+    }
+
+    fn answered(&mut self, said: Option<Said>, cx: &mut Context<Self>) {
+        if let Some(pointed) = &mut self.pointed { pointed.shown = said; }
+        cx.notify();
     }
 
     fn stop_pointing(&mut self, cx: &mut Context<Self>) {
@@ -550,10 +607,18 @@ impl SourceEditor {
 
     fn render_hover(&self) -> Option<AnyElement> {
         let pointed = self.pointed.as_ref().filter(|_| self.completion.is_none())?;
-        let hover = pointed.shown.as_ref()?;
-        let at = self.painted_at(pointed.word.start)?;
+        let shown = pointed.shown.as_ref()?;
+        let at = self.painted_at(pointed.anchor)?;
         let body = div().text_size(px(12.)).line_height(px(17.));
-        let body = if hover.code { body.font_family(MONO_FONT).child(hover.text.clone()) } else { body.child(ui_text(hover.text.clone())) };
+        let body = match shown {
+            Said::Docs(hover) if hover.code => body.font_family(MONO_FONT).child(hover.text.clone()),
+            Said::Docs(hover) => body.child(ui_text(hover.text.clone())),
+            Said::Problems(problems) => body.flex().flex_col().gap(px(6.)).children(problems.iter().map(|problem| {
+                // Plain strings wrap, and a message can name a whole path or label.
+                div().child(problem.message.clone())
+                    .children(problem.hints.iter().map(|hint| div().text_color(Theme::text_caption()).child(format!("Hint: {hint}"))))
+            })),
+        };
         let card = popover().max_w(px(self.completion_w)).max_h(px(HOVER_MAX_H)).overflow_hidden().px(px(10.)).py(px(6.)).shadow(theme::shadow_panel()).child(body);
         Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(card)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
     }
@@ -751,9 +816,15 @@ impl SourceEditor {
     fn render_line(&mut self, line: usize, window: &mut Window, _: &mut Context<Self>) -> AnyElement {
         if let Some(fold) = &self.folded && fold.lines.contains(&line) {
             if line != fold.lines.start { return div().h(px(0.)).into_any_element(); }
+            // Its text is hidden, so the row stands for an underline inside it.
+            let problem = self.decorations.iter().rfind(|decoration| decoration.meets(&fold.bytes)).map(Decoration::color);
+            let painted = self.painted.clone();
             return div().h(px(LINE_HEIGHT + 8.)).pt(px(4.)).pb(px(4.)).child(
-                div().size_full().px(px(8.)).flex().items_center().rounded(px(6.)).bg(Theme::fill_hover())
+                div().relative().size_full().px(px(8.)).flex().items_center().rounded(px(6.)).bg(Theme::fill_hover())
                     .text_size(px(12.)).text_color(Theme::text_caption()).child("Bibliography, generated by Thesio")
+                    .when_some(problem, |row, color| row.text_decoration_1().text_decoration_wavy().text_decoration_color(color).child(canvas(|_, _, _| (), move |bounds, _, _, _| {
+                        painted.borrow_mut().insert(line, PaintedLine { bounds, layout: None, line_height: px(LINE_HEIGHT) });
+                    }).absolute().size_full()))
             ).into_any_element();
         }
         let range = self.buffer.line_range(line);
@@ -762,8 +833,8 @@ impl SourceEditor {
             .then(|| sel.start.max(range.start) - range.start..sel.end.min(range.end) - range.start);
         let caret = self.buffer.caret();
         let caret = (self.focus.is_focused(window) && sel.is_empty() && caret >= range.start && caret <= range.end).then(|| caret - range.start);
-        let decorations = self.decorations.iter().filter(|d| d.range.start < range.end && d.range.end > range.start)
-            .map(|d| (d.range.start.max(range.start) - range.start..d.range.end.min(range.end) - range.start, d.color)).collect();
+        let decorations = self.decorations.iter().filter(|d| d.meets(&range))
+            .map(|d| (d.range.start.max(range.start) - range.start..d.range.end.min(range.end) - range.start, d.color())).collect();
         LineElement {
             line,
             text: SharedString::from(self.buffer.text()[range.clone()].to_string()),

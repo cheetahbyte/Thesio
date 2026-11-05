@@ -213,7 +213,10 @@ impl Render for Preview {
                 .text_color(if d.error { Theme::danger() } else { Theme::text_caption() })
                 .when(target.is_some(), |row| row.cursor_pointer())
                 .child(format!("{location}{}", d.message))
-                .on_click(cx.listener(move |_, _, _, cx| if let Some(offset) = target { cx.emit(PreviewEvent::Jump(offset)); }))
+                .on_click(cx.listener(move |this, _, _, cx| if let Some(offset) = target {
+                    let offset = this.session.read(cx).moved(offset);
+                    cx.emit(PreviewEvent::Jump(offset));
+                }))
         }).collect::<Vec<_>>();
         div().relative().size_full().flex().flex_col().bg(Theme::sidebar_hover())
             .child(div().relative().flex().flex_col().flex_1().min_h_0()

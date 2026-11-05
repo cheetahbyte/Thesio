@@ -66,7 +66,7 @@ main.rs: window
 3. `Workspace` passes the text to the `DocumentSession` and schedules a save 500 ms later.
 4. `DocumentSession` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `session::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
 5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
-6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last. The editor holds the same session, which answers completion and hover. An editor with no `Preview`, such as paper notes, gets a session from `DocumentSession::without_pages`, which compiles and renders no pages, with the note as its own main file.
+6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last or stand for newer text, so an underline an edit ended comes back even when the new result says the same. The editor holds the same session, which answers completion and hover. An editor with no `Preview`, such as paper notes, gets a session from `DocumentSession::without_pages`, which compiles and renders no pages, with the note as its own main file.
 
 A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
 
@@ -88,7 +88,17 @@ Importing a package is the only network use a document can trigger. It requests 
 
 Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
 
-Rows also paint `Decoration`s: an underline over a precise byte range, in a colour, which moves with edits around it. `SourceEditor::set_decorations` sets them for diagnostics, which do not call it yet.
+Rows also paint `Decoration`s: a wavy underline over a byte range, red for an error and amber for a warning, across every wrapped row it reaches. See [Inline diagnostics](#inline-diagnostics).
+
+## Inline diagnostics
+
+`SourceEditor` subscribes to its session, so paper notes have underlines too, and takes `DocumentSession::problems` on `SessionEvent::Diagnostics`: the newest diagnostics that point into the open file, whichever document was compiled, so a chapter's error shows when the chapter is the open file and only in the list otherwise. The old underlines stay until that event, so nothing flickers while a compile runs.
+
+A diagnostic's range is in the text that compile read, which `Compilation::placed` moves onto the buffer through `buffer::difference`. Both ends stay on char boundaries, since the text outside the difference is the same in both. Between compiles, `text_changed` moves each underline with the edit (`buffer::stretch`): an edit inside it resizes it, and one across its edge ends it until the next result. A click in the list goes through `DocumentSession::moved`, for a list older than the text. `SourceEditor::go_to` snaps every jump to a char boundary, as a click on a page also comes from older text.
+
+Typst puts a missing token between two characters, so its range can be empty or hold only a newline. `Buffer::visible` shows such a range on the next character of the line, or else on the last text before it. Text inside the folded bibliography has no row, so the fold's row takes the underline and answers the pointer.
+
+Pointing at an underline waits like hover and shows the message and hints of every diagnostic there, instead of asking `typst_ide` about the word. The popover opens under the row pointed at, and a new set of underlines closes it.
 
 ## Completion
 
@@ -177,6 +187,8 @@ The first citation in a document embeds a block unless one already covers it. A 
 - Paths built at run time, such as `"chapters/" + name`, are not updated by a move.
 - Changes made to the open file by other programs are not picked up, and the next save overwrites them.
 - Two windows on the same file are not kept in sync.
+- A diagnostic with no vault file, such as one inside a package, shows only in the list. So does one in a file that holds nothing but blank space.
+- An underline says nothing about the word under it: `typst_ide`'s hover is not shown there.
 - The editor has no find and replace yet.
 - BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
 - Zotero import and sync are not implemented, and ADS Bibcodes are not supported because ADS requires a personal API key.

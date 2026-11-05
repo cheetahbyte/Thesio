@@ -75,7 +75,7 @@ impl Workspace {
             let mut editor = SourceEditor::new(text.clone(), true, providers, cx);
             // Inside the panel: the viewer would hide what crosses onto it.
             editor.completion_w = PANEL_W - 40.;
-            editor.set_session(session.clone());
+            editor.set_session(session.clone(), cx);
             editor
         });
         session.update(cx, |session, cx| session.set_text(text, cx));

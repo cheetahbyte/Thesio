@@ -127,6 +127,8 @@ pub mod craft {
     pub const R400: u32 = 0xfb2c36;
     pub const R500: u32 = 0xe7000b;
     pub const R700: u32 = 0x9f0712;
+    /// Warnings.
+    pub const Y500: u32 = 0xd08700;
 
     /// Success.
     pub const G500: u32 = 0x00c950;
@@ -201,6 +203,7 @@ impl Theme {
     /// Text selection: the accent, light.
     pub fn selection() -> Hsla { ca(accent(), 0.24) }
     pub fn danger() -> Hsla { c(craft::R500) }
+    pub fn caution() -> Hsla { c(craft::Y500) }
 
     /// A light gray tint separates the sidebar from the white page while keeping wallpaper colors quiet.
     /// The document pane paints its own opaque white surface.

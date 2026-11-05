@@ -111,7 +111,7 @@ impl Workspace {
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
         let preview = session.as_ref().map(|session| cx.new(|cx| Preview::new(session.clone(), cx)));
         if let Some(session) = &session {
-            editor.update(cx, |editor, _| editor.set_session(session.clone()));
+            editor.update(cx, |editor, cx| editor.set_session(session.clone(), cx));
             session.update(cx, |session, cx| session.set_text(text, cx));
         }
         let mut subs = vec![cx.subscribe_in(&editor, window, Self::on_editor_event)];

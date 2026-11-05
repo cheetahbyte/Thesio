@@ -110,7 +110,8 @@ fn reuse_images<I: Clone>(rendered: Vec<(u128, Option<I>)>, old: Vec<(u128, I)>)
 pub enum SessionEvent {
     /// A compile finished; the published result changed.
     Compiled,
-    /// The new result's diagnostics differ from the last one's.
+    /// The new result's diagnostics differ from the last one's, or stand for
+    /// newer text. Whatever was placed on the text takes them again.
     Diagnostics,
 }
 
@@ -166,6 +167,16 @@ impl DocumentSession {
     pub fn diagnostics(&self) -> Rc<Vec<Diagnostic>> { self.diagnostics.clone() }
     pub fn took(&self) -> Option<Duration> { self.took }
     pub fn published(&self) -> u64 { self.published }
+    /// The newest diagnostics in the open file, placed on `text`.
+    pub fn problems(&self, text: &str) -> Vec<Diagnostic> {
+        self.newest.as_ref().map_or(vec![], |compilation| compilation.placed(&self.diagnostics, &self.path, text))
+    }
+
+    /// Where byte `offset` of the newest result's text has gone in the newest text.
+    pub fn moved(&self, offset: usize) -> usize {
+        self.newest.as_ref().map_or(offset, |compilation| compilation.moved(&self.path, offset, &self.text))
+    }
+
     /// The last result with a document, for moving between pages and source.
     pub fn document(&self) -> Option<&Arc<Compilation>> { self.document.as_ref() }
     /// The document's words by file, as of the last good compile.
@@ -276,7 +287,7 @@ impl DocumentSession {
             if let Some(pages) = pages { self.place_pages(pages, cx); }
         }
         cx.emit(SessionEvent::Compiled);
-        if diagnostics_changed { cx.emit(SessionEvent::Diagnostics); }
+        if diagnostics_changed || !self.diagnostics.is_empty() { cx.emit(SessionEvent::Diagnostics); }
         cx.notify();
     }
 

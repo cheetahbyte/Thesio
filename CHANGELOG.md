@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Underline compile errors in red and warnings in amber in the editor, on the exact text, in paper notes too. Pointing at an underline shows the message and hints. Underlines follow your typing and stay until the new result arrives, and a chapter's errors show in the chapter when it is open. The list under the preview stays.
+- Land on the right place when clicking a diagnostic in the list while newer text compiles.
 - Offer cross-references with `@`. Figures, tables, headings, equations, and any other label in the whole document, included chapters too, join the sources in one list, with their title, kind, and page. Accepting one writes `@label` and adds no bibliography.
 - Keep `@label` when a citation key of the same name changes, in documents that write that label.
 - Complete Typst code. Typing `#` offers functions, variables, and snippets, a dot after code offers fields and methods, and ⌃Space offers parameters, values, labels, and file paths too. Tab moves through a snippet's placeholders. Paper notes have it as well.
