@@ -46,7 +46,7 @@ Use one command per line. Lines starting with `#` are comments. For complete det
 | `wait <ms>` | Wait and draw frames during the wait, including when the screen is locked |
 | `key <key>` | Send a key, such as `key cmd-b` or `key escape` |
 | `type <text>` | Enter text; trailing spaces are significant |
-| `move x y` / `click x y` / `dclick x y` / `rclick x y` / `drag x1 y1 x2 y2` | Mouse operations in window coordinates |
+| `move x y` / `click x y` / `dclick x y` / `rclick x y` / `cmdclick x y` / `drag x1 y1 x2 y2` | Mouse operations in window coordinates |
 | `wheel x y dy` | Send one wheel event |
 | `shot <name>` / `burst <name> n` | Capture a screenshot or capture `n` screenshots about 8 ms apart |
 | `mark <text>` / `commit <text>` | Compose or commit input method text |

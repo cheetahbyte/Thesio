@@ -6,7 +6,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use thesio_core::compiler::{Compiler, Diagnostic, render_changed};
+use thesio_core::compiler::{Compiler, Diagnostic, PageTarget, render_changed, with_large_stack};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
@@ -27,6 +27,10 @@ type CompileResult = anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>
 
 /// Compiles `text` as `path` within `main`, rendering pages not in `known`.
 fn run(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
+    with_large_stack(|| compile_and_render(compiler, path, text, main, known))?
+}
+
+fn compile_and_render(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
     let started = Instant::now();
     compiler.set_buffer(path, text)?;
     let compilation = compiler.compile(main)?;
@@ -76,6 +80,8 @@ pub enum PreviewEvent {
     Jump(usize),
     /// A page was clicked: go to this file and byte offset.
     Source(String, usize),
+    /// A note link was clicked: open this file.
+    Note(String),
 }
 
 pub struct Preview {
@@ -190,8 +196,12 @@ impl Preview {
         let origin = bounds.origin + self.scroll.offset();
         let zoom = f32::from(bounds.size.width) / width;
         let (x, y) = (f32::from(position.x - origin.x) / zoom, f32::from(position.y - origin.y) / zoom);
-        let Some((path, offset)) = self.compiler.lock().unwrap().source_at(page, x, y) else { return };
-        cx.emit(PreviewEvent::Source(path, offset));
+        let target = self.compiler.lock().unwrap().target_at(page, x, y);
+        match target {
+            Some(PageTarget::Source(path, offset)) => cx.emit(PreviewEvent::Source(path, offset)),
+            Some(PageTarget::Note(path)) => cx.emit(PreviewEvent::Note(path)),
+            None => {}
+        }
     }
 
     /// Compiles `text` as the open file, superseding any pending compile.
@@ -305,6 +315,7 @@ impl Preview {
         let own = self.words.iter().find(|(path, _)| *path == self.open_path).map(|(_, words)| *words);
         let words = match own {
             Some(own) if own != total => format!("{} of {} words", format_count(own), format_count(total)),
+            _ if total == 1 => "1 word".to_string(),
             _ => format!("{} words", format_count(total)),
         };
         format!("{words} · {}", format_took(took))

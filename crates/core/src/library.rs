@@ -691,6 +691,24 @@ mod tests {
     }
 
     #[test]
+    fn note_links_are_found_and_written_and_follow_a_move() {
+        use references::{note_link, note_link_at, note_links, rewrite_paths};
+        let text = "#link(\"../b.typ\")[B] #link(\"https://x.org/a.typ\")[web] #link(\"c.pdf\")[pdf]\n#link(\"d.typ\", \"e.typ\")\n`#link(\"raw.typ\")`\n";
+        let links = note_links(text, "notes/a.typ");
+        assert_eq!(links.iter().map(|link| link.target.as_str()).collect::<Vec<_>>(), ["b.typ", "notes/d.typ"]);
+        assert_eq!(&text[links[0].range.clone()], "#link(\"../b.typ\")[B]");
+        let moved = rewrite_paths(text, "notes/a.typ", "notes/a.typ", |path| (path == "b.typ").then(|| "archive/b.typ".to_string())).unwrap();
+        assert!(moved.starts_with("#link(\"../archive/b.typ\")[B] #link(\"https://x.org/a.typ\")"), "{moved}");
+        assert_eq!(note_link("notes/a.typ", "ch/b.typ", "Why [this] #1"), "#link(\"../ch/b.typ\")[Why \\[this\\] \\#1]");
+        assert_eq!(note_link_at("see [[fla", 9), Some(4..9));
+        assert_eq!(note_link_at("see [[fla]] x", 9), Some(4..11));
+        assert_eq!(note_link_at("see [[a]] b", 11), None);
+        assert_eq!(note_link_at("`[[a", 4), None);
+        assert_eq!(note_link_at("// [[a", 6), None);
+        assert_eq!(note_link_at("#let a = \"[[a", 13), None);
+    }
+
+    #[test]
     fn renaming_a_key_changes_only_its_citations() {
         let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
         assert_eq!(references::rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");

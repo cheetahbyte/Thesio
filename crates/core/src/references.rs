@@ -1,4 +1,5 @@
-//! Rewrites the file paths in Typst source after a file moves. Only path
+//! Reads and rewrites what Typst source points at: citations, headings, note
+//! links, and the file paths that change when a file moves. Only path
 //! arguments are touched, found with Typst's parser, so matching text in prose,
 //! comments, or ordinary strings is left alone.
 
@@ -63,8 +64,72 @@ fn in_path_call(args: &LinkedNode) -> bool {
         && callee(call).is_some_and(|name| PATH_FUNCTIONS.contains(&name.as_str())))
 }
 
+/// The target of `#link("note.typ")`, which Thesio treats as a path: the
+/// first string of a `link` call, naming a `.typ` file and not a web address.
+fn note_literal(node: &LinkedNode) -> Option<String> {
+    let args = node.parent().filter(|parent| parent.kind() == SyntaxKind::Args)?;
+    args.parent().filter(|call| call.kind() == SyntaxKind::FuncCall && callee(call).as_deref() == Some("link"))?;
+    (args.children().find(|child| child.kind() == SyntaxKind::Str)?.offset() == node.offset()).then_some(())?;
+    let literal = ast::Str::from_untyped(node.get())?.get().to_string();
+    (literal.ends_with(".typ") && !literal.contains("://")).then_some(literal)
+}
+
+/// A `#link` to another file in the vault.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoteLink {
+    /// As written in the source.
+    pub literal: String,
+    /// The vault path it points at.
+    pub target: String,
+    /// The whole call.
+    pub range: Range<usize>,
+}
+
+/// The note links in `text`, a document at vault path `file`.
+pub fn note_links(text: &str, file: &str) -> Vec<NoteLink> {
+    let source = Source::detached(text);
+    let dir = dir_of(file);
+    let mut links = vec![];
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        if node.kind() != SyntaxKind::Str { return; }
+        let Some(literal) = note_literal(node) else { return };
+        let Some(target) = resolve(&dir, &literal) else { return };
+        let Some(call) = node.parent().and_then(|args| args.parent()) else { return };
+        let range = call.range();
+        let start = range.start - usize::from(text[..range.start].ends_with('#'));
+        links.push(NoteLink { literal, target, range: start..range.end });
+    });
+    links
+}
+
+/// The `#link` to write in `file` for a note: `#link("a/b.typ")[Title]`.
+pub fn note_link(file: &str, target: &str, title: &str) -> String {
+    let path = relative_to(file, target).replace('\\', "\\\\").replace('"', "\\\"");
+    let mut label = String::new();
+    for c in title.chars() {
+        if matches!(c, '\\' | '[' | ']' | '#' | '*' | '_' | '`' | '$' | '@' | '<' | '~' | '/') { label.push('\\'); }
+        label.push(c);
+    }
+    format!("#link(\"{path}\")[{label}]")
+}
+
+/// The `[[query` being written at `caret`, brackets included. Strings, raw
+/// text, and comments hold no links.
+pub fn note_link_at(text: &str, caret: usize) -> Option<Range<usize>> {
+    let head = text.get(..caret)?;
+    let line = head.rfind('\n').map_or(0, |i| i + 1);
+    let at = line + head[line..].rfind("[[")?;
+    if head[at + 2..].contains(']') { return None; }
+    let source = Source::detached(text);
+    let root = LinkedNode::new(source.root());
+    let leaf = root.leaf_at(at + 1, Side::After)?;
+    // Raw text or a string still being typed parses as an error.
+    let plain = !leaf.kind().is_error() && !matches!(leaf.kind(), SyntaxKind::Str | SyntaxKind::LineComment | SyntaxKind::BlockComment | SyntaxKind::RawDelim) && leaf.parent_kind() != Some(SyntaxKind::Raw);
+    plain.then(|| at..if text[caret..].starts_with("]]") { caret + 2 } else { caret })
+}
+
 fn collect(node: &LinkedNode, out: &mut Vec<(Range<usize>, String)>) {
-    if node.kind() == SyntaxKind::Str && is_path(node) && let Some(value) = ast::Str::from_untyped(node.get()) {
+    if node.kind() == SyntaxKind::Str && (is_path(node) || note_literal(node).is_some()) && let Some(value) = ast::Str::from_untyped(node.get()) {
         out.push((node.range(), value.get().to_string()));
     }
     for child in node.children() {

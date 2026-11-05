@@ -64,7 +64,7 @@ impl Workspace {
             SourceEvent::Changed => w.save_note(&note, &editor, cx),
             SourceEvent::Citing => w.offer_sources(&editor, cx),
             SourceEvent::Cited => w.link_note_library(&note, &editor, cx),
-            SourceEvent::Caret => {}
+            SourceEvent::Caret | SourceEvent::Follow(_) => {}
         });
         self.paper_panel.notes = Some((editor, subscription));
         self.paper_panel.comment = None;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Compile on a thread with a large stack. A document embedding a PDF with colour profiles could crash a debug build, and other builds had less margin than they should.
+- Link notes: type `[[` to pick a document, which writes a plain Typst `#link`. ⌘-click it in the editor or click it in the preview to open it, and see what links to a document under Linked From in the sidebar. Links follow files that move.
 - Show which documents cite a source in the Library's panel, and go to the first citation on click.
 - Show the word count of the open file and the whole document under the preview, with every file's count in Word Count in the "…" menu.
 - Keep versions of `library.yaml` before changes, and restore them from Version History in the Library's "…" menu.

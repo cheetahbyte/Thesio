@@ -9,7 +9,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
-use thesio_core::references::{Heading, outline};
+use thesio_core::references::{Heading, note_links, outline};
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::Cell;
@@ -255,7 +255,9 @@ pub struct Workspace {
     pub toast: Option<(ToastKind, SharedString, Instant)>,
     toast_task: Option<Task<()>>,
     /// Folded sidebar sections: Pinned, My documents.
-    pub folded: [bool; 3],
+    pub folded: [bool; 4],
+    /// Documents that link to the open one: path, title, and where the link is.
+    pub backlinks: Vec<(String, String, usize)>,
     /// The open document's headings, through the files it includes.
     pub outline: Vec<Heading>,
     /// The document the outline starts from.
@@ -374,7 +376,8 @@ impl Workspace {
             paper_failed: Default::default(),
             pdf: Default::default(),
             paper_panel: Default::default(),
-            folded: [false; 3],
+            folded: [false; 4],
+            backlinks: vec![],
             outline: vec![],
             outline_root: None,
             outline_active: None,
@@ -472,12 +475,18 @@ impl Workspace {
                     this.mark_outline(caret, cx);
                 }
                 SourceEvent::Citing => this.offer_sources(editor, cx),
+                SourceEvent::Follow(offset) => {
+                    let Some(id) = this.current.clone() else { return };
+                    let text = editor.read(cx).buffer.text();
+                    if let Some(link) = note_links(text, &id).into_iter().find(|link| link.range.contains(offset)) { this.follow_link(&link.target, window, cx); }
+                }
                 SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
             }),
         ];
         if let Some(preview) = &preview {
             self.editor_subs.push(cx.subscribe_in(preview, window, |this, _, ev: &PreviewEvent, window, cx| {
                 let (path, offset) = match ev {
+                    PreviewEvent::Note(path) => return this.follow_link(path, window, cx),
                     PreviewEvent::Jump(offset) => (None, *offset),
                     PreviewEvent::Source(path, offset) => (Some(path.clone()), *offset),
                 };
@@ -544,13 +553,21 @@ impl Workspace {
         if let Some(editor) = &self.editor { editor.update(cx, |e, cx| e.go_to(offset, window, cx)); }
     }
 
+    /// Opens a linked file, or says that it is gone.
+    pub(crate) fn follow_link(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.entries.iter().any(|e| e.id == path) { self.open(path, window, cx); } else { self.show_toast_kind(ToastKind::Error, &format!("{path} does not exist"), cx); }
+    }
+
     /// Reads the outline again: the open file from its editor, others from memory.
     pub(crate) fn refresh_outline(&mut self, cx: &mut Context<Self>) {
         let Some(root) = self.outline_root.clone() else {
             self.outline.clear();
+            self.backlinks.clear();
             return;
         };
         let open = self.current.clone().zip(self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string()));
+        self.backlinks = self.current.as_ref().map_or(vec![], |current| self.entries.iter().filter(|e| e.typst && e.id != *current)
+            .filter_map(|e| note_links(&e.body, &e.id).into_iter().find(|link| link.target == *current).map(|link| (e.id.clone(), e.title.clone(), link.range.start))).collect());
         let entries = &self.entries;
         self.outline = outline(&root, &mut |path| match &open {
             Some((id, text)) if id == path => Some(text.clone()),
@@ -685,15 +702,17 @@ impl Workspace {
             };
             let Some(path) = path else { return };
             let result = cx.background_spawn(async move {
-                let mut compiler = thesio_core::compiler::Compiler::new(root);
-                compiler.set_buffer(&id, text)?;
-                let compilation = compiler.compile(&id)?;
-                let Some(document) = compilation.document else {
-                    let first = compilation.diagnostics.into_iter().find(|d| d.error).map_or("unknown error".to_string(), |d| d.message);
-                    anyhow::bail!("{first}");
-                };
-                std::fs::write(&path, thesio_core::compiler::export_pdf(&document)?)?;
-                anyhow::Ok(())
+                thesio_core::compiler::with_large_stack(move || -> anyhow::Result<_> {
+                    let mut compiler = thesio_core::compiler::Compiler::new(root);
+                    compiler.set_buffer(&id, text)?;
+                    let compilation = compiler.compile(&id)?;
+                    let Some(document) = compilation.document else {
+                        let first = compilation.diagnostics.into_iter().find(|d| d.error).map_or("unknown error".to_string(), |d| d.message);
+                        anyhow::bail!("{first}");
+                    };
+                    std::fs::write(&path, thesio_core::compiler::export_pdf(&document)?)?;
+                    anyhow::Ok(())
+                })?
             }).await;
             let _ = this.update(cx, |w, cx| match result {
                 Ok(()) => w.show_toast("Exported PDF", cx),

@@ -9,7 +9,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 use thesio_core::buffer::{Buffer, EditKind};
 use thesio_core::library;
-use thesio_core::references::citation_at;
+use thesio_core::references::{citation_at, note_link_at};
 use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
@@ -82,15 +82,27 @@ pub enum SourceEvent {
     Changed,
     /// The caret moved, by typing or otherwise.
     Caret,
-    /// A citation was started: the editor wants fresh `sources`.
+    /// A citation or note link was started: the editor wants fresh `sources` and `notes`.
     Citing,
+    /// ⌘-click at this byte offset.
+    Follow(usize),
     /// A citation was completed.
     Cited,
 }
 
-/// The source popup over the `@key` at `range`.
+/// A choice in the popup.
+struct Choice {
+    title: String,
+    detail: String,
+    /// What replaces the range.
+    insert: String,
+}
+
+/// The popup over the `@key` or `[[note` at `range`.
 struct Completion {
     range: Range<usize>,
+    /// Offering notes rather than sources.
+    notes: bool,
     query: String,
     selected: usize,
     waited: u8,
@@ -111,6 +123,8 @@ pub struct SourceEditor {
     typst: bool,
     focus: FocusHandle,
     list: ListState,
+    /// Notes to link to: the `#link` to insert, the title, and the path.
+    pub notes: Vec<(String, String, String)>,
     /// The text `list` has rows for.
     listed: String,
     /// Frames left to bring the caret into view, once its row is painted.
@@ -147,7 +161,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
+        let mut editor = Self { notes: vec![], listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
         editor.refold();
         editor
     }
@@ -287,43 +301,57 @@ impl SourceEditor {
     /// existing citations stays quiet.
     fn refresh_completion(&mut self, typed: bool, cx: &mut Context<Self>) {
         let caret = self.buffer.caret();
-        let found = (self.typst && self.buffer.sel.is_empty() && self.marked.is_none()).then(|| citation_at(self.buffer.text(), caret)).flatten();
-        let Some(range) = found else {
+        let plain = self.typst && self.buffer.sel.is_empty() && self.marked.is_none();
+        let citation = plain.then(|| citation_at(self.buffer.text(), caret)).flatten();
+        let link = if citation.is_none() && plain { note_link_at(self.buffer.text(), caret) } else { None };
+        let notes = link.is_some();
+        let Some(range) = citation.or(link) else {
             self.settled = None;
             self.completion = None;
             return;
         };
         if self.settled == Some(range.start) { return; }
-        let query = self.buffer.text()[range.start + 1..caret].to_lowercase();
+        let query = self.buffer.text()[range.start + if notes { 2 } else { 1 }..caret].to_lowercase();
         match &mut self.completion {
             Some(open) => {
                 if open.query != query { open.selected = 0; }
                 (open.range, open.query) = (range, query);
             }
             None if typed => {
-                self.completion = Some(Completion { range, query, selected: 0, waited: 0 });
+                self.completion = Some(Completion { range, notes, query, selected: 0, waited: 0 });
                 cx.emit(SourceEvent::Citing);
             }
             None => {}
         }
     }
 
-    /// The sources matching the open popup, keys that start with the query first.
-    fn completions(&self) -> Vec<&Row> {
+    /// What the open popup offers: sources with matching keys first, or notes
+    /// with matching titles first.
+    fn completions(&self) -> Vec<Choice> {
         let Some(open) = &self.completion else { return vec![] };
+        if open.notes {
+            let mut notes: Vec<&(String, String, String)> = self.notes.iter().filter(|(_, title, path)| title.to_lowercase().contains(&open.query) || path.to_lowercase().contains(&open.query)).collect();
+            notes.sort_by_key(|(_, title, _)| !title.to_lowercase().starts_with(&open.query));
+            notes.truncate(COMPLETION_ROWS);
+            return notes.into_iter().map(|(insert, title, path)| Choice { title: title.clone(), detail: path.clone(), insert: insert.clone() }).collect();
+        }
         let mut rows: Vec<&Row> = self.sources.iter().filter(|row| open.query.is_empty() || matches(row, &open.query)).collect();
         rows.sort_by_key(|row| !row.key.to_lowercase().starts_with(&open.query));
         rows.truncate(COMPLETION_ROWS);
-        rows
+        rows.into_iter().map(|row| Choice {
+            title: if row.title.is_empty() { row.key.clone() } else { row.title.clone() },
+            detail: [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · "),
+            insert: format!("@{}", row.key),
+        }).collect()
     }
 
     fn complete(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(key) = self.completions().get(index).map(|row| row.key.clone()) else { return };
+        let Some(insert) = self.completions().into_iter().nth(index).map(|choice| choice.insert) else { return };
         let Some(open) = self.completion.take() else { return };
         self.settled = Some(open.range.start);
-        self.buffer.replace(open.range, &format!("@{key}"), EditKind::Other);
+        self.buffer.replace(open.range, &insert, EditKind::Other);
         self.changed(cx);
-        cx.emit(SourceEvent::Cited);
+        if !open.notes { cx.emit(SourceEvent::Cited); }
     }
 
     fn completion_step(&mut self, down: bool, cx: &mut Context<Self>) {
@@ -356,7 +384,7 @@ impl SourceEditor {
         if !self.focus.is_focused(window) { return None; }
         let open = self.completion.as_ref()?;
         let (start, selected) = (open.range.start, open.selected.min(COMPLETION_ROWS - 1));
-        let rows: Vec<Row> = self.completions().into_iter().cloned().collect();
+        let rows = self.completions();
         if rows.is_empty() { return None; }
         let Some(at) = self.painted_at(start) else {
             // A new `@` has no layout until the frame after it was typed.
@@ -369,13 +397,11 @@ impl SourceEditor {
         };
         let rows = rows.into_iter().enumerate().map(|(i, row)| {
             let on = i == selected;
-            let detail = [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
-            let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
             div().id(("completion", i)).mx(px(4.)).px(px(8.)).py(px(4.)).flex().flex_col().rounded(px(ROW_RADIUS)).cursor_pointer().overflow_hidden()
                 .when(on, |d| d.bg(Theme::menu_highlight()))
                 .when(!on, |d| d.hover(|s| s.bg(Theme::fill_hover())))
-                .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(title)))
-                .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(Theme::text_caption()).child(ui_text(detail)))
+                .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(row.title)))
+                .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(Theme::text_caption()).child(ui_text(row.detail)))
                 .on_mouse_down(MouseButton::Left, |_, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
@@ -511,6 +537,7 @@ impl SourceEditor {
             self.buffer.select_to(offset);
         } else {
             self.buffer.move_to(offset);
+            if event.modifiers.platform { cx.emit(SourceEvent::Follow(offset)); }
         }
         self.selecting = true;
         self.goal_x = None;

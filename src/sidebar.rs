@@ -209,6 +209,16 @@ impl Workspace {
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
         }
+        if self.view == View::Doc && !self.backlinks.is_empty() {
+            list = list.child(self.section(3, "Linked From", cx));
+            if !self.folded[3] {
+                for (i, (path, title, offset)) in self.backlinks.iter().enumerate() {
+                    let (path, offset) = (path.clone(), *offset);
+                    list = list.child(self.jump_row(("backlink", i), title.clone(), 0., false, cx).on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx))));
+                }
+            }
+            list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
+        }
         list = list.child(self.section(1, "Files", cx));
         if !self.folded[1] {
             let tree = crate::tree::Tree::new(&entries);
@@ -488,13 +498,17 @@ impl Workspace {
 
     fn outline_row(&self, i: usize, heading: &Heading, top: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let (path, offset) = (heading.path.clone(), heading.offset);
-        let active = self.outline_active == Some(i);
-        div().id(("outline", i)).h(px(OUTLINE_ROW_H)).pl(px(8. + OUTLINE_INDENT * (heading.level - top) as f32)).pr(px(CHEVRON_R)).flex().items_center().rounded(px(ROW_R)).cursor_pointer()
+        self.jump_row(("outline", i), heading.title.clone(), OUTLINE_INDENT * (heading.level - top) as f32, self.outline_active == Some(i), cx)
+            .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx)))
+    }
+
+    /// A row that goes somewhere in a document.
+    fn jump_row(&self, id: impl Into<ElementId>, title: String, indent: f32, active: bool, _: &mut Context<Self>) -> Stateful<Div> {
+        div().id(id).h(px(OUTLINE_ROW_H)).pl(px(8. + indent)).pr(px(CHEVRON_R)).flex().items_center().rounded(px(ROW_R)).cursor_pointer()
             .text_size(px(13.))
             .text_color(if active { Theme::text() } else { Theme::sidebar_section() })
             .when(active, |d| d.font_weight(FontWeight::MEDIUM))
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(heading.title.clone())))
-            .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx)))
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(title)))
     }
 
     fn row_base(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> Stateful<Div> {

@@ -2,7 +2,7 @@
 //! into the window and `shot <name>` saves PNGs of the window to `THESIO_SHOTS`
 //! (default /tmp). One step per line:
 //!   wait <ms> | key <keystroke> | type <text> | move x y | click x y |
-//!   dclick x y | rclick x y | drag x1 y1 x2 y2 | shot <name> | burst <name> n |
+//!   dclick x y | rclick x y | cmdclick x y | drag x1 y1 x2 y2 | shot <name> | burst <name> n |
 //!   mark <text> (IME composition) | commit <text> | nkey <letter> (a real
 //!   key press through AppKit, so the active input method sees it) |
 //!   activate (make the window key; takes focus) | quit |
@@ -521,6 +521,15 @@ fn run(cmd: &str, rest: &str, window: &mut Window, cx: &mut App) {
     match cmd {
         // Synthesized right-button NSEvents report buttonNumber 0, so GPUI would
         // read them as left clicks; feed the right click to GPUI directly.
+        "cmdclick" => {
+            let n = nums(rest);
+            if n.len() >= 2 {
+                let position = point(px(n[0]), px(n[1]));
+                let modifiers = Modifiers { platform: true, ..Default::default() };
+                window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, modifiers, click_count: 1, first_mouse: false }), cx);
+                window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, modifiers, click_count: 1 }), cx);
+            }
+        }
         "rclick" => {
             let n = nums(rest);
             if n.len() >= 2 {

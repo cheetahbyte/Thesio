@@ -24,6 +24,7 @@ pub use typst_layout::PagedDocument;
 
 /// Memoized results older than this many compilations are dropped.
 const CACHE_AGE: usize = 10;
+const COMPILE_STACK: usize = 64 * 1024 * 1024;
 /// How far to look for text when the caret is on none, in bytes.
 const NEAREST_TEXT: usize = 64;
 
@@ -51,6 +52,15 @@ pub struct PageImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+/// What a click on a page lands on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PageTarget {
+    /// A vault path and byte offset.
+    Source(String, usize),
+    /// A note link, by the vault path it points at.
+    Note(String),
 }
 
 pub struct Compiler {
@@ -118,8 +128,8 @@ impl Compiler {
         Some((position.page.get() - 1, position.point.y.to_pt() as f32))
     }
 
-    /// The source at a point on a page, in points: its vault path and byte offset.
-    pub fn source_at(&self, page: usize, x: f32, y: f32) -> Option<(String, usize)> {
+    /// What is at a point on a page, in points.
+    pub fn target_at(&self, page: usize, x: f32, y: f32) -> Option<PageTarget> {
         let position = PagedPosition {
             page: NonZeroUsize::new(page + 1)?,
             point: Point::new(Abs::pt(x as f64), Abs::pt(y as f64)),
@@ -127,8 +137,9 @@ impl Compiler {
         match typst_ide::jump_from_click(&self.world, self.last.as_ref()?, &position)? {
             Jump::File(id, offset) => {
                 let id = self.world.resolved(id);
-                matches!(id.get().root(), VirtualRoot::Project).then(|| (id.get().vpath().get_without_slash().to_string(), offset))
+                matches!(id.get().root(), VirtualRoot::Project).then(|| PageTarget::Source(id.get().vpath().get_without_slash().to_string(), offset))
             }
+            Jump::Url(url) => self.world.note_target(url.as_str()).map(PageTarget::Note),
             _ => None,
         }
     }
@@ -159,6 +170,15 @@ fn shows(frame: &Frame, files: &rustc_hash::FxHashSet<FileId>) -> bool {
         FrameItem::Text(text) => text.glyphs.iter().any(|glyph| from(glyph.span.0)),
         FrameItem::Shape(_, span) | FrameItem::Image(_, _, span) => from(*span),
         FrameItem::Link(..) | FrameItem::Tag(_) => false,
+    })
+}
+
+/// Runs `work` on a thread with room for deep documents and embedded PDFs,
+/// whose colour conversion overflows a pool thread's 512 KB in a debug build.
+pub fn with_large_stack<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(COMPILE_STACK).spawn_scoped(scope, work).context("Could not start compiling")?;
+        Ok(thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
     })
 }
 
@@ -251,6 +271,19 @@ impl VaultWorld {
 }
 
 impl VaultWorld {
+    /// Where a link's text points. A page only holds the text, which is
+    /// relative to the file it was written in, so that file is looked up.
+    fn note_target(&self, literal: &str) -> Option<String> {
+        let files = self.files.lock().unwrap();
+        let mut sources: Vec<(String, &Source)> = files.iter().filter_map(|(id, slot)| {
+            Some((id.get().vpath().get_without_slash().to_string(), slot.source.as_ref()?))
+        }).collect();
+        sources.sort_by(|a, b| a.0.cmp(&b.0));
+        sources.into_iter().find_map(|(path, source)| {
+            crate::references::note_links(source.text(), &path).into_iter().find(|link| link.literal == literal).map(|link| link.target)
+        })
+    }
+
     fn count_words(&self, document: &PagedDocument) -> Vec<(String, usize)> {
         fn visit(frame: &Frame, found: &mut Vec<(FileId, usize)>) {
             for (_, item) in frame.items() {
@@ -388,14 +421,39 @@ mod tests {
         assert!(errors(&compiler.compile("main.typ").unwrap()).is_empty());
         let (page, y) = compiler.position_of("chapters/two.typ", 3).unwrap();
         assert_eq!(page, 1);
-        let (path, offset) = compiler.source_at(page, 75., y - 3.).unwrap();
+        let Some(PageTarget::Source(path, offset)) = compiler.target_at(page, 75., y - 3.) else { panic!("no source there") };
         assert_eq!(path, "chapters/two.typ");
         assert!(offset < "Second chapter.".len(), "{offset}");
         // The blank lines draw nothing, so the text before them stands in.
         assert_eq!(compiler.position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
         // Nor does a heading's marker, at the very start of a file.
         assert_eq!(compiler.position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
-        assert_eq!(compiler.source_at(page, 1., 1.), None);
+        assert_eq!(compiler.target_at(page, 1., 1.), None);
+    }
+
+    #[test]
+    fn a_click_on_a_note_link_resolves_from_the_file_that_wrote_it() {
+        let root = vault("note-link", &[
+            ("main.typ", "#include \"ch/one.typ\"\n"),
+            ("ch/one.typ", "#link(\"../notes/idea.typ\")[The idea] and more.\n"),
+            ("notes/idea.typ", "An idea.\n"),
+        ]);
+        let mut compiler = Compiler::new(root);
+        assert!(errors(&compiler.compile("main.typ").unwrap()).is_empty());
+        let (page, y) = compiler.position_of("ch/one.typ", 30).unwrap();
+        assert_eq!(compiler.target_at(page, 75., y - 3.), Some(PageTarget::Note("notes/idea.typ".to_string())));
+    }
+
+    #[test]
+    fn work_on_a_large_stack_outgrows_a_small_thread() {
+        #[inline(never)]
+        fn deep(level: usize) -> usize {
+            let padding = std::hint::black_box([level as u8; 4096]);
+            if level == 0 { padding[0] as usize } else { deep(level - 1) + usize::from(padding[1]) }
+        }
+        // Four times the stack of the thread that asks for it, as a pool thread would.
+        let small = std::thread::Builder::new().stack_size(512 * 1024).spawn(|| with_large_stack(|| deep(500)).unwrap()).unwrap();
+        assert!(small.join().unwrap() > 0);
     }
 
     #[test]

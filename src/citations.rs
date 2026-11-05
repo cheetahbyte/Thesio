@@ -16,7 +16,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use thesio_core::references::{bibliography_style, cited_keys, citations_of, included_files, rename_citation, set_bibliography_style};
+use thesio_core::references::{bibliography_style, cited_keys, citations_of, included_files, note_link, rename_citation, set_bibliography_style};
 
 const ROW_H: f32 = 32.;
 /// Rows inset their cells, so cell text lines up with the page title.
@@ -377,7 +377,11 @@ impl Workspace {
     pub(crate) fn offer_sources(&mut self, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
         self.reload_library();
         let rows = self.visible_rows("");
-        editor.update(cx, |e, cx| { e.sources = rows; cx.notify(); });
+        // Paper notes have no path of their own here, so they offer no links.
+        let file = self.current.clone().filter(|_| self.editor.as_ref() == Some(editor));
+        let notes = file.map_or(vec![], |file| self.entries.iter().filter(|e| e.typst && e.id != file)
+            .map(|e| (note_link(&file, &e.id, &e.title), e.title.clone(), e.id.clone())).collect());
+        editor.update(cx, |e, cx| { e.sources = rows; e.notes = notes; cx.notify(); });
     }
 
     /// Every key cited in a document and the files it includes.
