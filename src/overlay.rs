@@ -89,7 +89,7 @@ impl Workspace {
     /// with nothing to go back to, to the open document.
     pub(crate) fn take_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Overlay> {
         let overlay = self.overlay.take()?;
-        match (self.overlay_return.take().filter(|focus| *focus != self.focus), &self.editor) {
+        match (self.overlay_return.take().filter(|focus| *focus != self.focus), self.editor()) {
             (Some(focus), _) => window.focus(&focus),
             (None, Some(editor)) if self.view == View::Doc => editor.read(cx).focus(window),
             // A closed dialog's field takes the keys with it otherwise.
@@ -114,8 +114,8 @@ impl Workspace {
     pub(crate) fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.overlay.is_some() {
             self.close_overlay(window, cx);
-        } else if self.batch.is_some() && self.rename.is_none() {
-            self.batch = None;
+        } else if self.sidebar.batch.is_some() && self.sidebar.rename.is_none() {
+            self.sidebar.batch = None;
             cx.notify();
         } else {
             return;
@@ -133,7 +133,7 @@ impl Workspace {
 
     /// The viewer goes under what GPUI draws over the pane, or it would hide it.
     pub(crate) fn paper_covered(&self, window: &Window) -> bool {
-        let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        let edge = if self.sidebar.open { self.sidebar_w(window) } else { 0. };
         self.overlay.as_ref().is_some_and(|overlay| overlay.covers_pane(edge))
     }
 

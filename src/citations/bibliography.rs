@@ -47,12 +47,12 @@ impl Workspace {
     }
 
     pub(crate) fn bibliography_mode(&self, cx: &App) -> Mode {
-        self.current.as_ref().and_then(|id| Some(bibliography::mode(&self.text_of(id, cx).ok()?, id))).unwrap_or(Mode::None)
+        self.current().and_then(|id| Some(bibliography::mode(&self.text_of(id, cx).ok()?, id))).unwrap_or(Mode::None)
     }
 
     /// Switches the open document's bibliography as one undoable edit.
     pub(crate) fn set_bibliography(&mut self, target: Mode, cx: &mut Context<Self>) {
-        let Some(id) = self.current.clone() else { return };
+        let Some(id) = self.current().map(str::to_string) else { return };
         let Some(text) = self.read_document(&id, cx) else { return };
         let text = bibliography::remove(&text, &id);
         let text = match target {
@@ -68,7 +68,7 @@ impl Workspace {
     /// The document holding the open file's bibliography, and its style. A
     /// chapter's bibliography is usually in the document that includes it.
     pub(crate) fn style_owner(&self, cx: &App) -> Option<(String, String)> {
-        let id = self.current.clone()?;
+        let id = self.current().map(str::to_string)?;
         [id.clone(), self.top_document(&id, cx)].into_iter().find_map(|doc| {
             let text = self.text_of(&doc, cx).ok()?;
             let mode = bibliography::mode(&text, &doc);
@@ -111,7 +111,7 @@ impl Workspace {
     /// Cites `key` at the caret, embedding a bibliography if nothing covers this
     /// document yet.
     pub(crate) fn insert_citation(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone()) else {
+        let (Some(id), Some(editor)) = (self.current().map(str::to_string), self.editor().cloned()) else {
             return self.show_toast_kind(ToastKind::Error, "Open a document to insert a citation", cx);
         };
         if !is_document(&id) {

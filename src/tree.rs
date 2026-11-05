@@ -104,17 +104,17 @@ impl Workspace {
 
     /// Opens or closes a folder and remembers it for the next launch.
     pub(crate) fn set_expanded(&mut self, id: &str, open: bool, cx: &mut Context<Self>) {
-        let changed = if open { self.expanded.insert(id.to_string()) } else { self.expanded.remove(id) };
+        let changed = if open { self.sidebar.expanded.insert(id.to_string()) } else { self.sidebar.expanded.remove(id) };
         if changed { self.save_expanded(cx); }
     }
 
     pub(crate) fn toggle_folder(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.set_expanded(id, !self.expanded.contains(id), cx);
+        self.set_expanded(id, !self.sidebar.expanded.contains(id), cx);
         cx.notify();
     }
 
     pub(crate) fn save_expanded(&mut self, cx: &mut Context<Self>) {
-        let mut expanded: Vec<String> = self.expanded.iter().cloned().collect();
+        let mut expanded: Vec<String> = self.sidebar.expanded.iter().cloned().collect();
         expanded.sort();
         let result = self.store.borrow().update_settings(|s| s.expanded = expanded);
         if let Err(e) = result { self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not remember open folders: {e}"), cx); }

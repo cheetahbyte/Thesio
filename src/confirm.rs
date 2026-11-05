@@ -104,7 +104,7 @@ impl Workspace {
                         match c {
                             Confirm::Delete { ids, batch } => {
                                 if batch {
-                                    w.batch = None;
+                                    w.sidebar.batch = None;
                                 }
                                 w.delete_docs(&ids, window, cx);
                             }

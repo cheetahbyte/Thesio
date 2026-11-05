@@ -100,7 +100,7 @@ impl Workspace {
 
     /// Back to where Settings was opened from.
     pub(crate) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let back = if self.editor.is_some() && self.current.is_some() { View::Doc } else { View::Home };
+        let back = if self.document.is_some() { View::Doc } else { View::Home };
         self.show_view(back, window, cx);
     }
 
@@ -114,7 +114,7 @@ impl Workspace {
         div().flex_1().min_w_0().h_full().flex().flex_col().bg(Theme::bg_body()).text_color(Theme::text()).font_family(theme::UI_FONT)
             // The bar only drags the window; the page title heads the centred column.
             .child(div().h(px(crate::ui::HEADER_H)).flex_none().flex().items_center().title_bar()
-                .when(!self.sidebar_open, |d| d.pl(px(theme::TRAFFIC_LIGHTS_W)).child(self.header_navigation(cx))))
+                .when(!self.sidebar.open, |d| d.pl(px(theme::TRAFFIC_LIGHTS_W)).child(self.header_navigation(cx))))
             .child(div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings.scroll)
                 .child(div().w_full().flex().flex_col().items_center().px(px(32.)).pb(px(64.))
                     .child(div().w_full().max_w(px(COLUMN_W)).flex().flex_col().gap(px(28.))

@@ -41,7 +41,7 @@ impl Workspace {
     }
 
     pub(crate) fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.current.clone() else { return };
+        let Some(id) = self.current().map(str::to_string) else { return };
         if self.flush(cx) { self.open_versions(Target::Document(id), window, cx); }
     }
 

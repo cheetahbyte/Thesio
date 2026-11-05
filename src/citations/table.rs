@@ -244,7 +244,7 @@ impl Workspace {
     /// The fixed columns that fit beside a usable title, at their current widths.
     pub(crate) fn visible_columns(&self, window: &Window) -> Vec<(Col, &'static str, Option<f32>)> {
         let panel = if self.citations.details.panel.is_some() { INSPECTOR_W } else { 0. };
-        let sidebar = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        let sidebar = if self.sidebar.open { self.sidebar_w(window) } else { 0. };
         let room = f32::from(window.viewport_size().width) - sidebar - panel - 2. * (TABLE_X + CELL_X) - CITE_W - MIN_TITLE_W;
         let mut columns: Vec<_> = COLS.iter().map(|(col, label, width)| (*col, *label, width.map(|w| self.column_width(*col, w)))).collect();
         for col in [Col::Key, Col::Kind, Col::Tags, Col::Year, Col::Authors] {
@@ -374,7 +374,7 @@ impl Workspace {
     }
 
     pub(crate) fn can_cite(&self) -> bool {
-        self.current.as_deref().is_some_and(is_document)
+        self.current().is_some_and(is_document)
     }
 
     pub(crate) fn render_entry_menu(&self, key: &str, position: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {

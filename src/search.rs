@@ -2,6 +2,7 @@
 //! rows and a gray footer. Radius 16, quiet row fills, monochrome page glyphs.
 
 use crate::app::Workspace;
+use crate::input::{TextField, TextFieldEvent};
 use crate::library::Row;
 use crate::native_pdf::{Highlight, read_highlights};
 use crate::store::display_title;
@@ -10,8 +11,9 @@ use crate::theme::{self, Theme};
 use crate::overlay::Overlay;
 use crate::ui::{Icon, ModalAt, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
+use std::collections::HashMap;
 use std::ops::Range;
-use thesio_core::paths::is_pdf;
+use thesio_core::paths::{is_pdf, moved};
 
 /// How many documents Recently viewed lists.
 const RECENT: usize = 20;
@@ -30,6 +32,51 @@ pub enum Hit {
     Source(Row),
     /// A paper's id and title, and the highlight.
     Highlight(String, String, Highlight),
+}
+
+/// The search dialog's state.
+pub struct Search {
+    pub field: Entity<TextField>,
+    /// Keyboard highlight among the results.
+    pub selected: Option<usize>,
+    /// Highlights by paper.
+    index: HashMap<String, IndexedPaper>,
+    indexing: bool,
+    scroll: ScrollHandle,
+    _subscription: Subscription,
+}
+
+impl Search {
+    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new("Search", cx);
+            f.placeholder_color = Theme::text_disabled;
+            f
+        });
+        let subscription = cx.subscribe_in(&field, window, |this, _, ev: &TextFieldEvent, window, cx| {
+            match ev {
+                TextFieldEvent::Changed => {
+                    this.search.selected = this.default_search_sel(cx);
+                    this.search.scroll.set_offset(point(px(0.), px(0.)));
+                }
+                TextFieldEvent::Up => this.move_search_sel(-1, cx),
+                TextFieldEvent::Down => this.move_search_sel(1, cx),
+                TextFieldEvent::Submit => {
+                    if let Some(ix) = this.search.selected {
+                        this.pick_search(ix, window, cx)
+                    }
+                }
+                _ => {}
+            }
+            cx.notify();
+        });
+        Self { field, selected: None, index: HashMap::new(), indexing: false, scroll: ScrollHandle::new(), _subscription: subscription }
+    }
+
+    /// Highlights stay filed under a paper when it moves.
+    pub fn path_changed(&mut self, old: &str, new: &str) {
+        self.index = std::mem::take(&mut self.index).into_iter().map(|(id, paper)| (moved(&id, old, new).unwrap_or(id), paper)).collect();
+    }
 }
 
 /// A paper's highlights, read once for each state of its file.
@@ -232,11 +279,15 @@ fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>,
 }
 
 impl Workspace {
+    pub fn query(&self, cx: &App) -> String {
+        self.search.field.read(cx).text().trim().to_lowercase()
+    }
+
     pub(crate) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_overlay(Overlay::Search, window, cx);
-        self.search_sel = Some(0);
+        self.search.selected = Some(0);
         self.index_papers(cx);
-        let search = self.search.clone();
+        let search = self.search.field.clone();
         search.update(cx, |s, cx| {
             // The dialog's query reads at body size, above the 13pt rows.
             s.size = 15.;
@@ -244,27 +295,27 @@ impl Workspace {
             s.set_text("", cx)
         });
         window.focus(&search.focus_handle(cx));
-        self.search_scroll.set_offset(point(px(0.), px(0.)));
+        self.search.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
     /// Reads the highlights of papers that are new or changed, off the main
     /// thread: results fill in when it is done.
     fn index_papers(&mut self, cx: &mut Context<Self>) {
-        if self.indexing_papers { return; }
+        if self.search.indexing { return; }
         let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| is_pdf(&e.id))
             .filter_map(|e| Some((e.id.clone(), self.store.borrow().path(&e.id).ok()?)))
-            .filter(|(id, path)| stamp(path).is_some_and(|now| self.paper_index.get(id).is_none_or(|known| known.stamp != now))).collect();
+            .filter(|(id, path)| stamp(path).is_some_and(|now| self.search.index.get(id).is_none_or(|known| known.stamp != now))).collect();
         if papers.is_empty() { return; }
-        self.indexing_papers = true;
+        self.search.indexing = true;
         let work = cx.background_spawn(async move {
             papers.into_iter().filter_map(|(id, path)| Some((id, IndexedPaper { stamp: stamp(&path)?, highlights: read_highlights(&path) }))).collect::<Vec<_>>()
         });
         cx.spawn(async move |this, cx| {
             let found = work.await;
             let _ = this.update(cx, |w, cx| {
-                w.paper_index.extend(found);
-                w.indexing_papers = false;
+                w.search.index.extend(found);
+                w.search.indexing = false;
                 cx.notify();
             });
         }).detach();
@@ -281,7 +332,7 @@ impl Workspace {
         match hit {
             Hit::Doc(entry) => {
                 self.open(&entry.id, window, cx);
-                if let Some(ed) = &self.editor { ed.read(cx).focus(window); }
+                if let Some(ed) = self.editor() { ed.read(cx).focus(window); }
             }
             Hit::Source(row) => self.open_entry(Some(row.key), window, cx),
             Hit::Highlight(id, _, highlight) => {
@@ -293,15 +344,15 @@ impl Workspace {
 
     pub(crate) fn move_search_sel(&mut self, delta: isize, cx: &mut Context<Self>) {
         let n = self.search_results(cx).len();
-        if n == 0 { self.search_sel = None; return; }
-        let next = match self.search_sel {
+        if n == 0 { self.search.selected = None; return; }
+        let next = match self.search.selected {
             Some(i) => (i as isize + delta).rem_euclid(n as isize) as usize,
             None if delta > 0 => 0,
             None => n - 1,
         };
-        self.search_sel = Some(next);
+        self.search.selected = Some(next);
         let title = usize::from(self.query(cx).is_empty());
-        self.search_scroll.scroll_to_item(next + title);
+        self.search.scroll.scroll_to_item(next + title);
         cx.notify();
     }
 
@@ -312,7 +363,7 @@ impl Workspace {
         if q.is_empty() { return hits; }
         let rows = self.citations.library.as_ref().map_or(vec![], crate::library::Library::rows);
         hits.extend(rows.into_iter().filter(|row| row.matches(&q)).map(Hit::Source));
-        let mut papers: Vec<_> = self.paper_index.iter().collect();
+        let mut papers: Vec<_> = self.search.index.iter().collect();
         papers.sort_by(|a, b| a.0.cmp(b.0));
         for (id, paper) in papers {
             let found = paper.highlights.iter().filter(|h| h.quote.to_lowercase().contains(&q) || h.comment.to_lowercase().contains(&q));
@@ -375,10 +426,10 @@ impl Workspace {
             .items_center()
             .rounded(px(ROW_RADIUS))
             .cursor_pointer()
-            .when(self.search_sel == Some(ix), |d| d.bg(Theme::fill_hover()))
+            .when(self.search.selected == Some(ix), |d| d.bg(Theme::fill_hover()))
             .on_hover(cx.listener(move |w, hovered: &bool, _, cx| {
-                if *hovered && w.search_sel != Some(ix) {
-                    w.search_sel = Some(ix);
+                if *hovered && w.search.selected != Some(ix) {
+                    w.search.selected = Some(ix);
                     cx.notify();
                 }
             }))
@@ -389,7 +440,7 @@ impl Workspace {
 
     pub(crate) fn render_search(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let q = self.query(cx);
-        let has_text = !self.search.read(cx).text().is_empty();
+        let has_text = !self.search.field.read(cx).text().is_empty();
         let results = self.search_results(cx);
         let vh = f32::from(window.viewport_size().height);
 
@@ -410,14 +461,14 @@ impl Workspace {
                     .mr(px(10.))
                     .child(icon(Icon::Search, 17.5, Theme::text_placeholder()).absolute().top(px(-0.75)).left(px(-0.75))),
             )
-            .child(div().flex_1().min_w_0().pl(px(2.)).flex().child(self.search.clone()))
+            .child(div().flex_1().min_w_0().pl(px(2.)).flex().child(self.search.field.clone()))
             .when(has_text, |d| {
                 d.child(input_button("search-clear", Icon::Clear, 18., Theme::text_disabled()).ml(px(8.)).on_click(cx.listener(
                     |w, _, window, cx| {
-                        w.search.update(cx, |s, cx| s.set_text("", cx));
-                        window.focus(&w.search.focus_handle(cx));
-                        w.search_sel = Some(0);
-                        w.search_scroll.set_offset(point(px(0.), px(0.)));
+                        w.search.field.update(cx, |s, cx| s.set_text("", cx));
+                        window.focus(&w.search.field.focus_handle(cx));
+                        w.search.selected = Some(0);
+                        w.search.scroll.set_offset(point(px(0.), px(0.)));
                         cx.notify();
                     },
                 )))
@@ -434,7 +485,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .track_scroll(&self.search_scroll);
+            .track_scroll(&self.search.scroll);
         if q.is_empty() && !results.is_empty() {
             list = list.child(
                 div()

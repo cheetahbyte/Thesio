@@ -48,7 +48,7 @@ impl Workspace {
 
     /// Words by file, with the open file marked.
     pub(crate) fn render_word_count(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let words = self.session.as_ref()?.read(cx).words().to_vec();
+        let words = self.document.as_ref()?.session.as_ref()?.read(cx).words().to_vec();
         let total: usize = words.iter().map(|(_, words)| words).sum();
         let row = |name: String, count: usize, strong: bool| {
             div().h(px(28.)).flex().items_center().gap(px(16.)).text_size(px(13.))
@@ -56,7 +56,7 @@ impl Workspace {
                 .child(div().flex_1().min_w_0().truncate().child(crate::ui::ui_text(name)))
                 .child(div().flex_none().text_color(Theme::text_caption()).child(crate::ui::format_count(count)))
         };
-        let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current.as_ref() == Some(path))).collect::<Vec<_>>();
+        let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current() == Some(path))).collect::<Vec<_>>();
         let panel = crate::ui::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()
             .child(div().mb(px(10.)).text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Word Count"))
             .child(div().id("word-count-files").max_h(px(320.)).overflow_y_scroll().children(rows))
@@ -80,21 +80,21 @@ impl Workspace {
 
     /// Under the header's "…" button, by its right edge.
     fn doc_menu_position(&self, window: &Window) -> Point<Pixels> {
-        let button = self.more_btn_bounds.get();
+        let button = self.document.as_ref().and_then(|document| document.more_button.get());
         point(button.map_or(window.viewport_size().width - px(120.), |b| b.right()), button.map_or(px(60.), |b| b.bottom() + px(MENU_GAP)))
     }
 
     pub(crate) fn render_doc_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let id = self.current.clone()?;
+        let id = self.current().map(str::to_string)?;
         let entry = self.entries.iter().find(|e| e.id == id);
         let pinned = entry.is_some_and(|e| e.meta.pinned);
         let starred = entry.is_some_and(|e| e.meta.starred > 0);
         let typst = entry.is_some_and(|e| e.typst);
         let mode = self.bibliography_mode(cx);
-        let block_shown = self.editor.as_ref().is_some_and(|e| e.read(cx).block_shown);
+        let block_shown = self.editor().is_some_and(|e| e.read(cx).block_shown);
         let owner = self.style_owner(cx);
         // A document has one bibliography, and a chapter's may be in its main file.
-        let elsewhere = owner.as_ref().is_some_and(|(doc, _)| Some(doc) != self.current.as_ref());
+        let elsewhere = owner.as_ref().is_some_and(|(doc, _)| Some(doc.as_str()) != self.current());
         let style = owner.map(|(_, style)| style);
         let bibliography = |id: &'static str, ic: Icon, label: &'static str, target: Mode| {
             menu_item(id, ic, label).on_click(menu_action(cx, move |w, _, cx| w.set_bibliography(target, cx)))
@@ -120,7 +120,7 @@ impl Workspace {
                 .when(mode != Mode::Custom, |d| d.child(divider())
                     .child(menu_item("dm-cite", Icon::Quote, "Insert citation").on_click(menu_action(cx, |w, window, cx| w.open_cite_picker(window, cx))))
                     .when(mode == Mode::Embedded, |d| d.child(menu_item("dm-block", if block_shown { Icon::Hide } else { Icon::Show }, if block_shown { "Hide bibliography data" } else { "Show bibliography data" }).on_click(menu_action(cx, |w, _, cx| {
-                        if let Some(editor) = &w.editor { editor.update(cx, |e, cx| e.toggle_block(cx)); }
+                        if let Some(editor) = w.editor() { editor.update(cx, |e, cx| e.toggle_block(cx)); }
                     }))))
                     .when(mode != Mode::Embedded && !elsewhere, |d| d.child(bibliography("dm-embed", Icon::Library, "Embed bibliography", Mode::Embedded)))
                     .when(mode != Mode::Linked && !elsewhere, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))

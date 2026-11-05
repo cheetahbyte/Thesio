@@ -4,12 +4,16 @@
 
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
+use crate::input::{TextField, TextFieldEvent};
 use crate::store::display_title;
-use crate::store::Entry;
+use crate::store::{Entry, Settings};
 use crate::theme::{self, Theme, craft};
-use thesio_core::project::Heading;
+use std::collections::HashSet;
+use thesio_core::paths;
+use thesio_core::project::{Heading, Project};
+use thesio_core::references::note_links;
 use crate::overlay::{Overlay, menu_action, menu_panel};
-use crate::ui::{Icon, TipExt, TitleBarExt, anchored_menu, icon, menu_row, ui_text};
+use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, menu_row, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 
 /// Row "…" menu geometry: 32pt rows, 11pt dividers, 6pt padding inside
@@ -38,6 +42,81 @@ pub(crate) const SECTION_TOP: f32 = 6.;
 
 /// Selection mode caps at 50 pages.
 const BATCH_LIMIT: usize = 50;
+
+/// The sidebar's lists, each folded on its own.
+#[derive(Clone, Copy, PartialEq)]
+enum Section { Pinned, Files, Outline, LinkedFrom }
+
+impl Section {
+    fn title(self) -> &'static str {
+        match self {
+            Section::Pinned => "Pinned",
+            Section::Files => "Files",
+            Section::Outline => "Outline",
+            Section::LinkedFrom => "Linked From",
+        }
+    }
+}
+
+/// The list a file row is in. Only Files selects, drags, and shows folders open.
+#[derive(Clone, Copy, PartialEq)]
+enum RowList { Pinned, Files }
+
+impl RowList {
+    fn key(self) -> &'static str {
+        match self { RowList::Pinned => "pinned", RowList::Files => "doc" }
+    }
+}
+
+/// Inline rename of a sidebar row.
+pub struct Rename {
+    pub id: String,
+    pub field: Entity<TextField>,
+    _subs: Vec<Subscription>,
+}
+
+pub struct Sidebar {
+    pub open: bool,
+    /// Dragged width, kept between the limits in `Workspace::sidebar_w`.
+    pub width: f32,
+    /// The resize handle is being dragged.
+    pub drag: bool,
+    pub rename: Option<Rename>,
+    pub scroll: ScrollHandle,
+    /// Selection mode: checked documents in Files, in check order.
+    pub batch: Option<Vec<String>>,
+    folded: [bool; 4],
+    /// Open folders of the file tree.
+    pub expanded: HashSet<String>,
+}
+
+impl Sidebar {
+    pub fn new(settings: Settings) -> Self {
+        Self {
+            open: true,
+            width: settings.sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH),
+            drag: false,
+            rename: None,
+            scroll: ScrollHandle::new(),
+            batch: None,
+            folded: [false; 4],
+            expanded: settings.expanded.into_iter().collect(),
+        }
+    }
+
+    fn is_folded(&self, section: Section) -> bool { self.folded[section as usize] }
+}
+
+/// What the sidebar shows about the open document.
+#[derive(Default)]
+pub struct Outline {
+    /// Its headings, through the files it includes.
+    pub headings: Vec<Heading>,
+    /// The heading the caret is under.
+    pub active: Option<usize>,
+    /// Documents that link to it: path, title, and where the link is.
+    pub backlinks: Vec<(String, String, usize)>,
+}
 
 /// A row of the nav or the footer: the same pill, glyph and label columns.
 pub(crate) fn nav_row(id: impl Into<ElementId>, glyph: Icon, label: &'static str, on: bool) -> Stateful<Div> {
@@ -125,12 +204,102 @@ impl Render for DraggedRow {
 }
 
 impl Workspace {
+    pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.open = !self.sidebar.open;
+        cx.notify();
+    }
+
+    /// Reads the outline again: the open file from its editor, others from memory.
+    pub(crate) fn refresh_outline(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.outline_root(cx) else {
+            self.outline.headings.clear();
+            self.outline.backlinks.clear();
+            return;
+        };
+        let open = self.document.as_ref().map(|document| (document.id.clone(), document.editor.read(cx).text().to_string()));
+        self.outline.backlinks = self.current().map_or(vec![], |current| self.entries.iter().filter(|e| e.typst && e.id != current)
+            .filter_map(|e| note_links(&e.body, &e.id).into_iter().find(|link| link.target == current).map(|link| (e.id.clone(), e.title.clone(), link.range.start))).collect());
+        let entries = &self.entries;
+        self.outline.headings = Project::open(&root, &mut |path| match &open {
+            Some((id, text)) if id == path => Some(text.clone()),
+            _ => entries.iter().find(|e| e.id == path).map(|e| e.body.clone()),
+        }).outline();
+        let caret = self.editor().map_or(0, |editor| editor.read(cx).caret());
+        self.mark_outline(caret, cx);
+    }
+
+    /// The document the outline starts from, for a Typst file.
+    fn outline_root(&self, cx: &App) -> Option<String> {
+        let document = self.document.as_ref().filter(|document| paths::is_document(&document.id))?;
+        Some(document.session.as_ref().map_or_else(|| self.top_document(&document.id, cx), |session| session.read(cx).main().to_string()))
+    }
+
+    /// Marks the heading the caret is under.
+    pub(crate) fn mark_outline(&mut self, caret: usize, cx: &mut Context<Self>) {
+        let current = self.current().map(str::to_string);
+        let active = self.outline.headings.iter().rposition(|h| Some(&h.path) == current.as_ref() && h.offset <= caret);
+        if active != self.outline.active {
+            self.outline.active = active;
+            cx.notify();
+        }
+    }
+
+    /// Rename: the row's title turns into an input; Enter or clicking away saves, Esc cancels.
+    pub fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(title) = self.entries.iter().find(|e| e.id == id).map(|e| e.title.trim().to_string()) else { return };
+        let field = cx.new(|cx| {
+            let mut f = TextField::new(crate::store::UNTITLED, cx);
+            f.set_text(&title, cx);
+            f.select_all_text(cx);
+            f
+        });
+        let focus = field.focus_handle(cx);
+        window.focus(&focus);
+        let subs = vec![
+            cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| match ev {
+                TextFieldEvent::Submit => w.finish_rename(true, window, cx),
+                TextFieldEvent::Cancel => w.finish_rename(false, window, cx),
+                _ => {}
+            }),
+            cx.on_blur(&focus, window, |w, window, cx| w.finish_rename(true, window, cx)),
+        ];
+        self.sidebar.rename = Some(Rename { id: id.to_string(), field, _subs: subs });
+        // From Home the row may be hidden: show it in the sidebar.
+        self.sidebar.open = true;
+        self.reveal_in_tree(id, cx);
+        cx.notify();
+    }
+
+    fn finish_rename(&mut self, commit: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(r) = self.sidebar.rename.take() else { return };
+        let refocus = r.field.read(cx).is_focused(window);
+        let title = r.field.read(cx).text().trim().to_string();
+        let old = self.entries.iter().find(|e| e.id == r.id).map(|e| e.title.trim().to_string());
+        if commit && old.is_some_and(|o| o != title) {
+            self.flush(cx);
+            let result = self.store.borrow_mut().rename(&r.id, &title);
+            match result {
+                Ok(moved) => {
+                    self.path_changed(&r.id, &moved.id, &moved.rewritten, cx);
+                    if !moved.rewritten.is_empty() { self.show_toast(&crate::app::updated_paths(moved.rewritten.len()), cx); }
+                    self.show_warnings(&moved.warnings, cx);
+                }
+                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename document: {e}"), cx),
+            }
+        }
+        if refocus
+            && let Some(ed) = self.editor() {
+                ed.read(cx).focus(window);
+            }
+        cx.notify();
+    }
+
     /// Sidebar width for the current window: the dragged width, kept between
     /// 268 and min(800, window − 540).
     pub(crate) fn sidebar_w(&self, window: &Window) -> f32 {
         let vw = f32::from(window.viewport_size().width);
         let max = theme::SIDEBAR_MAX.min(vw - theme::SIDEBAR_MIN_CONTENT).max(theme::SIDEBAR_MIN);
-        self.sidebar_width.clamp(theme::SIDEBAR_MIN, max)
+        self.sidebar.width.clamp(theme::SIDEBAR_MIN, max)
     }
 
     /// What the file list shows and "select all" takes: a hidden file must not
@@ -176,39 +345,39 @@ impl Workspace {
         // Pinned docs are shortcuts: they stay in My documents too.
         let pinned: Vec<&Entry> = entries.iter().filter(|e| e.meta.pinned).collect();
         if !pinned.is_empty() {
-            list = list.child(self.section(0, "Pinned", cx));
-            if !self.folded[0] {
+            list = list.child(self.section(Section::Pinned, cx));
+            if !self.sidebar.is_folded(Section::Pinned) {
                 for e in pinned {
-                    list = list.child(self.doc_row(e, "pinned", 0, cx));
+                    list = list.child(self.doc_row(e, RowList::Pinned, 0, cx));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
         }
-        if self.view == View::Doc && !self.outline.is_empty() {
-            list = list.child(self.section(2, "Outline", cx));
-            if !self.folded[2] {
-                let top = self.outline.iter().map(|heading| heading.level).min().unwrap_or(1);
-                for (i, heading) in self.outline.iter().enumerate() {
+        if self.view == View::Doc && !self.outline.headings.is_empty() {
+            list = list.child(self.section(Section::Outline, cx));
+            if !self.sidebar.is_folded(Section::Outline) {
+                let top = self.outline.headings.iter().map(|heading| heading.level).min().unwrap_or(1);
+                for (i, heading) in self.outline.headings.iter().enumerate() {
                     list = list.child(self.outline_row(i, heading, top, cx));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
         }
-        if self.view == View::Doc && !self.backlinks.is_empty() {
-            list = list.child(self.section(3, "Linked From", cx));
-            if !self.folded[3] {
-                for (i, (path, title, offset)) in self.backlinks.iter().enumerate() {
+        if self.view == View::Doc && !self.outline.backlinks.is_empty() {
+            list = list.child(self.section(Section::LinkedFrom, cx));
+            if !self.sidebar.is_folded(Section::LinkedFrom) {
+                for (i, (path, title, offset)) in self.outline.backlinks.iter().enumerate() {
                     let (path, offset) = (path.clone(), *offset);
                     list = list.child(jump_row(("backlink", i), title.clone(), 0., false).on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx))));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
         }
-        list = list.child(self.section(1, "Files", cx));
-        if !self.folded[1] {
+        list = list.child(self.section(Section::Files, cx));
+        if !self.sidebar.is_folded(Section::Files) {
             let tree = crate::tree::Tree::new(&entries);
-            for (e, depth) in tree.rows(|id| self.expanded.contains(id)) {
-                list = list.child(self.doc_row(e, "doc", depth, cx));
+            for (e, depth) in tree.rows(|id| self.sidebar.expanded.contains(id)) {
+                list = list.child(self.doc_row(e, RowList::Files, depth, cx));
             }
         }
 
@@ -224,21 +393,21 @@ impl Workspace {
                 .tip(tip, None)
                 .child(div().size_full().flex().items_center().justify_center().child(icon(name, 17., if enabled { Theme::text_code() } else { Theme::sidebar_disabled() })))
         };
-        let some = self.batch.as_ref().is_some_and(|b| !b.is_empty());
+        let some = self.sidebar.batch.as_ref().is_some_and(|b| !b.is_empty());
         // Settings; in Settings the same row reads Back (`settings.rs`), so one spot toggles.
         let footer = div()
             .flex_none()
             .flex()
             .flex_col()
             .child(footer_line())
-            .when(self.batch.is_none(), |d| {
+            .when(self.sidebar.batch.is_none(), |d| {
                 d.child(footer_slot(
                     nav_row("ft-settings", Icon::Gear, "Settings", false)
                         .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Settings, window, cx))),
                 ))
             })
             // Selection mode toolbar: Duplicate | Move to | Delete.
-            .when(self.batch.is_some(), |d| {
+            .when(self.sidebar.batch.is_some(), |d| {
                 d.child(
                     div().h(px(46.)).mx(px(SB_X + 6. + 10. - 18.)).flex().items_center().gap(px(4.))
                         .child(footer_btn("bt-copy", Icon::Copy, "Duplicate", some).on_click(cx.listener(|w, _, _, cx| w.batch_copy(cx))))
@@ -256,7 +425,7 @@ impl Workspace {
             .flex_col()
             .child(header)
             .child(nav)
-            .child(div().id("doc-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.list_scroll).child(list)
+            .child(div().id("doc-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.sidebar.scroll).child(list)
                 // A drop that no row takes lands in the vault root.
                 .drag_over::<DraggedRow>(|s, _, _, _| s.bg(Theme::sidebar_hover()))
                 .on_drop(cx.listener(|w, row: &DraggedRow, _, cx| w.move_docs(std::slice::from_ref(&row.id), None, cx)))
@@ -270,7 +439,7 @@ impl Workspace {
     /// cursor changes, and a faint line shows while dragging.
     pub(crate) fn render_resize_handle(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let w = self.sidebar_w(window);
-        let dragging = self.sidebar_drag;
+        let dragging = self.sidebar.drag;
         div()
             .id("sidebar-resize")
             .absolute()
@@ -293,8 +462,8 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, _, window, cx| {
                     cx.stop_propagation();
-                    ws.sidebar_width = ws.sidebar_w(window);
-                    ws.sidebar_drag = true;
+                    ws.sidebar.width = ws.sidebar_w(window);
+                    ws.sidebar.drag = true;
                     cx.notify();
                 }),
             )
@@ -304,12 +473,12 @@ impl Workspace {
     /// While dragging, a transparent full-window layer keeps the resize cursor
     /// and follows the mouse.
     pub(crate) fn render_resize_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.sidebar_drag {
+        if !self.sidebar.drag {
             return None;
         }
         let end = |ws: &mut Workspace, cx: &mut Context<Workspace>| {
-            ws.sidebar_drag = false;
-            let width = ws.sidebar_width;
+            ws.sidebar.drag = false;
+            let width = ws.sidebar.width;
             let result = ws.store.borrow().update_settings(|s| s.sidebar_width = Some(width));
             if let Err(e) = result { ws.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not remember the sidebar width: {e}"), cx); }
             cx.notify();
@@ -327,8 +496,8 @@ impl Workspace {
                         if ev.pressed_button != Some(MouseButton::Left) {
                             return end(ws, cx);
                         }
-                        ws.sidebar_width = f32::from(ev.position.x);
-                        ws.sidebar_width = ws.sidebar_w(window);
+                        ws.sidebar.width = f32::from(ev.position.x);
+                        ws.sidebar.width = ws.sidebar_w(window);
                         cx.notify();
                     }))
                     .on_mouse_up(MouseButton::Left, cx.listener(move |ws, _, _, cx| end(ws, cx)))
@@ -341,10 +510,10 @@ impl Workspace {
 
     /// Section header, as in Finder: the title on the left and a chevron at the
     /// end of the line, lined up with the folders' chevrons. Clicking it folds.
-    fn section(&self, idx: usize, title: &'static str, cx: &mut Context<Self>) -> Div {
-        let folded = self.folded[idx];
+    fn section(&self, section: Section, cx: &mut Context<Self>) -> Div {
+        let folded = self.sidebar.is_folded(section);
         let row = div().h(px(SECTION_H)).pl(px(4.)).pt(px(SECTION_TOP)).flex().items_center();
-        if let (1, Some(sel)) = (idx, self.batch.as_ref()) {
+        if let (Section::Files, Some(sel)) = (section, self.sidebar.batch.as_ref()) {
             let n = sel.len();
             let all = n > 0 && n >= self.listed_entries().count().min(BATCH_LIMIT);
             return row
@@ -360,7 +529,7 @@ impl Workspace {
                         .child(checkbox(if all { Check::On } else if n > 0 { Check::Partial } else { Check::Off }, false))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             let ids = if all { vec![] } else { w.listed_entries().take(BATCH_LIMIT).map(|e| e.id.clone()).collect() };
-                            w.batch = Some(ids);
+                            w.sidebar.batch = Some(ids);
                             cx.notify();
                         })),
                 )
@@ -384,14 +553,14 @@ impl Workspace {
                         .child("Exit")
                         .tip("Exit selection mode", None)
                         .on_click(cx.listener(|w, _, _, cx| {
-                            w.batch = None;
+                            w.sidebar.batch = None;
                             cx.notify();
                         })),
                 );
         }
         row.child(
             div()
-                .id(("section-title", idx))
+                .id(("section-title", section as usize))
                 .flex_1()
                 .min_w_0()
                 .pl(px(4.))
@@ -401,10 +570,11 @@ impl Workspace {
                 .items_center()
                 .justify_between()
                 .cursor_pointer()
-                .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(title))
+                .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(section.title()))
                 .child(div().size(px(CHEVRON_SLOT)).flex_none().flex().items_center().justify_center().child(icon(if folded { Icon::ChevronRight } else { Icon::ChevronDown }, 11., Theme::sidebar_icon())))
                 .on_click(cx.listener(move |w, _, _, cx| {
-                    w.folded[idx] = !w.folded[idx];
+                    let folded = &mut w.sidebar.folded[section as usize];
+                    *folded = !*folded;
                     cx.notify();
                 })),
         )
@@ -413,8 +583,8 @@ impl Workspace {
     /// Check or uncheck a My documents row (entering Selection mode if needed); false
     /// when the 50-page limit blocks it.
     pub(crate) fn toggle_check(&mut self, id: &str) -> bool {
-        self.folded[1] = false;
-        let sel = self.batch.get_or_insert_with(Vec::new);
+        self.sidebar.folded[Section::Files as usize] = false;
+        let sel = self.sidebar.batch.get_or_insert_with(Vec::new);
         if let Some(i) = sel.iter().position(|x| x == id) {
             sel.remove(i);
         } else if sel.len() < BATCH_LIMIT {
@@ -427,7 +597,7 @@ impl Workspace {
 
     /// The checked docs, in list order.
     fn checked(&self) -> Vec<String> {
-        let Some(sel) = &self.batch else { return vec![] };
+        let Some(sel) = &self.sidebar.batch else { return vec![] };
         self.entries.iter().filter(|e| sel.contains(&e.id)).map(|e| e.id.clone()).collect()
     }
 
@@ -441,7 +611,7 @@ impl Workspace {
             self.copy_doc(id, cx);
         }
         self.refresh_entries(cx);
-        self.batch = None;
+        self.sidebar.batch = None;
         cx.notify();
     }
 
@@ -459,26 +629,26 @@ impl Workspace {
 
     fn outline_row(&self, i: usize, heading: &Heading, top: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let (path, offset) = (heading.path.clone(), heading.offset);
-        jump_row(("outline", i), heading.title.clone(), OUTLINE_INDENT * (heading.level - top) as f32, self.outline_active == Some(i))
+        jump_row(("outline", i), heading.title.clone(), OUTLINE_INDENT * (heading.level - top) as f32, self.outline.active == Some(i))
             .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx)))
     }
 
-    fn row_base(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn row_base(&self, e: &Entry, list: RowList, cx: &mut Context<Self>) -> Stateful<Div> {
         let id = e.id.clone();
         let id2 = e.id.clone();
-        let in_lib = key == "doc";
+        let in_lib = list == RowList::Files;
         div()
-            .id(SharedString::from(format!("{key}-{}", e.id)))
+            .id(SharedString::from(format!("{}-{}", list.key(), e.id)))
             .group("doc-row")
             .mb(px(ROW_GAP))
             .rounded(px(ROW_R))
             .cursor_pointer()
             .on_click(cx.listener(move |w, ev: &ClickEvent, window, cx| {
-                if w.rename.as_ref().is_some_and(|r| r.id == id) {
+                if w.sidebar.rename.as_ref().is_some_and(|r| r.id == id) {
                     return;
                 }
                 // In selection mode a click checks the row; Shift-click enters it.
-                if in_lib && (w.batch.is_some() || ev.modifiers().shift) {
+                if in_lib && (w.sidebar.batch.is_some() || ev.modifiers().shift) {
                     w.toggle_check(&id);
                     cx.notify();
                     return;
@@ -489,8 +659,8 @@ impl Workspace {
                 MouseButton::Right,
                 cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    let batch = in_lib && w.batch.is_some();
-                    if batch && !w.batch.as_ref().is_some_and(|b| b.contains(&id2)) && !w.toggle_check(&id2) {
+                    let batch = in_lib && w.sidebar.batch.is_some();
+                    if batch && !w.sidebar.batch.as_ref().is_some_and(|b| b.contains(&id2)) && !w.toggle_check(&id2) {
                         return;
                     }
                     w.open_overlay(Overlay::RowMenu(RowMenu { id: id2.clone(), pos: ev.position, batch }), window, cx);
@@ -498,9 +668,9 @@ impl Workspace {
             )
     }
 
-    fn doc_row(&self, e: &Entry, key: &str, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.view == View::Doc && self.current.as_deref() == Some(e.id.as_str());
-        let renaming = self.rename.as_ref().filter(|r| r.id == e.id).map(|r| r.field.clone());
+    fn doc_row(&self, e: &Entry, list: RowList, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.view == View::Doc && self.current() == Some(e.id.as_str());
+        let renaming = self.sidebar.rename.as_ref().filter(|r| r.id == e.id).map(|r| r.field.clone());
         let title = match renaming {
             Some(field) => div()
                 .ml(px(6.))
@@ -532,12 +702,12 @@ impl Workspace {
                 .child(ui_text(display_title(&e.title)))
                 .into_any_element(),
         };
-        let renaming = self.rename.as_ref().is_some_and(|r| r.id == e.id);
+        let renaming = self.sidebar.rename.as_ref().is_some_and(|r| r.id == e.id);
         // Selection mode: My documents rows get a checkbox and lose "…"; checked rows are tinted.
-        let batch = self.batch.as_ref().filter(|_| key == "doc");
+        let batch = self.sidebar.batch.as_ref().filter(|_| list == RowList::Files);
         let checked = batch.is_some_and(|b| b.contains(&e.id));
         let blocked = batch.is_some_and(|b| !checked && b.len() >= BATCH_LIMIT);
-        self.row_base(e, key, cx)
+        self.row_base(e, list, cx)
             .h(px(DOC_ROW_H))
             .flex()
             .items_center()
@@ -546,7 +716,7 @@ impl Workspace {
             .relative()
             // One guide per ancestor, under its chevron; the extra point bridges ROW_GAP.
             .children((0..if batch.is_none() { depth } else { 0 }).map(|level| div().absolute().top(px(-ROW_GAP)).bottom_0().left(px(16. + 16. * level as f32)).w(px(1.)).bg(Theme::sidebar_guide())))
-            .when(key == "doc" && !renaming && batch.is_none(), |d| {
+            .when(list == RowList::Files && !renaming && batch.is_none(), |d| {
                 // Dropping on a file means the folder it sits in.
                 let target = if e.folder { Some(e.id.clone()) } else { e.parent.clone() };
                 let dragged = DraggedRow { id: e.id.clone(), title: display_title(&e.title).into() };
@@ -570,9 +740,9 @@ impl Workspace {
             })
             .when(e.folder, |d| d.child(div().size(px(20.)).flex_none().flex().items_center().justify_center().child(icon(Icon::Folder, ROW_ICON, Theme::sidebar_glyph()))))
             .child(title)
-            .when(key == "doc" && e.folder, |d| {
+            .when(list == RowList::Files && e.folder, |d| {
                 let toggle = e.id.clone();
-                let open = self.expanded.contains(&e.id);
+                let open = self.sidebar.expanded.contains(&e.id);
                 d.child(div().id(SharedString::from(format!("arrow-{}", e.id))).size(px(CHEVRON_SLOT)).mr(px(CHEVRON_R)).flex_none().flex().items_center().justify_center()
                     .child(icon(Icon::ChevronRight, 11., Theme::sidebar_icon()).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -592,8 +762,8 @@ impl Workspace {
             .child(item("files-new", Icon::Plus, "New document").on_click(menu_action(cx, |w, window, cx| w.new_doc(window, cx))))
             .child(item("files-new-folder", Icon::FolderNew, "New folder").on_click(menu_action(cx, |w, window, cx| w.new_folder(None, window, cx))))
             .child(item("files-select", Icon::Select, "Select documents").on_click(menu_action(cx, |w, _, cx| {
-                w.batch = Some(vec![]);
-                w.folded[1] = false;
+                w.sidebar.batch = Some(vec![]);
+                w.sidebar.folded[Section::Files as usize] = false;
                 cx.notify();
             })));
         anchored_menu(Corner::TopLeft, position, menu)
@@ -612,7 +782,7 @@ impl Workspace {
         let divider = || div().mx(px(8.)).my(px(5.)).h(px(1.)).bg(Theme::line_border());
         if m.batch {
             // Right-click in Selection mode: the batch menu.
-            let n = self.batch.as_ref().map_or(0, |b| b.len());
+            let n = self.sidebar.batch.as_ref().map_or(0, |b| b.len());
             let menu = menu_panel("batch-menu", ROW_MENU_W, cx)
                 .px(px(5.))
                 .child(div().h(px(ROW_ITEM)).px(px(8.)).flex().items_center().text_size(px(12.)).text_color(Theme::text_placeholder()).child(format!("Selected: {n}")))

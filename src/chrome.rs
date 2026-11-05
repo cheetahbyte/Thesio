@@ -28,11 +28,11 @@ pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx:
         .flex()
         .items_center()
         // Clear of the traffic lights, like the document header.
-        .pl(if ws.sidebar_open { px(PAGE_INSET) } else { px(theme::TRAFFIC_LIGHTS_W) })
+        .pl(if ws.sidebar.open { px(PAGE_INSET) } else { px(theme::TRAFFIC_LIGHTS_W) })
         .pr(px(header_right_inset()))
         .title_bar()
-        .when(!ws.sidebar_open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
-        .when(!ws.sidebar_open && !cfg!(target_os = "windows"), |d| {
+        .when(!ws.sidebar.open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
+        .when(!ws.sidebar.open && !cfg!(target_os = "windows"), |d| {
             d.child(ws.sidebar_toggle("open-sidebar", Theme::icon(), cx).ml(px(4.)).mr(px(12.)))
         })
         .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
@@ -48,7 +48,7 @@ fn bar_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful
 impl Workspace {
     pub(crate) fn sidebar_toggle(&self, id: &'static str, color: Hsla, cx: &mut Context<Self>) -> Stateful<Div> {
         bar_button(id, Icon::SidebarToggle, 17., color)
-            .tip_action(if self.sidebar_open { "Hide sidebar" } else { "Show sidebar" }, &ToggleSidebar, cx)
+            .tip_action(if self.sidebar.open { "Hide sidebar" } else { "Show sidebar" }, &ToggleSidebar, cx)
             .on_click(cx.listener(|w, _, _, cx| w.toggle_sidebar(cx)))
     }
 

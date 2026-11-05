@@ -101,10 +101,10 @@ impl Workspace {
     /// traffic lights and Show sidebar) on the left, + on the right. Below a
     /// usable width it is None and the caller shows a search icon instead.
     fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        let main = f32::from(window.viewport_size().width) - if self.sidebar.open { self.sidebar_w(window) } else { 0. };
         let title = "Home".to_string();
         let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
-        let left = page_title_x(self.sidebar_open) + title_w + 16.;
+        let left = page_title_x(self.sidebar.open) + title_w + 16.;
         // + is 32 wide with an 8pt inset; 16 clear of it.
         let right = crate::ui::HEADER_ACTIONS_H + crate::ui::header_right_inset() + 16.;
         let half = (main / 2. - left).min(main / 2. - right);

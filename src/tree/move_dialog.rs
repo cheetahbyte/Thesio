@@ -258,7 +258,7 @@ impl Workspace {
                         let Some(d) = w.move_dialog() else { return };
                         let Some(target) = d.target.clone() else { return };
                         let ids = d.ids.clone();
-                        w.batch = None;
+                        w.sidebar.batch = None;
                         w.move_docs(&ids, target, cx);
                         w.close_overlay(window, cx);
                     }))),

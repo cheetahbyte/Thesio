@@ -26,8 +26,8 @@ impl Workspace {
     /// The document a quote goes to: the open one, else this paper's notes.
     pub(crate) fn quote_target(&self) -> Option<(String, Entity<SourceEditor>)> {
         let notes = self.papers.panel.notes.as_ref();
-        match (&self.current, &self.editor) {
-            (Some(id), Some(editor)) if is_document(id) && Some(id) != notes.map(|notes| &notes.id) => Some((id.clone(), editor.clone())),
+        match &self.document {
+            Some(document) if is_document(&document.id) && Some(&document.id) != notes.map(|notes| &notes.id) => Some((document.id.clone(), document.editor.clone())),
             _ => notes.map(|notes| (notes.id.clone(), notes.editor.clone())),
         }
     }
