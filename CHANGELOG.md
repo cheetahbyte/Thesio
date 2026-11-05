@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Update a `/` path after a move by the file the compiler finds, nearest the main file. It used to assume the vault root, so a project's own `/lib/a.typ` broke when `a.typ` moved, and an unrelated file at the root could change it.
 - Show the Highlight button's icon outside macOS, where its file was missing.
 - Show keys from `shortcuts.json` in every tooltip, including Search, and no key for an action it unbinds.
 - Reach every citation and note in the completion popup: it scrolls now, instead of stopping at six. ⌃Space opens it where a citation or note link is being written.

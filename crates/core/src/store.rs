@@ -5,10 +5,12 @@
 
 use crate::history::Versions;
 use crate::paths::{self, EXTENSION, STATE_DIR, VaultItem, base_name, document_name, document_title, is_document, join, parent_of, visit_vault, write_atomic};
+use crate::project::Documents;
+use crate::references::rewrite_paths;
 use crate::time::{DAY, now, now_ms};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 const TRASH_DIR: &str = ".trash";
@@ -108,6 +110,12 @@ pub struct Store {
     index: HashMap<String, Meta>,
     trash: HashMap<String, Trashed>,
     bodies: HashMap<String, CachedBody>,
+}
+
+/// The vault as the compiler saw it before a move.
+struct Layout {
+    files: HashSet<String>,
+    documents: Documents,
 }
 
 /// A rename or move that went through.
@@ -313,6 +321,7 @@ impl Store {
         let target = self.path(new)?;
         // A change of case alone names the same file on case-insensitive disks.
         anyhow::ensure!(old.to_lowercase() == new.to_lowercase() || !target.try_exists()?, "{new} already exists");
+        let before = self.layout();
         std::fs::rename(self.path(old)?, target)?;
         // A file's versions follow it. Losing them must not fail the move.
         if let Err(e) = self.versions(old)?.move_to(&self.versions(new)?) { outcome.warnings.push(format!("Could not move the history of {old}: {e}")); }
@@ -321,17 +330,25 @@ impl Store {
             if let Some(meta) = self.index.remove(&key) && let Some(renamed) = paths::moved(&key, old, new) { self.index.insert(renamed, meta); }
         }
         self.save_index()?;
-        self.rewrite_references(old, new, &mut outcome);
+        self.rewrite_references(old, new, &before, &mut outcome);
         Ok(outcome)
+    }
+
+    fn layout(&mut self) -> Layout {
+        let entries = self.list();
+        let bodies: HashMap<&str, &str> = entries.iter().filter(|e| e.typst).map(|e| (e.id.as_str(), e.body.as_str())).collect();
+        let documents = Documents::load(entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |path| bodies.get(path).map(|body| body.to_string()));
+        Layout { files: entries.iter().filter(|e| !e.folder).map(|e| e.id.clone()).collect(), documents }
     }
 
     /// Fixes paths that the move from `old` to `new` broke. A file that cannot
     /// be rewritten keeps its text and raises a warning.
-    fn rewrite_references(&mut self, old: &str, new: &str, outcome: &mut Moved) {
+    fn rewrite_references(&mut self, old: &str, new: &str, before: &Layout, outcome: &mut Moved) {
         for entry in self.list().into_iter().filter(|e| e.typst) {
             let Ok(text) = self.load(&entry.id) else { continue };
             let previous = paths::moved(&entry.id, new, old).unwrap_or_else(|| entry.id.clone());
-            let Some(updated) = crate::references::rewrite_paths(&text, &previous, &entry.id, |path| paths::moved(path, old, new)) else { continue };
+            let main = before.documents.top_document(&previous);
+            let Some(updated) = rewrite_paths(&text, &previous, &entry.id, &main, |path| before.files.contains(path), |path| paths::moved(path, old, new)) else { continue };
             match self.save(&entry.id, &updated) {
                 Ok(()) => outcome.rewritten.push(entry.id),
                 Err(e) => outcome.warnings.push(format!("Could not update paths in {}: {e}", entry.id)),
@@ -506,6 +523,44 @@ mod tests {
         assert_eq!(store.list()[0].body, "aaa");
         store.save(&id, "bbb").unwrap();
         assert_eq!(store.list()[0].body, "bbb");
+    }
+
+    /// A vault holding a project in `paper/`, and a file at the root with the same name as one in it.
+    fn project_vault(name: &str) -> Store {
+        let mut store = vault(name);
+        store.create_folder(None, "paper").unwrap();
+        store.create_folder(Some("paper"), "lib").unwrap();
+        store.create_folder(Some("paper"), "tools").unwrap();
+        store.create_folder(None, "lib").unwrap();
+        store.create_from(Some("paper"), "main", "#include \"chapter.typ\"\n").unwrap();
+        store.create_from(Some("paper"), "chapter", "#import \"/lib/shared.typ\"\n").unwrap();
+        store.create_from(Some("paper/lib"), "shared", "").unwrap();
+        store.create_from(Some("lib"), "shared", "").unwrap();
+        store
+    }
+
+    #[test]
+    fn a_rooted_path_follows_the_file_the_compiler_finds() {
+        let mut store = project_vault("rooted-found");
+        let moved = store.set_parent("paper/lib/shared.typ", Some("paper/tools")).unwrap();
+        assert_eq!(moved.rewritten, ["paper/chapter.typ"]);
+        assert_eq!(store.load("paper/chapter.typ").unwrap(), "#import \"/tools/shared.typ\"\n");
+    }
+
+    #[test]
+    fn a_rooted_path_ignores_a_file_it_does_not_reach() {
+        let mut store = project_vault("rooted-shadowed");
+        let moved = store.set_parent("lib/shared.typ", Some("paper/tools")).unwrap();
+        assert!(moved.rewritten.is_empty());
+        assert_eq!(store.load("paper/chapter.typ").unwrap(), "#import \"/lib/shared.typ\"\n");
+    }
+
+    #[test]
+    fn a_rooted_path_names_the_vault_root_when_its_project_is_left_behind() {
+        let mut store = project_vault("rooted-left");
+        store.create_from(Some("paper"), "note", "#import \"/lib/shared.typ\"\n").unwrap();
+        store.set_parent("paper/note.typ", None).unwrap();
+        assert_eq!(store.load("note.typ").unwrap(), "#import \"/paper/lib/shared.typ\"\n");
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! ordinary strings is left alone.
 
 use crate::paths::{dir_parts, is_document};
+use crate::project::candidates;
 use crate::typst_source::{callee, cited_key, escape_markup, in_plain_text, quoted, relative, string, vault_path, walk, with_hash};
 use std::ops::Range;
 use typst::syntax::{LinkedNode, Side, Source, SyntaxKind, is_id_continue};
@@ -83,8 +84,9 @@ pub fn note_link_at(text: &str, caret: usize) -> Option<Range<usize>> {
 
 /// `text` with its paths updated, or `None` when nothing changed. The file
 /// itself moved from `old_file` to `new_file` (they are equal when it stayed),
-/// and `moved` maps an old vault path to its new one.
-pub fn rewrite_paths(text: &str, old_file: &str, new_file: &str, moved: impl Fn(&str) -> Option<String>) -> Option<String> {
+/// and `moved` maps an old vault path to its new one. `main` and `exists` say
+/// what the compiler saw before the move, so `/x` means the file it would find.
+pub fn rewrite_paths(text: &str, old_file: &str, new_file: &str, main: &str, exists: impl Fn(&str) -> bool, moved: impl Fn(&str) -> Option<String>) -> Option<String> {
     let source = Source::detached(text);
     let mut literals = vec![];
     walk(&LinkedNode::new(source.root()), &mut |node| {
@@ -93,14 +95,24 @@ pub fn rewrite_paths(text: &str, old_file: &str, new_file: &str, moved: impl Fn(
         }
     });
     let (old_dir, new_dir) = (dir_parts(old_file), dir_parts(new_file));
+    let new_main = moved(main).unwrap_or_else(|| main.to_string());
     let mut out = text.to_string();
     let mut changed = false;
     for (range, literal) in literals.into_iter().rev() {
-        let Some(target) = vault_path(&old_dir, &literal) else { continue };
+        let Some(wanted) = vault_path(&old_dir, &literal) else { continue };
+        let rooted = literal.starts_with('/');
+        let target = if rooted { candidates(main, &wanted).find(|path| exists(path)).unwrap_or_else(|| wanted.clone()) } else { wanted.clone() };
         let renamed = moved(&target);
-        if renamed.is_none() && old_dir == new_dir { continue; }
-        let target = renamed.unwrap_or(target);
-        let updated = if literal.starts_with('/') { format!("/{target}") } else { relative(&new_dir, &target) };
+        let new_target = renamed.clone().unwrap_or_else(|| target.clone());
+        // The folder `/` stood for: it still does while the main file and the target stay inside it.
+        let project = target.strip_suffix(wanted.as_str()).unwrap_or_default();
+        let in_project = new_main.starts_with(project) && new_target.starts_with(project);
+        if renamed.is_none() && (if rooted { in_project } else { old_dir == new_dir }) { continue; }
+        let updated = match (rooted, in_project) {
+            (true, true) => format!("/{}", &new_target[project.len()..]),
+            (true, false) => format!("/{new_target}"),
+            (false, _) => relative(&new_dir, &new_target),
+        };
         if updated != literal {
             out.replace_range(range, &quoted(&updated));
             changed = true;
@@ -161,7 +173,7 @@ mod tests {
         let links = note_links(text, "notes/a.typ");
         assert_eq!(links.iter().map(|link| link.target.as_str()).collect::<Vec<_>>(), ["b.typ", "notes/d.typ"]);
         assert_eq!(&text[links[0].range.clone()], "#link(\"../b.typ\")[B]");
-        let moved = rewrite_paths(text, "notes/a.typ", "notes/a.typ", |path| (path == "b.typ").then(|| "archive/b.typ".to_string())).unwrap();
+        let moved = rewrite_paths(text, "notes/a.typ", "notes/a.typ", "notes/a.typ", |_| false, |path| (path == "b.typ").then(|| "archive/b.typ".to_string())).unwrap();
         assert!(moved.starts_with("#link(\"../archive/b.typ\")[B] #link(\"https://x.org/a.typ\")"), "{moved}");
         assert_eq!(note_link("notes/a.typ", "ch/b.typ", "Why [this] #1"), "#link(\"../ch/b.typ\")[Why \\[this\\] \\#1]");
         assert_eq!(note_link_at("see [[fla", 9), Some(4..9));
