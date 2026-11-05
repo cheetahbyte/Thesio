@@ -96,7 +96,6 @@ fn save(p: &Preferences) -> anyhow::Result<()> {
 /// Redraw every window's document after the theme changed.
 pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
     fn refresh(ws: &mut Workspace, cx: &mut Context<Workspace>) {
-        ws.settings_filter.update(cx, |f, cx| { f.placeholder_color = Theme::text_disabled(); f.set_placeholder("Search shortcuts", cx) });
         ws.search.update(cx, |f, _| f.placeholder_color = Theme::text_disabled());
         cx.notify();
     }
@@ -122,13 +121,12 @@ pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
 // ---- the view
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Page { #[default] Appearance, Shortcuts, Library, About }
+pub enum Page { #[default] Appearance, Library, About }
 
 impl Page {
     fn title(self) -> &'static str {
         match self {
             Page::Appearance => "Appearance",
-            Page::Shortcuts => "Shortcuts",
             Page::Library => "Documents",
             Page::About => "About",
         }
@@ -136,7 +134,6 @@ impl Page {
     fn icon(self) -> Icon {
         match self {
             Page::Appearance => Icon::Palette,
-            Page::Shortcuts => Icon::Keyboard,
             Page::Library => Icon::Storage,
             Page::About => Icon::Info,
         }
@@ -145,7 +142,7 @@ impl Page {
 
 /// The sidebar list, one evenly spaced run (five rows need no unlabelled
 /// groups); `None` is Trash (its own view, shown with this sidebar).
-const NAV: [Option<Page>; 5] = [Some(Page::Appearance), Some(Page::Shortcuts), Some(Page::Library), None, Some(Page::About)];
+const NAV: [Option<Page>; 4] = [Some(Page::Appearance), Some(Page::Library), None, Some(Page::About)];
 
 // ---- controls (switch on the accent, 30pt buttons, grouped rows)
 
@@ -199,21 +196,6 @@ fn switch(id: &'static str, on: bool) -> Stateful<Div> {
         .child(div().size(px(14.)).rounded_full().bg(gpui::white()))
 }
 
-/// A keyboard shortcut chip; `recording` shows it waiting for keys.
-pub(crate) fn keycap(id: impl Into<ElementId>, key: &str, recording: bool) -> Stateful<Div> {
-    div().id(id).flex_none().min_w(px(144.)).min_h(px(ui::BUTTON_H)).px(px(14.)).py(px(3.)).flex().items_center().justify_center().rounded(px(7.)).cursor_pointer()
-        .text_size(px(12.)).line_height(px(16.))
-        .when(recording, |d| d.bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::primary()).text_color(Theme::primary()).child(if key.is_empty() { "Press keys…".to_string() } else { crate::shortcuts::pretty(key) }))
-        .when(!recording, |d| d.bg(Theme::fill_hover()).border_1().border_color(transparent_black()).text_color(Theme::text()).child(crate::shortcuts::pretty(key)))
-}
-
-/// A small text button (Reset to default …).
-pub(crate) fn link_button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
-    div().id(id).flex_none().h(px(26.)).px(px(10.)).flex().items_center().rounded(px(7.)).cursor_pointer()
-        .text_size(px(13.)).line_height(px(16.)).text_color(Theme::primary()).active(|s| s.bg(Theme::fill_hover()))
-        .child(label)
-}
-
 pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
     div().id(id).flex_none().h(px(ui::BUTTON_H)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
         .border_1().border_color(Theme::line_border()).active(|s| s.bg(Theme::fill_pressed()))
@@ -242,10 +224,8 @@ impl Workspace {
 
 
     pub(crate) fn open_settings(&mut self, page: Page, cx: &mut Context<Self>) {
-        self.cancel_shortcut_recording(cx);
         self.settings_page = page;
         self.settings_scroll.set_offset(point(px(0.), px(0.)));
-        self.shortcut_error = None;
         if self.view != View::Settings { self.show_view(View::Settings, cx); }
         cx.notify();
     }
@@ -309,7 +289,6 @@ impl Workspace {
         let page = self.settings_page;
         let body = match page {
             Page::Appearance => self.appearance_page(cx),
-            Page::Shortcuts => self.shortcut_settings(cx),
             Page::Library => self.library_page(window, cx),
             Page::About => self.about_page(),
         };
@@ -319,10 +298,9 @@ impl Workspace {
                 .when(!self.sidebar_open, |d| d.pl(px(theme::TRAFFIC_LIGHTS_W)).child(self.header_navigation(cx))))
             .child(div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings_scroll)
                 .child(div().w_full().flex().flex_col().items_center().px(px(32.)).pb(px(64.))
-                    .child(div().w_full().max_w(px(if page == Page::Shortcuts { 760. } else { COLUMN_W })).flex().flex_col().gap(px(28.))
+                    .child(div().w_full().max_w(px(COLUMN_W)).flex().flex_col().gap(px(28.))
                         .child(div().flex().items_center().gap(px(16.))
-                            .child(div().flex_1().min_w_0().px(px(4.)).text_size(px(22.)).line_height(px(28.)).font_weight(FontWeight::SEMIBOLD).child(page.title()))
-                            .when(page == Page::Shortcuts, |d| d.child(self.shortcut_actions(window, cx))))
+                            .child(div().flex_1().min_w_0().px(px(4.)).text_size(px(22.)).line_height(px(28.)).font_weight(FontWeight::SEMIBOLD).child(page.title())))
                         .child(body))))
             .into_any_element()
     }

@@ -136,11 +136,6 @@ impl TextField {
         }
     }
 
-    pub fn set_placeholder(&mut self, s: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.placeholder = s.into();
-        cx.notify();
-    }
-
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.text = s.to_string();
         self.sel = self.text.len()..self.text.len();

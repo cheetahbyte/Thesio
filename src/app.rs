@@ -193,13 +193,7 @@ pub struct Rename {
 }
 
 pub struct Workspace {
-    pub shortcut_recording: Option<String>,
-    pub shortcut_strokes: Vec<String>,
-    /// The failed change: (action, message); an empty action is page-wide.
-    pub shortcut_error: Option<(String, String)>,
     pub settings_page: crate::settings::Page,
-    /// The shortcuts filter field.
-    pub settings_filter: Entity<TextField>,
     native_sidebar: crate::native_header::NativeSidebar,
     /// The vault id of the paper the Paper view shows.
     pub(crate) paper: Option<String>,
@@ -277,20 +271,14 @@ impl Workspace {
             f.placeholder_color = Theme::text_disabled();
             f
         });
-        let settings_filter = cx.new(|cx| {
-            let mut f = TextField::new("Search shortcuts", cx);
-            f.placeholder_color = Theme::text_disabled();
-            f
-        });
         let subs = vec![
-            cx.subscribe(&settings_filter, |_, _, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) { cx.notify(); }),
             cx.observe_window_bounds(window, |_, window, cx| crate::window_size::remember(window, cx)),
             // The system switched between light and dark (or the app's own look changed).
             cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
                 if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.entries = this.store.list(); this.sort(); this.reload_library(); cx.notify(); }
-                else { this.cancel_shortcut_recording(cx); this.flush(cx); }
+                else { this.flush(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
                 match ev {
@@ -321,17 +309,13 @@ impl Workspace {
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             crate::window_size::persist(cx);
-            this.update(cx, |w, cx| { w.cancel_shortcut_recording(cx); w.save_before(cx, |_, window, _| window.remove_window()) }).unwrap_or(true)
+            this.update(cx, |w, cx| w.save_before(cx, |_, window, _| window.remove_window())).unwrap_or(true)
         });
         let sidebar_width = store.settings().sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
         let store_expanded: HashSet<String> = store.settings().expanded.into_iter().collect();
         let citations = crate::citations::Citations::new(&store.root(), cx);
         let mut ws = Workspace {
-            shortcut_recording: None,
-            shortcut_strokes: vec![],
-            shortcut_error: None,
             settings_page: Default::default(),
-            settings_filter,
             store,
             entries,
             current: None,
@@ -699,7 +683,6 @@ impl Workspace {
 
     /// Switch the main pane to Home or Trash (or back to the document).
     pub fn show_view(&mut self, view: View, cx: &mut Context<Self>) {
-        self.cancel_shortcut_recording(cx);
         if view == View::Trash {
             self.trash = self.store.list_trash();
         }
@@ -1166,9 +1149,9 @@ impl Render for Workspace {
                 w.sidebar_open = !w.sidebar_open;
                 cx.notify();
             }))
-            .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {
-                // Esc leaves Settings (unless its filter field has the caret).
-                if ev.keystroke.key == "escape" && w.view == View::Settings && !w.settings_filter.read(cx).is_focused(window) {
+            .on_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
+                // Esc leaves Settings.
+                if ev.keystroke.key == "escape" && w.view == View::Settings {
                     w.close_settings(cx);
                     cx.stop_propagation();
                     return;
@@ -1181,7 +1164,6 @@ impl Render for Workspace {
             }))
             // Esc leaves Selection mode (closing its menu or confirmation first), even from the editor.
             .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
-                if w.record_shortcut(ev, cx) { return; }
                 // Esc cancels a confirmation dialog.
                 if ev.keystroke.key == "escape" && w.confirm.is_some() {
                     w.confirm = None;

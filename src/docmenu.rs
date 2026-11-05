@@ -118,12 +118,7 @@ impl Workspace {
                     .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))
                     .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", Icon::Close, "Remove bibliography", Mode::None)))))
             .child(divider())
-            .child(menu_item("dm-delete", Icon::Delete, "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))))
-            .child(divider())
-            .child(menu_item("dm-shortcuts", Icon::Keyboard, "Keyboard shortcuts").on_click(cx.listener(|w, _, _, cx| {
-                w.close_doc_menu(cx);
-                w.open_settings(crate::settings::Page::Shortcuts, cx);
-            })));
+            .child(menu_item("dm-delete", Icon::Delete, "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))));
         let vw = window.viewport_size().width;
         let btn = self.more_btn_bounds.get();
         let right = btn.map_or(vw - px(120.), |b| b.right());

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Remove the Shortcuts page from Settings. Shortcuts keep working, and keys saved earlier still apply.
 - Draw indent lines under open folders in the sidebar.
 - Insert a highlight as a quotation with its page citation. Correcting a page number once fixes the numbering for that paper.
 - Remove hover highlights outside menus, and let controls show their pressed state only.

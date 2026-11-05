@@ -44,7 +44,6 @@ icons! {
     HomeFilled "house.fill" "home-filled",
     Import "square.and.arrow.down" "import",
     Info "info.circle" "info",
-    Keyboard "keyboard" "keyboard",
     Library "books.vertical" "library",
     List "list.bullet" "view-list",
     Minus "minus" "minus",
