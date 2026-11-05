@@ -9,7 +9,7 @@ use thesio_core::lookup::{self, Identifier};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, row_hover, scrim, secondary_button};
-use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_icon, ui_text};
+use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -739,9 +739,52 @@ impl Workspace {
         self.entries.iter().any(|e| e.id == file)
     }
 
-    /// Papers open in the system's PDF app; scripted runs must not start one.
-    fn open_paper(&self, id: &str, cx: &App) {
+    /// Shows a paper in the app, or where there is no viewer, in the system's app.
+    pub(crate) fn open_paper(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !crate::native_pdf::supported() { return self.open_paper_externally(id, cx); }
+        self.paper = Some(id.to_string());
+        self.paper_failed.set(false);
+        self.show_view(View::Paper, cx);
+    }
+
+    /// Scripted runs must not start other apps.
+    fn open_paper_externally(&self, id: &str, cx: &App) {
         if std::env::var_os("THESIO_SCRIPT").is_none() { cx.open_with_system(&self.store.root().join(id)); }
+    }
+
+    /// The name a paper goes by: its source's title, or its file name.
+    fn paper_title(&self, id: &str) -> String {
+        let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
+        row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id).to_string())
+    }
+
+    /// The viewer goes under what GPUI draws over the pane, or it would hide it.
+    fn paper_covered(&self, window: &Window) -> bool {
+        let c = &self.citations;
+        // Most row menus stay over the sidebar, clear of the pane.
+        let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.form.is_some() || c.lookup.is_some()
+    }
+
+    pub(crate) fn render_paper(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(id) = self.paper.clone() else { return div().into_any_element() };
+        let title = self.paper_title(&id);
+        let external = id.clone();
+        let header = page_header(self, &title, None, 26., cx)
+            .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
+                .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx))));
+        let (pdf, covered, path) = (self.pdf.clone(), self.paper_covered(window), self.store.path(&id).ok());
+        let failed = self.paper_failed.clone();
+        let unreadable = failed.get();
+        let pane = canvas(|_, _, _| (), move |bounds, _, window, _| {
+            let shown = path.as_ref().is_some_and(|path| pdf.show(path, bounds, covered, window));
+            if !shown && !failed.replace(true) { window.on_next_frame(|window, _| window.refresh()); }
+        }).absolute().size_full();
+        div().flex_1().min_w_0().h_full().flex().flex_col().child(header)
+            .child(div().relative().flex_1().min_h_0().flex().items_center().justify_center().bg(Theme::bg_overlay())
+                .child(pane)
+                .when(unreadable, |d| d.child(div().text_size(px(13.)).text_color(Theme::text_caption()).child("This PDF could not be shown here. Try opening it in your default app."))))
+            .into_any_element()
     }
 
     fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {

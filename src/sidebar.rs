@@ -11,7 +11,7 @@ use gpui::{prelude::FluentBuilder, *};
 
 /// Row "…" menu geometry: 32pt rows, 11pt dividers, 6pt padding inside
 /// a 1pt border.
-const ROW_MENU_W: f32 = 180.;
+pub(crate) const ROW_MENU_W: f32 = 180.;
 const ROW_ITEM: f32 = crate::ui::MENU_ROW_H;
 const ROW_DIVIDER: f32 = 11.;
 
@@ -163,7 +163,7 @@ impl Workspace {
         // The nav is just Home: 36px items, a blue tint when selected. Its
         // icon column (x 17) is shared with Search and the doc rows.
         let nav_row = |id: &'static str, label: &'static str, view: View, glyph: Icon, on_glyph: Icon, cx: &mut Context<Self>| {
-            let on = self.view == view;
+            let on = self.view == view || view == View::Sources && self.view == View::Paper;
             div()
                 .id(id)
                 .h(px(ROW_H))

@@ -17,6 +17,11 @@ mod native_header;
 #[cfg(not(target_os = "macos"))]
 #[path = "native_header_fallback.rs"]
 mod native_header;
+#[cfg(target_os = "macos")]
+mod native_pdf;
+#[cfg(not(target_os = "macos"))]
+#[path = "native_pdf_fallback.rs"]
+mod native_pdf;
 mod preview;
 mod search;
 mod sidebar;

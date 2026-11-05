@@ -33,6 +33,7 @@ icons! {
     Edit "pencil" "square-pen",
     Ellipsis "ellipsis" "ellipsis",
     Export "square.and.arrow.up" "export",
+    External "arrow.up.right.square" "export",
     Folder "folder" "folder",
     FolderNew "folder.badge.plus" "folder-plus",
     Gear "gearshape" "settings-gear",

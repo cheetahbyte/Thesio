@@ -160,6 +160,8 @@ pub enum View {
     Home,
     Library,
     Sources,
+    /// A paper, inside the app: `Workspace::paper`.
+    Paper,
     Trash,
     Settings,
 }
@@ -199,6 +201,11 @@ pub struct Workspace {
     /// The shortcuts filter field.
     pub settings_filter: Entity<TextField>,
     native_sidebar: crate::native_header::NativeSidebar,
+    /// The vault id of the paper the Paper view shows.
+    pub(crate) paper: Option<String>,
+    /// PDFKit could not read `paper`.
+    pub(crate) paper_failed: Rc<Cell<bool>>,
+    pub(crate) pdf: Rc<crate::native_pdf::PdfPane>,
     pub store: SharedStore,
     pub entries: Vec<Entry>,
     pub current: Option<String>,
@@ -353,6 +360,9 @@ impl Workspace {
             toast_task: None,
             more_btn_bounds: Rc::new(Cell::new(None)),
             native_sidebar: Default::default(),
+            paper: None,
+            paper_failed: Default::default(),
+            pdf: Default::default(),
             folded: [false; 2],
             expanded: store_expanded,
             move_dlg: None,
@@ -410,6 +420,10 @@ impl Workspace {
         if !self.save_before(cx, move |w, window, cx| {
             w.open(&target, window, cx);
         }) {
+            return false;
+        }
+        if id.ends_with(".pdf") && crate::native_pdf::supported() {
+            self.open_paper(id, cx);
             return false;
         }
         let text = match self.store.load(id) {
@@ -477,6 +491,7 @@ impl Workspace {
             let main = self.top_document(&path);
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
+        if self.paper.as_deref() == Some(old) { self.paper = Some(new.to_string()); }
         let prefix = format!("{old}/");
         let renamed: Vec<String> = self.expanded.iter().filter(|e| *e == old || e.starts_with(&prefix)).cloned().collect();
         for path in renamed {
@@ -711,7 +726,7 @@ impl Workspace {
 
     fn render_toast(&self, window: &mut Window) -> Option<AnyElement> {
         let (kind, msg, t0) = self.toast.as_ref()?;
-        crate::ui::toast_el(*kind, msg, *t0, window)
+        crate::ui::toast_el(*kind, msg, *t0, if self.view == View::Paper { TOAST_ON_PAPER } else { 32. }, window)
     }
 
     /// Rename: the row's title turns into an input; Enter or clicking away saves, Esc cancels.
@@ -1062,10 +1077,14 @@ pub(crate) fn updated_paths(files: usize) -> String {
 
 /// Header and action group share an 8px top/right inset.
 pub const HEADER_H: f32 = 48.;
+/// Toasts stay in the header over a paper: the native viewer would hide them lower down.
+const TOAST_ON_PAPER: f32 = 4.;
 pub(crate) const HEADER_ACTIONS_H: f32 = 32.;
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.view == View::Paper && !self.paper.as_ref().is_some_and(|id| self.entries.iter().any(|e| &e.id == id)) { self.view = View::Sources; }
+        if self.view != View::Paper { self.pdf.close(); }
         self.native_sidebar.sync(if self.sidebar_open { self.sidebar_w(window) } else { 0. }, window);
         let sidebar = if self.sidebar_open { Some(if matches!(self.view, View::Settings | View::Trash) { self.render_settings_sidebar(window, cx) } else { self.render_sidebar(window, cx) }) } else { None };
         let row_menu = self.render_row_menu(window, cx);
@@ -1104,6 +1123,7 @@ impl Render for Workspace {
             View::Home => self.render_home(window, cx),
             View::Library => self.render_library(cx),
             View::Sources => self.render_sources(cx),
+            View::Paper => self.render_paper(window, cx),
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(cx),
         };

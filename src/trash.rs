@@ -24,7 +24,7 @@ fn remaining(deleted: u64) -> String {
 /// The page header, as tall as the document's so the header pills sit in
 /// the same place: a 17pt semibold view title, and the open-sidebar
 /// button when the sidebar is hidden.
-pub(crate) fn page_header(ws: &Workspace, title: &'static str, count: Option<usize>, left: f32, cx: &mut Context<Workspace>) -> Stateful<Div> {
+pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, left: f32, cx: &mut Context<Workspace>) -> Stateful<Div> {
     div()
         .id("page-header")
         .h(px(crate::app::HEADER_H))

@@ -7,6 +7,7 @@
 - Show empty and no-result states in the Library, and prose instead of Typst source on Home cards.
 - Complete citations in the editor: typing `@` offers matching Library entries, and accepting one adds a bibliography if the document has none.
 - Add a Sources page. Adding a source downloads an open-access PDF to `sources/`, from arXiv or, with an email in Settings, Unpaywall.
+- Show papers inside the app on macOS, with text selection and zoom.
 - Add PDFs by hand from Sources or a Library row, and link unlinked papers to a source.
 - Add a right-click menu to Library rows: Edit, Cite, Copy Key, and Delete.
 - Remove file icons from the sidebar; folders keep theirs.

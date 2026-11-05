@@ -18,10 +18,10 @@ pub enum ToastKind {
     Error,
 }
 
-/// Toast: a white rounded card 32px below the top, centred, with a filled
+/// Toast: a white rounded card `top` below the window top, centred, with a filled
 /// status circle (green check / red x / accent i). It lasts 3s and fades over
 /// its last .3s; None once it is over.
-pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, window: &mut Window) -> Option<AnyElement> {
+pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top: f32, window: &mut Window) -> Option<AnyElement> {
     let e = t0.elapsed().as_secs_f32();
     if e >= 3. {
         return None;
@@ -68,7 +68,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, win
         deferred(
             anchored()
                 .position_mode(AnchoredPositionMode::Window)
-                .position(point(px(0.), px(32.)))
+                .position(point(px(0.), px(top)))
                 .child(div().w(vw).flex().justify_center().opacity(op).child(card)),
         )
         .with_priority(20)
