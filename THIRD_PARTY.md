@@ -870,7 +870,7 @@ Thesio embeds the fonts bundled with Typst through `typst-assets`: Libertinus Se
 | Asset | License |
 |---|---|
 | `assets/icons/` (68 application shell icons) | Taken from Lucide 1.68.0 (ISC; see `LICENSE-lucide` in the same directory). `home-filled`, `pin-filled`, `circle-filled`, `tree-triangle`, and `info-mark` adapt Lucide shapes by filling them or removing the ring. |
-| `assets/branding/app-icon.png` | Inherited from quiet.md, to be replaced. |
+| `assets/branding/app-icon.png`, `assets/branding/app-icon.ico` | Paper Heron artwork generated for Thesio. |
 
 ## Illustrations
 
