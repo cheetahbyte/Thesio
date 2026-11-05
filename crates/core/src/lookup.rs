@@ -3,9 +3,10 @@
 //! open-access papers from arXiv and the locations Unpaywall lists. Network
 //! access happens only here, and only for sources the user added to the library.
 
+use crate::source_type::{ARTICLE, ARXIV, AUTHORS, BOOK, CHAPTER, DATE, DOI, ISBN, PAGES, PARENT_ISSUE, PARENT_TITLE, PARENT_VOLUME, PERIODICAL, PMID, PUBLISHER, Slot, TITLE, URL, read, write};
 use anyhow::{Context, Result};
 use serde_json::Value as Json;
-use serde_yaml::{Mapping, Value};
+use serde_yaml::Mapping;
 use std::path::Path;
 use std::time::Duration;
 
@@ -114,38 +115,17 @@ fn encode(id: &str) -> String {
     }).collect()
 }
 
-/// A Hayagriva entry from one BibTeX record.
-fn from_bibtex(text: &str) -> Result<Mapping> {
-    // Services use keys such as URLs that BibTeX parsers reject, and the key
-    // is replaced anyway.
-    let open = text.find('{').context("the service returned no record")?;
-    let comma = open + text[open..].find(',').context("the service returned no record")?;
-    let record = format!("{}{{entry{}", &text[..open], &text[comma..]);
-    let library = hayagriva::io::from_biblatex_str(&record).map_err(|errors| anyhow::anyhow!(errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")))?;
-    let entries: Mapping = serde_yaml::from_str(&hayagriva::io::to_yaml_str(&library)?)?;
-    entries.into_iter().next().and_then(|(_, entry)| entry.as_mapping().cloned()).context("the service returned no record")
-}
-
-fn serial(entry: &mut Mapping, kind: &str, value: &str) {
-    let numbers = entry.entry("serial-number".into()).or_insert_with(|| Value::Mapping(Mapping::new()));
-    if let Some(numbers) = numbers.as_mapping_mut() { numbers.insert(kind.into(), value.into()); }
-}
-
 fn fetch_doi(doi: &str) -> Result<Mapping> {
-    let mut entry = from_bibtex(&get(&format!("https://doi.org/{}", encode(doi)), "application/x-bibtex")?)?;
+    let mut entry = crate::biblatex::record(&get(&format!("https://doi.org/{}", encode(doi)), "application/x-bibtex")?)?;
     // The URL only restates the DOI.
-    if entry.get("url").and_then(url_text).is_some_and(|u| u.contains("doi.org/")) { entry.remove("url"); }
-    serial(&mut entry, "doi", doi);
+    if read(&entry, URL.slot).contains("doi.org/") { write(&mut entry, URL.slot, ""); }
+    write(&mut entry, DOI.slot, doi);
     Ok(entry)
-}
-
-fn url_text(url: &Value) -> Option<&str> {
-    url.as_str().or_else(|| url.get("value")?.as_str())
 }
 
 fn fetch_arxiv(id: &str) -> Result<Mapping> {
     let mut entry = fetch_doi(&format!("10.48550/arXiv.{id}"))?;
-    serial(&mut entry, "arxiv", id);
+    write(&mut entry, ARXIV.slot, id);
     Ok(entry)
 }
 
@@ -158,31 +138,29 @@ fn fetch_pmid(id: &str) -> Result<Mapping> {
     let json: Json = serde_json::from_str(&body).context("the service returned no record")?;
     let title = text(&json, "title").context("not found")?;
     let (kind, parent_kind) = match text(&json, "type") {
-        Some("book") => ("Book", "Book"),
-        Some("chapter") => ("Chapter", "Book"),
-        _ => ("Article", "Periodical"),
+        Some("book") => (BOOK, BOOK),
+        Some("chapter") => (CHAPTER, BOOK),
+        _ => (ARTICLE, PERIODICAL),
     };
     let mut entry = Mapping::new();
-    entry.insert("type".into(), kind.into());
-    entry.insert("title".into(), title.into());
-    let authors: Vec<Value> = json.get("author").and_then(Json::as_array).map_or(vec![], |list| list.iter().filter_map(|person| {
+    write(&mut entry, Slot::Type, kind);
+    write(&mut entry, TITLE.slot, title);
+    let authors: Vec<String> = json.get("author").and_then(Json::as_array).map_or(vec![], |list| list.iter().filter_map(|person| {
         let family = text(person, "family")?;
-        Some(text(person, "given").map_or(family.to_string(), |given| format!("{family}, {given}")).into())
+        Some(text(person, "given").map_or(family.to_string(), |given| format!("{family}, {given}")))
     }).collect());
-    if !authors.is_empty() { entry.insert("author".into(), Value::Sequence(authors)); }
+    write(&mut entry, AUTHORS.slot, &authors.join("; "));
     let year = json.pointer("/issued/date-parts/0/0").and_then(|y| y.as_i64().or_else(|| y.as_str()?.parse().ok()));
-    if let Some(year) = year { entry.insert("date".into(), year.into()); }
+    if let Some(year) = year { write(&mut entry, DATE.slot, &year.to_string()); }
     if let Some(container) = text(&json, "container-title") {
-        let mut parent = Mapping::new();
-        parent.insert("type".into(), parent_kind.into());
-        parent.insert("title".into(), container.into());
-        if let Some(volume) = text(&json, "volume") { parent.insert("volume".into(), volume.into()); }
-        if let Some(issue) = text(&json, "issue") { parent.insert("issue".into(), issue.into()); }
-        entry.insert("parent".into(), Value::Mapping(parent));
+        write(&mut entry, Slot::ParentType, parent_kind);
+        write(&mut entry, PARENT_TITLE, container);
+        write(&mut entry, PARENT_VOLUME, text(&json, "volume").unwrap_or_default());
+        write(&mut entry, PARENT_ISSUE, text(&json, "issue").unwrap_or_default());
     }
-    if let Some(pages) = text(&json, "page") { entry.insert("page-range".into(), pages.into()); }
-    serial(&mut entry, "pmid", id);
-    if let Some(doi) = text(&json, "DOI") { serial(&mut entry, "doi", doi); }
+    write(&mut entry, PAGES.slot, text(&json, "page").unwrap_or_default());
+    write(&mut entry, PMID, id);
+    write(&mut entry, DOI.slot, text(&json, "DOI").unwrap_or_default());
     Ok(entry)
 }
 
@@ -202,14 +180,14 @@ fn fetch_isbn(id: &str) -> Result<Mapping> {
     let title = text(book, "title").context("not found")?;
     let title = text(book, "subtitle").map_or(title.to_string(), |subtitle| format!("{title}: {subtitle}"));
     let mut entry = Mapping::new();
-    entry.insert("type".into(), "Book".into());
-    entry.insert("title".into(), title.into());
-    let authors: Vec<Value> = book.get("authors").and_then(Json::as_array).map_or(vec![], |list| list.iter().filter_map(|a| Some(sort_name(text(a, "name")?).into())).collect());
-    if !authors.is_empty() { entry.insert("author".into(), Value::Sequence(authors)); }
+    write(&mut entry, Slot::Type, BOOK);
+    write(&mut entry, TITLE.slot, &title);
+    let authors: Vec<String> = book.get("authors").and_then(Json::as_array).map_or(vec![], |list| list.iter().filter_map(|a| Some(sort_name(text(a, "name")?))).collect());
+    write(&mut entry, AUTHORS.slot, &authors.join("; "));
     let year = text(book, "publish_date").and_then(|date| date.as_bytes().windows(4).find(|w| w.iter().all(u8::is_ascii_digit)).and_then(|w| std::str::from_utf8(w).ok()?.parse::<i64>().ok()));
-    if let Some(year) = year { entry.insert("date".into(), year.into()); }
-    if let Some(publisher) = book.pointer("/publishers/0").and_then(|p| text(p, "name")) { entry.insert("publisher".into(), publisher.into()); }
-    serial(&mut entry, "isbn", id);
+    if let Some(year) = year { write(&mut entry, DATE.slot, &year.to_string()); }
+    write(&mut entry, PUBLISHER.slot, book.pointer("/publishers/0").and_then(|p| text(p, "name")).unwrap_or_default());
+    write(&mut entry, ISBN.slot, id);
     Ok(entry)
 }
 

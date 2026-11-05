@@ -29,9 +29,10 @@ main.rs: window
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. It keeps the last good document, and `typst-ide` maps between that document and the source for the preview. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
-| `library.rs` | The citation library, and BibLaTeX import and export. |
+| `library.rs` | The citation library. |
+| `biblatex.rs` | BibLaTeX import and export, by the names in the field table. |
 | `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
-| `source_type.rs` | The Library's source types, their fields, and where each field lives in an entry. |
+| `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
 | `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
 | `references.rs` | Note links, citations, and rewriting path arguments after a move. |

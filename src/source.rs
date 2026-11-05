@@ -1,7 +1,6 @@
 //! The Typst source editor: one virtualized list row per logical line, soft
 //! wrapped, with the selection and caret painted by each row.
 
-use crate::citations::matches;
 use crate::library::Row;
 use crate::theme::{self, MONO_FONT, Theme, c, craft};
 use crate::ui::{MENU_PAD_Y, ROW_RADIUS, popover, ui_text};
@@ -335,7 +334,7 @@ impl SourceEditor {
             notes.truncate(COMPLETION_ROWS);
             return notes.into_iter().map(|(insert, title, path)| Choice { title: title.clone(), detail: path.clone(), insert: insert.clone() }).collect();
         }
-        let mut rows: Vec<&Row> = self.sources.iter().filter(|row| open.query.is_empty() || matches(row, &open.query)).collect();
+        let mut rows: Vec<&Row> = self.sources.iter().filter(|row| open.query.is_empty() || row.matches(&open.query)).collect();
         rows.sort_by_key(|row| !row.key.to_lowercase().starts_with(&open.query));
         rows.truncate(COMPLETION_ROWS);
         rows.into_iter().map(|row| Choice {

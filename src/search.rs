@@ -4,7 +4,6 @@
 //! times. Radius 16, quiet row fills, monochrome page glyphs.
 
 use crate::app::Workspace;
-use crate::citations::matches;
 use crate::library::Row;
 use crate::native_pdf::{Highlight, read_highlights};
 use crate::settings::display_title;
@@ -328,7 +327,7 @@ impl Workspace {
         let mut hits: Vec<Hit> = self.document_results(cx).into_iter().cloned().map(Hit::Doc).collect();
         if q.is_empty() { return hits; }
         let rows = self.citations.library.as_ref().map_or(vec![], crate::library::Library::rows);
-        hits.extend(rows.into_iter().filter(|row| matches(row, &q)).map(Hit::Source));
+        hits.extend(rows.into_iter().filter(|row| row.matches(&q)).map(Hit::Source));
         let mut papers: Vec<_> = self.paper_index.iter().collect();
         papers.sort_by(|a, b| a.0.cmp(b.0));
         for (id, paper) in papers {

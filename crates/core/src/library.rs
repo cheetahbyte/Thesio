@@ -3,13 +3,12 @@
 //! field the form does not show.
 
 use crate::bibliography::LIBRARY_FILE;
+use crate::biblatex;
 use crate::history;
-use crate::lookup::{Identifier, PaperIds};
-use crate::source_type::{self, Field, Slot, SourceType};
+use crate::lookup::PaperIds;
+use crate::source_type::{self, DOI, Field, MISC, Slot, SourceType, read, write};
 use crate::store::{natural_cmp, write_atomic};
 use anyhow::{Context, Result};
-use biblatex::ChunksExt;
-use hayagriva::types::EntryType;
 use serde_yaml::{Mapping, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -31,8 +30,6 @@ pub fn paper_file(key: &str) -> String {
     let stem: String = key.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '-' }).collect();
     format!("{PAPERS_DIR}/{}.pdf", stem.trim_start_matches('.'))
 }
-/// The entry field that holds tags, which only Thesio reads.
-const TAGS_FIELD: &str = "tags";
 
 /// A table row.
 #[derive(Clone, Debug)]
@@ -43,6 +40,13 @@ pub struct Row {
     pub authors: String,
     pub year: String,
     pub tags: Vec<String>,
+}
+
+impl Row {
+    /// Whether a lowercase search `query` finds this row.
+    pub fn matches(&self, query: &str) -> bool {
+        [&self.title, &self.authors, &self.year, &self.key].into_iter().chain(&self.tags).any(|text| text.to_lowercase().contains(query))
+    }
 }
 
 /// The outcome of adding a looked-up entry.
@@ -61,27 +65,6 @@ pub struct Library {
 
 fn yaml_error(path: &Path, error: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("{} is not a valid library: {error}", path.display())
-}
-
-fn set(map: &mut Mapping, key: &str, value: Option<Value>) {
-    match value {
-        Some(value) => { map.insert(key.into(), value); }
-        None => { map.remove(key); }
-    }
-}
-
-/// A raw entry's tags. A hand-written `tags: reading` counts as one.
-fn tags_of(entry: &Value) -> Vec<String> {
-    let name = |value: &Value| match value {
-        Value::String(tag) => Some(tag.clone()),
-        Value::Number(tag) => Some(tag.to_string()),
-        _ => None,
-    };
-    match entry.get(TAGS_FIELD) {
-        Some(Value::Sequence(tags)) => tags.iter().filter_map(name).collect(),
-        Some(tag) => name(tag).into_iter().collect(),
-        None => vec![],
-    }
 }
 
 impl Library {
@@ -138,18 +121,19 @@ impl Library {
     /// Puts a version back, keeping what it replaces. It is checked first, so
     /// a version that does not parse changes nothing.
     pub fn restore(&mut self, text: &str) -> Result<()> {
-        let next = Self::parse(self.path.clone(), text)?;
-        self.keep_version(true)?;
-        write_atomic(&self.path, text.as_bytes())?;
-        *self = next;
-        Ok(())
+        self.replace(text, true)
     }
 
     /// Validates `entries` with Hayagriva, then writes them.
     fn commit(&mut self, entries: Mapping) -> Result<()> {
         let text = if entries.is_empty() { String::new() } else { serde_yaml::to_string(&entries)? };
-        let next = Self::parse(self.path.clone(), &text)?;
-        self.keep_version(false)?;
+        self.replace(&text, false)
+    }
+
+    /// Writes `text` over the file if it parses, keeping a version first.
+    fn replace(&mut self, text: &str, now: bool) -> Result<()> {
+        let next = Self::parse(self.path.clone(), text)?;
+        self.keep_version(now)?;
         write_atomic(&self.path, text.as_bytes())?;
         *self = next;
         Ok(())
@@ -159,15 +143,12 @@ impl Library {
     pub fn is_empty(&self) -> bool { self.parsed.is_empty() }
     pub fn contains(&self, key: &str) -> bool { self.parsed.get(key).is_some() }
 
+    fn entry(&self, key: &str) -> Option<&Mapping> { self.entries.get(key)?.as_mapping() }
+
     /// What the paper of `key` can be found by.
     pub fn paper_ids(&self, key: &str) -> PaperIds {
-        let Some(entry) = self.entries.get(key) else { return PaperIds::default() };
-        let from_url = match crate::lookup::identify(&source_type::read(entry, Slot::Url)) {
-            Some(Identifier::Arxiv(id)) => Some(id),
-            _ => None,
-        };
-        let present = |id: String| Some(id).filter(|id| !id.is_empty());
-        PaperIds { doi: present(source_type::read(entry, Slot::Serial("doi"))), arxiv: present(source_type::read(entry, Slot::Serial("arxiv"))).or(from_url) }
+        let Some(entry) = self.entry(key) else { return PaperIds::default() };
+        PaperIds { doi: Some(read(entry, DOI.slot)).filter(|id| !id.is_empty()), arxiv: source_type::arxiv_id(entry) }
     }
 
     pub fn rows(&self) -> Vec<Row> {
@@ -177,45 +158,55 @@ impl Library {
             title: entry.title().map(|t| t.to_string()).unwrap_or_default(),
             authors: entry.authors().unwrap_or_default().iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "),
             year: entry.date_any().map(|d| d.year.to_string()).unwrap_or_default(),
-            tags: self.entries.get(entry.key()).map(tags_of).unwrap_or_default(),
+            tags: self.entry(entry.key()).map(source_type::tags).unwrap_or_default(),
         }).collect()
     }
 
     /// Every tag in use with its number of entries, in natural order.
     pub fn tags(&self) -> Vec<(String, usize)> {
         let mut counts = std::collections::BTreeMap::new();
-        for tag in self.entries.values().flat_map(tags_of) { *counts.entry(tag).or_insert(0) += 1; }
+        for tag in self.entries.values().filter_map(Value::as_mapping).flat_map(source_type::tags) { *counts.entry(tag).or_insert(0) += 1; }
         let mut tags: Vec<(String, usize)> = counts.into_iter().collect();
         tags.sort_by(|a, b| natural_cmp(&a.0, &b.0));
         tags
     }
 
-    /// Adds `tag` to the entries in `keys`, or removes it. A name that differs
-    /// only in case from a tag in use becomes that tag.
-    pub fn set_tag(&mut self, keys: &[String], tag: &str, on: bool) -> Result<()> {
+    /// The tag in use that `name` differs from only in case.
+    pub fn tag_like(&self, name: &str) -> Option<String> {
+        self.tags().into_iter().map(|(tag, _)| tag).find(|tag| tag.eq_ignore_ascii_case(name))
+    }
+
+    /// `tag` as it should be stored. A name that differs only in case from a
+    /// tag in use, other than `old`, becomes that tag.
+    fn tag_name(&self, tag: &str, old: Option<&str>) -> Result<String> {
         let tag = tag.trim();
         anyhow::ensure!(!tag.is_empty(), "Enter a tag");
         anyhow::ensure!(!tag.contains(','), "Tags cannot contain commas");
-        let tag = self.tags().into_iter().map(|(name, _)| name).find(|name| name.eq_ignore_ascii_case(tag)).unwrap_or_else(|| tag.to_string());
+        let known = self.tags().into_iter().map(|(name, _)| name).find(|name| Some(name.as_str()) != old && name.eq_ignore_ascii_case(tag));
+        Ok(known.unwrap_or_else(|| tag.to_string()))
+    }
+
+    /// Adds `tag` to the entries in `keys`, or removes it.
+    pub fn set_tag(&mut self, keys: &[String], tag: &str, on: bool) -> Result<()> {
+        let tag = self.tag_name(tag, None)?;
         let mut entries = self.entries.clone();
         for key in keys {
-            let Some(entry) = entries.get_mut(key.as_str()) else { continue };
-            let mut tags = tags_of(entry);
+            let Some(entry) = entries.get_mut(key.as_str()).and_then(Value::as_mapping_mut) else { continue };
+            let mut tags = source_type::tags(entry);
             tags.retain(|name| *name != tag);
             if on { tags.push(tag.clone()); }
-            let Some(map) = entry.as_mapping_mut() else { continue };
-            set(map, TAGS_FIELD, (!tags.is_empty()).then(|| Value::Sequence(tags.into_iter().map(Value::from).collect())));
+            source_type::set_tags(entry, tags);
         }
         self.commit(entries)
     }
 
     pub fn source_type(&self, key: &str) -> Option<&'static SourceType> {
-        self.entries.get(key).map(SourceType::of)
+        self.entry(key).map(SourceType::of)
     }
 
     /// What the editor shows for a field of `key`.
     pub fn field_text(&self, key: &str, field: &Field) -> String {
-        self.entries.get(key).map(|entry| source_type::read(entry, field.slot)).unwrap_or_default()
+        self.entry(key).map(|entry| read(entry, field.slot)).unwrap_or_default()
     }
 
     /// Adds an empty entry of `kind` for the editor to fill in.
@@ -231,7 +222,7 @@ impl Library {
 
     /// Whether changing `key` to `kind` would lose the work it was published in.
     pub fn type_change_drops_parent(&self, key: &str, kind: &SourceType) -> bool {
-        self.entries.get(key).is_some_and(|entry| kind.drops_parent(entry))
+        self.entry(key).is_some_and(|entry| kind.drops_parent(entry))
     }
 
     /// Changes `key` to `kind`, keeping every field the types share.
@@ -250,12 +241,12 @@ impl Library {
         anyhow::ensure!(!new_key.is_empty(), "Enter a citation key");
         anyhow::ensure!(!new_key.contains(char::is_whitespace), "Citation keys cannot contain spaces");
         anyhow::ensure!(key == new_key || !self.contains(new_key), "{new_key} is already in the library");
-        let Some(original) = self.entries.get(key) else { return Ok(false) };
-        let mut entry = original.as_mapping().cloned().unwrap_or_default();
+        let Some(original) = self.entry(key) else { return Ok(false) };
+        let mut entry = original.clone();
         for (field, text) in fields {
-            if source_type::read(original, field.slot) != text.trim() { source_type::write(&mut entry, field.slot, text); }
+            if read(original, field.slot) != text.trim() { write(&mut entry, field.slot, text); }
         }
-        if key == new_key && entry == *original.as_mapping().unwrap_or(&Mapping::new()) { return Ok(false); }
+        if key == new_key && entry == *original { return Ok(false); }
         let entries = self.entries.iter().map(|(k, v)| {
             if k.as_str() == Some(key) { (new_key.into(), Value::Mapping(entry.clone())) } else { (k.clone(), v.clone()) }
         }).collect();
@@ -265,10 +256,7 @@ impl Library {
 
     /// Renames a tag on every entry. Renaming to a tag in use merges the two.
     pub fn rename_tag(&mut self, old: &str, new: &str) -> Result<()> {
-        let new = new.trim();
-        anyhow::ensure!(!new.is_empty(), "Enter a tag");
-        anyhow::ensure!(!new.contains(','), "Tags cannot contain commas");
-        let new = self.tags().into_iter().map(|(name, _)| name).find(|name| name != old && name.eq_ignore_ascii_case(new)).unwrap_or_else(|| new.to_string());
+        let new = self.tag_name(new, Some(old))?;
         self.change_tag(old, Some(&new))
     }
 
@@ -278,15 +266,14 @@ impl Library {
 
     fn change_tag(&mut self, old: &str, new: Option<&str>) -> Result<()> {
         let mut entries = self.entries.clone();
-        for entry in entries.values_mut() {
-            let tags = tags_of(entry);
+        for entry in entries.values_mut().filter_map(Value::as_mapping_mut) {
+            let tags = source_type::tags(entry);
             if !tags.iter().any(|tag| tag == old) { continue; }
             let mut next: Vec<String> = vec![];
             for tag in tags.iter().flat_map(|tag| if tag == old { new.map(str::to_string) } else { Some(tag.clone()) }) {
                 if !next.contains(&tag) { next.push(tag); }
             }
-            let Some(map) = entry.as_mapping_mut() else { continue };
-            set(map, TAGS_FIELD, (!next.is_empty()).then(|| Value::Sequence(next.into_iter().map(Value::from).collect())));
+            source_type::set_tags(entry, next);
         }
         self.commit(entries)
     }
@@ -300,28 +287,14 @@ impl Library {
     /// Imports BibLaTeX text. Keys already in the library are kept as they
     /// are. Returns the number of entries added and skipped.
     pub fn import_biblatex(&mut self, text: &str) -> Result<(usize, usize)> {
-        let library = hayagriva::io::from_biblatex_str(text).map_err(|errors| {
-            anyhow::anyhow!(errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "))
-        })?;
-        let incoming: Mapping = serde_yaml::from_str(&hayagriva::io::to_yaml_str(&library)?)?;
-        // Hayagriva has no place for these; it read the same text, so this parses.
-        let raw = biblatex::Bibliography::parse(text).ok();
-        let verbatim = |key: &str, field: &str| raw.as_ref()?.get(key)?.get(field).map(|chunks| chunks.format_verbatim());
         let mut entries = self.entries.clone();
         let (mut added, mut skipped) = (0, 0);
-        for (key, mut value) in incoming {
-            let Some(map) = value.as_mapping_mut() else { continue };
-            if entries.contains_key(&key) || self.find_duplicate(map).is_some() {
+        for (key, entry) in biblatex::import(text)? {
+            if entries.contains_key(&key) || self.find_duplicate(&entry).is_some() {
                 skipped += 1;
                 continue;
             }
-            source_type::refine_imported(map);
-            let name = key.as_str().unwrap_or_default();
-            let tags: Vec<Value> = verbatim(name, "keywords").unwrap_or_default().split([',', ';']).filter_map(|tag| Some(tag.trim()).filter(|tag| !tag.is_empty())).map(Value::from).collect();
-            if !tags.is_empty() { map.insert(TAGS_FIELD.into(), Value::Sequence(tags)); }
-            // `langid` names a language (`german`); only codes are valid here.
-            if let Some(code) = verbatim(name, "language").filter(|code| code.len() == 2 && code.chars().all(|c| c.is_ascii_lowercase())) { map.insert("language".into(), code.into()); }
-            entries.insert(key, value);
+            entries.insert(key, Value::Mapping(entry));
             added += 1;
         }
         if added > 0 { self.commit(entries)?; }
@@ -333,7 +306,7 @@ impl Library {
     pub fn add_fetched(&mut self, mut entry: Mapping) -> Result<Added> {
         if let Some(key) = self.find_duplicate(&entry) { return Ok(Added::Duplicate(key)); }
         let key = self.fresh_key(&entry);
-        if !entry.contains_key("type") { entry.insert("type".into(), "Misc".into()); }
+        if read(&entry, Slot::Type).is_empty() { write(&mut entry, Slot::Type, MISC); }
         let mut entries = self.entries.clone();
         entries.insert(key.as_str().into(), Value::Mapping(entry));
         self.commit(entries)?;
@@ -341,31 +314,14 @@ impl Library {
     }
 
     fn find_duplicate(&self, entry: &Mapping) -> Option<String> {
-        let numbers = |map: &Mapping| -> Vec<(String, String)> {
-            map.get("serial-number").and_then(Value::as_mapping).map_or(vec![], |serial| serial.iter().filter_map(|(kind, value)| {
-                Some((kind.as_str()?.to_lowercase(), value.as_str()?.to_lowercase()))
-            }).collect())
-        };
-        let wanted = numbers(entry);
-        self.entries.iter().find(|(_, existing)| existing.as_mapping().is_some_and(|map| numbers(map).iter().any(|n| wanted.contains(n)))).and_then(|(key, _)| key.as_str()).map(str::to_string)
+        let wanted = source_type::serial_numbers(entry);
+        self.entries.iter().find(|(_, existing)| existing.as_mapping().is_some_and(|map| source_type::serial_numbers(map).iter().any(|n| wanted.contains(n)))).and_then(|(key, _)| key.as_str()).map(str::to_string)
     }
 
     /// `surname` + `year`, with a letter added when the key is taken.
     fn fresh_key(&self, entry: &Mapping) -> String {
-        let person = match entry.get("author") {
-            Some(Value::Sequence(list)) => list.first(),
-            other => other,
-        };
-        let name = match person {
-            Some(Value::Mapping(map)) => map.get("name").and_then(Value::as_str),
-            other => other.and_then(Value::as_str),
-        };
-        let surname = name.and_then(|n| n.split(',').next()).and_then(|n| n.split_whitespace().next_back()).map_or(String::new(), ascii_key);
-        let year = entry.get("date").map(|date| match date {
-            Value::Number(n) => n.to_string(),
-            Value::String(s) => s.chars().take(4).collect(),
-            _ => String::new(),
-        }).unwrap_or_default();
+        let surname = source_type::first_surname(entry).map_or(String::new(), |name| ascii_key(&name));
+        let year = source_type::year(entry);
         let base = match (surname.is_empty(), year.is_empty()) {
             (true, true) => "entry".to_string(),
             (true, false) => format!("entry{year}"),
@@ -376,20 +332,15 @@ impl Library {
             .unwrap_or_else(|| (2..).map(|n| format!("{base}-{n}")).find(|key| !self.contains(key)).unwrap_or(base))
     }
 
-    /// The whole library as BibLaTeX. Fields BibLaTeX has no place for, such
-    /// as a running time, are left out.
-    pub fn export_biblatex(&self) -> String {
-        let mut rows: Vec<&hayagriva::Entry> = self.parsed.iter().collect();
-        rows.sort_by(|a, b| natural_cmp(a.key(), b.key()));
-        rows.into_iter().map(|entry| biblatex_entry(entry, self.entries.get(entry.key()).unwrap_or(&Value::Null))).collect::<Vec<_>>().join("\n")
-    }
+    /// The whole library as BibLaTeX.
+    pub fn export_biblatex(&self) -> String { biblatex::export(&self.parsed, &self.entries) }
 
     /// YAML for the entries in `keys`, in library order. Tags stay out: this
     /// goes into documents, and a new tag should not rewrite them.
     pub fn subset(&self, keys: &BTreeSet<String>) -> Result<String> {
         let entries: Mapping = self.entries.iter().filter(|(k, _)| k.as_str().is_some_and(|k| keys.contains(k))).map(|(k, v)| {
             let mut entry = v.clone();
-            if let Some(map) = entry.as_mapping_mut() { map.remove(TAGS_FIELD); }
+            if let Some(map) = entry.as_mapping_mut() { source_type::set_tags(map, vec![]); }
             (k.clone(), entry)
         }).collect();
         Ok(if entries.is_empty() { String::new() } else { serde_yaml::to_string(&entries)? })
@@ -420,75 +371,6 @@ fn ascii_key(text: &str) -> String {
         }
     }
     key
-}
-
-fn biblatex_kind(entry: &hayagriva::Entry) -> &'static str {
-    let parent = entry.parents().first().map(|p| p.entry_type());
-    match entry.entry_type() {
-        EntryType::Article => match parent {
-            Some(EntryType::Conference | EntryType::Proceedings) => "inproceedings",
-            None => "misc",
-            _ => "article",
-        },
-        EntryType::Book => "book",
-        EntryType::Chapter => "inbook",
-        EntryType::Anthos => "incollection",
-        EntryType::Anthology => "collection",
-        EntryType::Proceedings => "proceedings",
-        EntryType::Report => "report",
-        EntryType::Thesis => "thesis",
-        EntryType::Web => "online",
-        EntryType::Manuscript => "unpublished",
-        EntryType::Patent => "patent",
-        EntryType::Repository => "software",
-        EntryType::Entry => "inreference",
-        EntryType::Video => "video",
-        EntryType::Audio => "audio",
-        _ => "misc",
-    }
-}
-
-fn biblatex_entry(entry: &hayagriva::Entry, raw: &Value) -> String {
-    let escape = |text: &str| text.replace('{', "\\{").replace('}', "\\}");
-    let names = |persons: &[hayagriva::types::Person]| persons.iter().map(|p| match &p.given_name {
-        Some(given) => format!("{}, {given}", p.name),
-        None => p.name.clone(),
-    }).collect::<Vec<_>>().join(" and ");
-    let kind = biblatex_kind(entry);
-    let text = |slot: Slot| source_type::read(raw, slot);
-    let mut fields: Vec<(&str, String)> = vec![];
-    if let Some(title) = entry.title() { fields.push(("title", title.to_string())); }
-    if let Some(authors) = entry.authors() { fields.push(("author", names(authors))); }
-    if let Some(editors) = entry.editors() { fields.push(("editor", names(editors))); }
-    if let Some(date) = entry.date_any() {
-        let mut text = format!("{:04}", date.year);
-        if let Some(month) = date.month {
-            text += &format!("-{:02}", month + 1);
-            if let Some(day) = date.day { text += &format!("-{:02}", day + 1); }
-        }
-        fields.push(("date", text));
-    }
-    if let Some(parent) = entry.parents().first().and_then(|p| p.title()) {
-        let name = if kind == "article" { "journaltitle" } else { "booktitle" };
-        fields.push((name, parent.to_string()));
-    }
-    let institution = matches!(kind, "thesis" | "report");
-    let number = text(Slot::Serial("serial"));
-    let mut plain = vec![
-        ("publisher", text(Slot::Publisher)), ("location", text(Slot::Place)), ("edition", text(Slot::Own("edition"))),
-        ("volume", text(Slot::Either("volume"))), ("number", if number.is_empty() { text(Slot::Either("issue")) } else { number }),
-        ("pages", text(Slot::Own("page-range"))), ("pagetotal", text(Slot::Own("page-total"))), ("type", text(Slot::Own("genre"))),
-        (if institution { "institution" } else { "organization" }, text(Slot::Own("organization"))), ("version", text(Slot::Serial("version"))),
-        ("doi", text(Slot::Serial("doi"))), ("isbn", text(Slot::Serial("isbn"))), ("issn", text(Slot::Serial("issn"))),
-        ("url", text(Slot::Url)), ("urldate", text(Slot::Accessed)), ("language", text(Slot::Own("language"))),
-        ("abstract", text(Slot::Own("abstract"))), ("note", text(Slot::Own("note"))),
-    ];
-    let arxiv = text(Slot::Serial("arxiv"));
-    if !arxiv.is_empty() { plain.extend([("eprint", arxiv), ("eprinttype", "arxiv".to_string())]); }
-    plain.push(("keywords", tags_of(raw).join(", ")));
-    fields.extend(plain.into_iter().filter(|(_, value)| !value.is_empty()));
-    let body = fields.iter().map(|(name, value)| format!("  {name} = {{{}}},", escape(value))).collect::<Vec<_>>().join("\n");
-    format!("@{kind}{{{},\n{body}\n}}\n", entry.key())
 }
 
 #[cfg(test)]
@@ -530,8 +412,8 @@ mod tests {
         ].map(|(key, label)| (key.to_string(), label)));
         let tags: Vec<String> = library.tags().into_iter().map(|(tag, _)| tag).collect();
         assert_eq!(tags, ["flaky tests", "testing"]);
-        assert_eq!(source_type::read(&library.entries["parry2022"], Slot::Own("language")), "en");
-        assert_eq!(source_type::read(&library.entries["chap2020"], Slot::Publisher), "Pub");
+        assert_eq!(read(library.entry("parry2022").unwrap(), source_type::LANGUAGE.slot), "en");
+        assert_eq!(read(library.entry("chap2020").unwrap(), Slot::Publisher), "Pub");
         assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (0, 7));
     }
 
@@ -540,10 +422,10 @@ mod tests {
         let mut library = library("tags");
         library.import_biblatex("@book{a, title = {A}, keywords = {old, keep}}\n@book{b, title = {B}, keywords = {old, merged}}\n@book{c, title = {C}, keywords = {merged}}").unwrap();
         library.rename_tag("old", "fresh").unwrap();
-        assert_eq!(tags_of(&library.entries["a"]), ["fresh", "keep"]);
+        assert_eq!(source_type::tags(library.entry("a").unwrap()), ["fresh", "keep"]);
         library.rename_tag("fresh", "MERGED").unwrap();
         assert_eq!(library.tags(), [("keep".to_string(), 1), ("merged".to_string(), 3)]);
-        assert_eq!(tags_of(&library.entries["b"]), ["merged"]);
+        assert_eq!(source_type::tags(library.entry("b").unwrap()), ["merged"]);
         library.delete_tag("merged").unwrap();
         assert_eq!(library.tags(), [("keep".to_string(), 1)]);
         assert!(library.entries["c"].get("tags").is_none());
@@ -551,18 +433,16 @@ mod tests {
 
     #[test]
     fn an_article_without_a_journal_is_a_preprint_only_if_something_says_so() {
-        let of = |yaml: &str| SourceType::of(&serde_yaml::from_str::<Value>(yaml).unwrap()).label;
+        let of = |yaml: &str| SourceType::of(&serde_yaml::from_str::<Mapping>(yaml).unwrap()).label;
         assert_eq!(of("type: Article\ntitle: T"), "Journal Article");
         assert_eq!(of("type: Article\nserial-number:\n  arxiv: 2112.12331"), "Preprint");
         assert_eq!(of("type: Article\nurl: https://arxiv.org/abs/2112.12331"), "Preprint");
         assert_eq!(of("type: Article\narchive: SSRN"), "Preprint");
-        let preprint = crate::source_type::SOURCE_TYPES.iter().find(|kind| kind.label == "Preprint").unwrap();
-        let journal = &crate::source_type::SOURCE_TYPES[0];
         let mut library = library("preprint");
         library.import_biblatex("@article{a, title = {A}}").unwrap();
-        library.set_source_type("a", preprint).unwrap();
+        library.set_source_type("a", &source_type::PREPRINT).unwrap();
         assert_eq!(library.source_type("a").unwrap().label, "Preprint", "choosing it sticks");
-        library.set_source_type("a", journal).unwrap();
+        library.set_source_type("a", &source_type::JOURNAL_ARTICLE).unwrap();
         assert_eq!(library.source_type("a").unwrap().label, "Journal Article");
         assert!(library.entries["a"].get("genre").is_none());
     }
@@ -592,6 +472,15 @@ mod tests {
     }
 
     #[test]
+    fn a_numeric_arxiv_id_is_a_duplicate() {
+        let mut library = library("numeric-arxiv");
+        let entry = |text: &str| serde_yaml::from_str::<Mapping>(text).unwrap();
+        let first = library.add_fetched(entry("type: Article\ntitle: A\nserial-number:\n  arxiv: 2112.12331\n")).unwrap();
+        assert_eq!(first, Added::New("entry".to_string()));
+        assert_eq!(library.add_fetched(entry("type: Article\ntitle: B\nserial-number:\n  arxiv: 2112.12331\n")).unwrap(), Added::Duplicate("entry".to_string()));
+    }
+
+    #[test]
     fn export_then_import_loses_nothing_it_can_hold() {
         let mut first = library("export");
         first.import_biblatex(ZOTERO).unwrap();
@@ -599,13 +488,12 @@ mod tests {
         let mut second = self::library("reimport");
         assert_eq!(second.import_biblatex(&text).unwrap(), (7, 0));
         assert_eq!(kinds(&second), kinds(&first));
-        for (key, entry) in &first.entries {
-            let key = key.as_str().unwrap();
-            let kind = SourceType::of(entry);
-            for field in kind.fields {
-                assert_eq!(source_type::read(&second.entries[key], field.slot), source_type::read(entry, field.slot), "{key}: {}", field.label);
+        for key in first.rows().into_iter().map(|row| row.key) {
+            let (entry, again) = (first.entry(&key).unwrap(), second.entry(&key).unwrap());
+            for field in SourceType::of(entry).fields {
+                assert_eq!(read(again, field.slot), read(entry, field.slot), "{key}: {}", field.label);
             }
-            assert_eq!(tags_of(&second.entries[key]), tags_of(entry), "{key}: tags");
+            assert_eq!(source_type::tags(again), source_type::tags(entry), "{key}: tags");
         }
     }
 }

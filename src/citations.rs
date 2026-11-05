@@ -8,7 +8,7 @@ use crate::library::{Added, Library, PAPERS_DIR, Row, note_file, paper_file};
 use thesio_core::bibliography::{self, Mode};
 use crate::source::SourceEditor;
 use thesio_core::lookup::{self, Identifier};
-use thesio_core::source_type::{Field, SOURCE_TYPES, SourceType};
+use thesio_core::source_type::{Field, JOURNAL_ARTICLE, SOURCE_TYPES, SourceType};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
@@ -60,10 +60,6 @@ fn cell(row: &Row, col: Col) -> Cow<'_, str> {
 fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div().id(id).flex_none().h(px(crate::ui::BUTTON_H)).px(px(4.)).flex().items_center().rounded(px(crate::ui::BUTTON_RADIUS)).cursor_pointer()
         .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).child(label)
-}
-
-pub(crate) fn matches(row: &Row, query: &str) -> bool {
-    [&row.title, &row.authors, &row.year, &row.key].into_iter().chain(&row.tags).any(|text| text.to_lowercase().contains(query))
 }
 
 /// The panel beside the table that edits the selected entry.
@@ -208,7 +204,7 @@ impl Workspace {
     fn visible_rows(&self, query: &str) -> Vec<Row> {
         let Some(library) = &self.citations.library else { return vec![] };
         let (col, ascending) = self.citations.sort;
-        let mut rows: Vec<Row> = library.rows().into_iter().filter(|r| query.is_empty() || matches(r, query)).collect();
+        let mut rows: Vec<Row> = library.rows().into_iter().filter(|r| query.is_empty() || r.matches(query)).collect();
         rows.sort_by(|a, b| {
             let order = natural_cmp(&cell(a, col), &cell(b, col));
             if ascending { order } else { order.reverse() }
@@ -342,7 +338,7 @@ impl Workspace {
         if new != old {
             match library.rename_tag(&old, &new) {
                 Ok(()) => if self.citations.tag_filter.as_ref() == Some(&old) {
-                    self.citations.tag_filter = library.tags().into_iter().map(|(tag, _)| tag).find(|tag| tag.eq_ignore_ascii_case(&new));
+                    self.citations.tag_filter = library.tag_like(&new);
                 },
                 Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename the tag: {e}"), cx),
             }
@@ -635,7 +631,7 @@ impl Workspace {
             Some(key) => key,
             None => {
                 let Some(library) = &mut self.citations.library else { return };
-                let key = match library.add_blank(&SOURCE_TYPES[0]) {
+                let key = match library.add_blank(&JOURNAL_ARTICLE) {
                     Ok(key) => key,
                     Err(e) => return self.show_toast_kind(ToastKind::Error, &format!("Could not add an entry: {e}"), cx),
                 };
@@ -1448,7 +1444,7 @@ impl Workspace {
         let keys: BTreeSet<&String> = editor.keys.iter().collect();
         let rows: Vec<Row> = library.rows().into_iter().filter(|row| keys.contains(&row.key)).collect();
         let tags = library.tags();
-        let exists = tags.iter().any(|(tag, _)| tag.eq_ignore_ascii_case(&typed));
+        let exists = library.tag_like(&typed).is_some();
         let list = tags.into_iter().filter(|(tag, _)| tag.to_lowercase().contains(&query)).enumerate().map(|(i, (tag, _))| {
             let holders = rows.iter().filter(|row| row.tags.contains(&tag)).count();
             let all = holders == rows.len();
@@ -1560,7 +1556,7 @@ impl Workspace {
         let inspector = self.citations.inspector.as_ref()?;
         let position = inspector.type_menu?;
         let current = self.citations.library.as_ref()?.source_type(&inspector.key)?;
-        let rows = SOURCE_TYPES.iter().enumerate().map(|(i, kind)| {
+        let rows = SOURCE_TYPES.iter().copied().enumerate().map(|(i, kind)| {
             menu_row(("inspector-type-row", i))
                 .child(div().w(px(16.)).flex_none().when(std::ptr::eq(kind, current), |d| d.child(menu_glyph(Icon::Check, 14.))))
                 .child(menu_label(kind.label))
