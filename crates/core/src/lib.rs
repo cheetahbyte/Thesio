@@ -7,6 +7,7 @@ pub mod buffer;
 pub mod compiler;
 pub mod diff;
 pub mod history;
+pub mod ide;
 pub mod identifier;
 pub mod library;
 pub mod lookup;

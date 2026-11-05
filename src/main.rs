@@ -44,6 +44,7 @@ mod text;
 mod theme;
 mod trash;
 mod tree;
+mod typst_code;
 mod ui;
 
 use gpui::*;

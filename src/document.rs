@@ -4,11 +4,12 @@
 
 use crate::app::{View, Workspace};
 use crate::citations::CitationKeys;
-use crate::completion::{CompletionKind, Found, Item, Provider, Query};
+use crate::completion::{CompletionKind, Found, Item, Provider, Query, Reach};
 use crate::confirm::AfterSave;
 use crate::preview::{Preview, PreviewEvent};
 use crate::session::DocumentSession;
 use crate::source::{SourceEditor, SourceEvent};
+use crate::typst_code::TypstCode;
 use thesio_core::store::Entry;
 use crate::ui::ToastKind;
 use gpui::*;
@@ -53,7 +54,7 @@ pub struct NoteLinks(pub WeakEntity<Workspace>);
 impl Provider for NoteLinks {
     fn kind(&self) -> CompletionKind { CompletionKind::NoteLink }
 
-    fn find(&self, text: &str, caret: usize) -> Option<Found> {
+    fn find(&self, text: &str, caret: usize, _: Reach) -> Option<Found> {
         let range = note_link_at(text, caret)?;
         Some(Found { query: text[range.start + 2..caret].to_lowercase(), range })
     }
@@ -100,12 +101,14 @@ impl Workspace {
         };
         let typst = paths::is_document(id);
         let opened_text = text.clone();
-        let workspace = cx.weak_entity();
-        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace.clone())), Rc::new(NoteLinks(workspace))];
-        let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
         let root = self.store.borrow().root().to_path_buf();
         let main = self.top_document(id, cx);
         let session = typst.then(|| cx.new(|_| DocumentSession::with_pages(root, id.to_string(), main)));
+        let workspace = cx.weak_entity();
+        let mut providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace.clone())), Rc::new(NoteLinks(workspace))];
+        // Last: `@` and `[[` belong to the two above.
+        if let Some(session) = &session { providers.push(Rc::new(TypstCode::new(session.downgrade()))); }
+        let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
         let preview = session.as_ref().map(|session| cx.new(|cx| Preview::new(session.clone(), cx)));
         if let Some(session) = &session {
             editor.update(cx, |editor, _| editor.set_session(session.clone()));
@@ -162,7 +165,7 @@ impl Workspace {
         let Some(file) = self.current() else { return vec![] };
         let mut notes: Vec<&Entry> = self.entries.iter().filter(|e| e.typst && e.id != file && (e.title.to_lowercase().contains(query) || e.id.to_lowercase().contains(query))).collect();
         notes.sort_by_key(|e| !e.title.to_lowercase().starts_with(query));
-        notes.into_iter().map(|e| Item { title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None }).collect()
+        notes.into_iter().map(|e| Item { title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None, stops: vec![], from: None }).collect()
     }
 
     /// What `id` holds now: the open editor's copy, or the file.

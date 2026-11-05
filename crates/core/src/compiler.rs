@@ -6,6 +6,7 @@
 //! `Compilation::missing`, for the caller to fetch off the compile.
 
 use crate::packages::{PackageSpec, Packages};
+use crate::paths::visit_vault;
 use crate::project::{self, Project};
 use anyhow::{Context, Result};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -49,8 +50,7 @@ pub struct Diagnostic {
 
 /// The outcome of one compile, whole: it holds the files it read, so it needs
 /// no compiler to answer questions and any thread can keep it. A later edit
-/// does not change what it says. Autocomplete and hover can run against
-/// `world`, which is what `typst_ide` asks for.
+/// does not change what it says. `ide.rs` asks `typst_ide` through `world`.
 pub struct Compilation {
     pub main: String,
     /// The last pass's document; `None` when compilation failed.
@@ -62,7 +62,7 @@ pub struct Compilation {
     pub words: Vec<(String, usize)>,
     /// Packages this compile stopped at, to `fetch` and compile again.
     pub missing: Vec<PackageSpec>,
-    world: Snapshot,
+    pub(crate) world: Snapshot,
 }
 
 impl Compilation {
@@ -196,7 +196,7 @@ impl Compiler {
         let words = document.as_ref().map_or(vec![], count_words);
         let files = world.read.into_inner().unwrap_or_default();
         let missing = world.missing.into_inner().unwrap_or_default();
-        Compilation { main: main.to_string(), document, diagnostics, words, missing, world: Snapshot { resources: self.resources.clone(), main: id, files } }
+        Compilation { main: main.to_string(), document, diagnostics, words, missing, world: Snapshot { resources: self.resources.clone(), root: self.root.clone(), main: id, files } }
     }
 }
 
@@ -240,7 +240,7 @@ fn count_words(document: &PagedDocument) -> Vec<(String, usize)> {
 
 /// Runs `work` on a thread with room for deep documents and embedded PDFs,
 /// whose colour conversion overflows a pool thread's 512 KB in a debug build.
-fn with_large_stack<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T> {
+pub(crate) fn with_large_stack<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T> {
     std::thread::scope(|scope| {
         let thread = std::thread::Builder::new().stack_size(COMPILE_STACK).spawn_scoped(scope, work).context("Could not start compiling")?;
         Ok(thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
@@ -417,14 +417,30 @@ impl World for VaultWorld<'_> {
 }
 
 /// The files one compile read, as a world of their own.
-struct Snapshot {
+#[derive(Clone)]
+pub(crate) struct Snapshot {
     resources: Arc<Resources>,
+    root: PathBuf,
     main: FileId,
     files: FxHashMap<FileId, ReadFile>,
 }
 
 impl Snapshot {
     fn resolved(&self, id: FileId) -> FileId { resolved(self.main, id, |found, _| self.files.contains_key(&found)) }
+
+    /// This world with `text` as the file at `path`, and that text's source.
+    /// Replacing the text keeps the spans of what did not change.
+    pub(crate) fn with_text(&self, path: &str, text: &str) -> Option<(Self, Source)> {
+        let id = file_id(path).ok()?;
+        let text = without_bom(text);
+        let mut world = self.clone();
+        let file = world.files.entry(id).or_default();
+        let source = file.source.get_or_insert_with(|| Source::new(id, text.clone()));
+        if source.text() != text { source.replace(&text); }
+        let source = source.clone();
+        file.bytes = None;
+        Some((world, source))
+    }
 
     /// A file's text, exactly at `path`.
     fn text(&self, path: &str) -> Option<String> {
@@ -437,6 +453,13 @@ impl Snapshot {
 
 impl IdeWorld for Snapshot {
     fn upcast(&self) -> &dyn World { self }
+
+    /// Every file in the vault, read when a path is being completed.
+    fn files(&self) -> Vec<FileId> {
+        let mut files = vec![];
+        visit_vault(&self.root, &mut |item| if !item.info.is_dir() && let Ok(id) = file_id(&item.id) { files.push(id); });
+        files
+    }
 }
 
 impl World for Snapshot {

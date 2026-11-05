@@ -168,7 +168,7 @@ impl Workspace {
         let moved = self.current().and_then(|c| paths::moved(c, old, new));
         if let Some(path) = moved && let Some(document) = &mut self.document { document.id = path; }
         self.follow_top_document(cx);
-        self.papers.panel.path_changed(old, new);
+        self.papers.panel.path_changed(old, new, cx);
         self.search.path_changed(old, new);
         if let Some(batch) = &mut self.sidebar.batch {
             for id in batch.iter_mut() {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Complete Typst code. Typing `#` offers functions, variables, and snippets, a dot after code offers fields and methods, and ⌃Space offers parameters, values, labels, and file paths too. Tab moves through a snippet's placeholders. Paper notes have it as well.
+- Show what Typst knows about the code under the pointer: a function's description, or a variable's value. Moving away, typing, or Esc closes it.
 - Support Typst packages. `#import "@preview/name:version"` downloads the package on first use, into the same cache as the typst CLI, and shows that it is downloading or why it failed. A cached package needs no network, and `@local` packages work too.
 - Save paper notes after typing stops rather than on every keystroke, and keep their earlier versions like a document's.
 - Leave Trash with Esc, as the sidebar offered.

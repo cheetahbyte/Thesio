@@ -11,6 +11,7 @@ use std::rc::Rc;
 pub enum CompletionKind {
     Citation,
     NoteLink,
+    Typst,
 }
 
 pub struct Item {
@@ -23,6 +24,10 @@ pub struct Item {
     /// What to select within `insert` afterwards. Without it the caret lands
     /// after the text.
     pub selection: Option<Range<usize>>,
+    /// The other placeholders in `insert`, which Tab selects in order.
+    pub stops: Vec<Range<usize>>,
+    /// Where the replaced text starts, when an answer knows better than `find`.
+    pub from: Option<usize>,
 }
 
 /// What a provider can complete at the caret.
@@ -37,11 +42,27 @@ pub struct Query {
     pub text: String,
     /// The popup is opening, rather than following typing.
     pub opening: bool,
+    /// The whole text and the caret, as of this query.
+    pub document: String,
+    pub caret: usize,
+    /// The user opened the popup with ⌃Space.
+    pub asked: bool,
+}
+
+/// How far a provider should look for something to complete.
+#[derive(Clone, Copy)]
+pub enum Reach {
+    /// Only where typing opens the popup by itself.
+    Typed,
+    /// Anywhere: the user asked.
+    Asked,
+    /// Also wherever the provider's popup, open from this byte, can go on.
+    Open(usize),
 }
 
 pub trait Provider {
     fn kind(&self) -> CompletionKind;
-    fn find(&self, text: &str, caret: usize) -> Option<Found>;
+    fn find(&self, text: &str, caret: usize, reach: Reach) -> Option<Found>;
     fn items(&self, query: Query, cx: &mut App) -> Task<Vec<Item>>;
 }
 
@@ -51,6 +72,8 @@ pub struct Completion {
     pub range: Range<usize>,
     pub provider: Rc<dyn Provider>,
     pub query: String,
+    /// Opened with ⌃Space.
+    pub asked: bool,
     pub items: Vec<Item>,
     pub selected: usize,
     /// The running query. Replacing it drops its answer.
@@ -59,8 +82,8 @@ pub struct Completion {
 }
 
 impl Completion {
-    pub fn new(provider: Rc<dyn Provider>, found: Found) -> Self {
-        Self { kind: provider.kind(), range: found.range, provider, query: found.query, items: vec![], selected: 0, pending: None, scroll: UniformListScrollHandle::new() }
+    pub fn new(provider: Rc<dyn Provider>, found: Found, asked: bool) -> Self {
+        Self { kind: provider.kind(), range: found.range, provider, query: found.query, asked, items: vec![], selected: 0, pending: None, scroll: UniformListScrollHandle::new() }
     }
 
     pub fn select(&mut self, index: usize) {

@@ -1,16 +1,16 @@
 //! The Typst source editor: one virtualized list row per logical line, soft
 //! wrapped, with the selection and caret painted by each row.
 
-use crate::completion::{Completion, CompletionKind, Found, Item, Provider, Query};
+use crate::completion::{Completion, CompletionKind, Found, Item, Provider, Query, Reach};
 use crate::session::DocumentSession;
 use crate::text::{CaretMark, LineMarks, PaintedLine, Shaped, from_utf16, paint_line, plain_newlines, range_from_utf16, range_to_utf16, request_line, to_utf16};
 use crate::theme::{self, MONO_FONT, Theme, c, craft};
 use crate::ui::{MENU_PAD_Y, menu_row, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, time::Duration};
 use thesio_core::buffer::{Buffer, Change, EditKind};
 use thesio_core::bibliography;
-use thesio_core::compiler::Compilation;
+use thesio_core::ide::{Hover, word_around};
 use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
@@ -25,7 +25,7 @@ actions!(
     [Backspace, Delete, DeleteWordLeft, DeleteWordRight, Left, Right, Up, Down, WordLeft, WordRight, LineStart, LineEnd,
      DocStart, DocEnd, SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart,
      SelectLineEnd, SelectAll, Copy, Cut, Paste, Undo, Redo, Enter, Tab, CompletionUp, CompletionDown, CompletionAccept,
-     CompletionDismiss, CompletionTrigger]
+     CompletionDismiss, CompletionTrigger, HoverDismiss]
 );
 
 pub fn bind_keys(cx: &mut App) {
@@ -69,6 +69,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", CompletionAccept, COMPLETING),
         KeyBinding::new("tab", CompletionAccept, COMPLETING),
         KeyBinding::new("escape", CompletionDismiss, COMPLETING),
+        KeyBinding::new("escape", HoverDismiss, Some("SourceEditor && hovering")),
     ]);
 }
 
@@ -76,6 +77,8 @@ const COMPLETING: Option<&str> = Some("SourceEditor && completing");
 /// Rows the popup shows at once; the rest scroll.
 const COMPLETION_ROWS: usize = 6;
 const COMPLETION_ROW_H: f32 = 42.;
+const HOVER_DELAY: Duration = Duration::from_millis(350);
+const HOVER_MAX_H: f32 = 220.;
 
 pub enum SourceEvent {
     Changed,
@@ -103,14 +106,13 @@ pub struct Decoration {
     pub color: Hsla,
 }
 
-impl Decoration {
-    fn moved(&mut self, change: &Change) -> bool {
-        if self.range.end <= change.range.start { return true; }
-        if self.range.start < change.range.end { return false; }
-        let (removed, added) = (change.range.len(), change.new_len);
-        self.range = self.range.start + added - removed..self.range.end + added - removed;
-        true
-    }
+/// Moves `range` with an edit around it. False when the edit reached into it.
+fn follow(range: &mut Range<usize>, change: &Change) -> bool {
+    if range.end <= change.range.start { return true; }
+    if range.start < change.range.end { return false; }
+    let (removed, added) = (change.range.len(), change.new_len);
+    *range = range.start + added - removed..range.end + added - removed;
+    true
 }
 
 /// The lines of the last frame, kept whole until the next one paints, so
@@ -190,6 +192,14 @@ struct Reveal {
     frame: u64,
 }
 
+/// The word under the pointer, and what is known about it once that arrives.
+struct Pointed {
+    word: Range<usize>,
+    shown: Option<Hover>,
+    /// Waits out the delay, then asks. Replacing it drops the question.
+    _pending: Option<Task<()>>,
+}
+
 pub struct SourceEditor {
     buffer: Buffer,
     /// Highlight as Typst; other text files stay plain.
@@ -213,10 +223,13 @@ pub struct SourceEditor {
     completion: Option<Completion>,
     /// The `@` whose popup was accepted or dismissed: it stays closed there.
     settled: Option<usize>,
+    /// Placeholders of an accepted snippet still ahead of Tab. Any caret move
+    /// other than Tab ends them.
+    stops: Vec<Range<usize>>,
+    pointed: Option<Pointed>,
     /// Sorted, and not overlapping.
     decorations: Vec<Decoration>,
-    /// This text's compiles. Paper notes have none yet: `DocumentSession::without_pages`
-    /// makes one, with the note as its own main file.
+    /// This text's compiles, which answer hover. Only Typst has them.
     session: Option<Entity<DocumentSession>>,
 }
 
@@ -231,7 +244,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { reveal: None, buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, providers, completion_w: 380., completion: None, settled: None, decorations: vec![], session: None };
+        let mut editor = Self { reveal: None, buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, providers, completion_w: 380., completion: None, settled: None, stops: vec![], pointed: None, decorations: vec![], session: None };
         editor.refold();
         editor
     }
@@ -278,17 +291,10 @@ impl SourceEditor {
     }
 
     /// The byte under `position` if the pointer is on text itself, for hover.
-    #[expect(dead_code, reason = "the first caller is hover")]
-    pub fn text_at(&self, position: Point<Pixels>) -> Option<usize> {
+    fn text_at(&self, position: Point<Pixels>) -> Option<usize> {
         let painted = self.painted.borrow();
         let (line, row) = painted.lines.iter().find(|(_, row)| row.bounds.contains(&position))?;
         Some(self.buffer.line_range(*line).start + row.text_at(position)?)
-    }
-
-    /// The newest compile of this text, for autocomplete, hover, and diagnostics.
-    #[expect(dead_code, reason = "the first reader is Typst autocomplete")]
-    pub fn compilation(&self, cx: &App) -> Option<Arc<Compilation>> {
-        self.session.as_ref()?.read(cx).newest().cloned()
     }
 
     /// Moves the caret, as when a diagnostic is clicked.
@@ -373,7 +379,9 @@ impl SourceEditor {
     fn text_changed(&mut self, change: Change) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();
-        self.decorations.retain_mut(|decoration| decoration.moved(&change));
+        self.decorations.retain_mut(|decoration| follow(&mut decoration.range, &change));
+        self.stops.retain_mut(|stop| follow(stop, &change));
+        self.pointed = None;
         self.splice_rows(change.lines, change.new_lines);
     }
 
@@ -392,7 +400,13 @@ impl SourceEditor {
     fn refresh_completion(&mut self, trigger: Trigger, cx: &mut Context<Self>) {
         let (text, caret) = (self.buffer.text(), self.buffer.caret());
         let plain = self.typst && self.buffer.sel.is_empty() && self.marked.is_none();
-        let found: Option<(Rc<dyn Provider>, Found)> = plain.then(|| self.providers.iter().find_map(|provider| Some((provider.clone(), provider.find(text, caret)?)))).flatten();
+        let open = self.completion.as_ref().map(|open| (open.kind, open.range.start));
+        let reach = |provider: &Rc<dyn Provider>| match open {
+            _ if trigger == Trigger::Asked => Reach::Asked,
+            Some((kind, start)) if kind == provider.kind() => Reach::Open(start),
+            _ => Reach::Typed,
+        };
+        let found: Option<(Rc<dyn Provider>, Found)> = plain.then(|| self.providers.iter().find_map(|provider| Some((provider.clone(), provider.find(text, caret, reach(provider))?)))).flatten();
         let Some((provider, found)) = found else {
             self.settled = None;
             self.completion = None;
@@ -401,7 +415,7 @@ impl SourceEditor {
         if trigger == Trigger::Asked { self.settled = None; }
         if self.settled == Some(found.range.start) { return; }
         match &mut self.completion {
-            Some(open) if open.kind == provider.kind() => {
+            Some(open) if open.kind == provider.kind() && open.range.start == found.range.start => {
                 open.range = found.range;
                 if open.query != found.query {
                     open.query = found.query;
@@ -411,7 +425,7 @@ impl SourceEditor {
             }
             _ if trigger == Trigger::Moved => self.completion = None,
             _ => {
-                self.completion = Some(Completion::new(provider, found));
+                self.completion = Some(Completion::new(provider, found, trigger == Trigger::Asked));
                 self.query_completion(true, cx);
             }
         }
@@ -419,7 +433,8 @@ impl SourceEditor {
 
     fn query_completion(&mut self, opening: bool, cx: &mut Context<Self>) {
         let Some(open) = &mut self.completion else { return };
-        let answer = open.provider.items(Query { text: open.query.clone(), opening }, cx);
+        let query = Query { text: open.query.clone(), opening, document: self.buffer.text().to_string(), caret: self.buffer.caret(), asked: open.asked };
+        let answer = open.provider.items(query, cx);
         open.pending = Some(cx.spawn(async move |this, cx| {
             let items = answer.await;
             let _ = this.update(cx, |this, cx| this.completion_answered(items, cx));
@@ -437,11 +452,12 @@ impl SourceEditor {
         if self.completion.as_ref().is_none_or(|open| index >= open.items.len()) { return; }
         let Some(mut open) = self.completion.take() else { return };
         let item = open.items.swap_remove(index);
-        let at = open.range.start;
-        self.settled = Some(at);
+        self.settled = Some(open.range.start);
+        let at = item.from.unwrap_or(open.range.start);
         let sel = item.selection.map_or(at + item.insert.len()..at + item.insert.len(), |sel| at + sel.start..at + sel.end);
-        let change = self.buffer.replace_selecting(open.range, &item.insert, sel, EditKind::Other);
+        let change = self.buffer.replace_selecting(at..open.range.end, &item.insert, sel, EditKind::Other);
         self.changed(change, Trigger::Moved, cx);
+        self.stops = item.stops.iter().map(|stop| at + stop.start..at + stop.end).collect();
         cx.emit(SourceEvent::Completed(open.kind));
     }
 
@@ -501,6 +517,46 @@ impl SourceEditor {
         Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
     }
 
+    /// Follows the pointer: on a new word it waits, then asks what that word is.
+    fn point_at(&mut self, at: Option<usize>, cx: &mut Context<Self>) {
+        let Some(at) = at.filter(|_| self.session.is_some() && self.completion.is_none()) else { return self.stop_pointing(cx) };
+        if self.pointed.as_ref().is_some_and(|pointed| pointed.word.contains(&at)) { return; }
+        let pending = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOVER_DELAY).await;
+            let Ok(Some(answer)) = this.update(cx, |this, cx| {
+                let session = this.session.as_ref()?.read(cx);
+                Some(session.hover(this.buffer.text().to_string(), at, cx))
+            }) else { return };
+            let shown = answer.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(pointed) = &mut this.pointed { pointed.shown = shown; }
+                cx.notify();
+            });
+        });
+        self.stop_pointing(cx);
+        self.pointed = Some(Pointed { word: word_around(self.buffer.text(), at), shown: None, _pending: Some(pending) });
+    }
+
+    fn stop_pointing(&mut self, cx: &mut Context<Self>) {
+        if self.pointed.take().is_some_and(|pointed| pointed.shown.is_some()) { cx.notify(); }
+    }
+
+    /// Esc: this word stays quiet until the pointer moves to another.
+    fn hover_dismiss(&mut self, _: &HoverDismiss, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pointed) = &mut self.pointed { (pointed.shown, pointed._pending) = (None, None); }
+        cx.notify();
+    }
+
+    fn render_hover(&self) -> Option<AnyElement> {
+        let pointed = self.pointed.as_ref().filter(|_| self.completion.is_none())?;
+        let hover = pointed.shown.as_ref()?;
+        let at = self.painted_at(pointed.word.start)?;
+        let body = div().text_size(px(12.)).line_height(px(17.));
+        let body = if hover.code { body.font_family(MONO_FONT).child(hover.text.clone()) } else { body.child(ui_text(hover.text.clone())) };
+        let card = popover().max_w(px(self.completion_w)).max_h(px(HOVER_MAX_H)).overflow_hidden().px(px(10.)).py(px(6.)).shadow(theme::shadow_panel()).child(body);
+        Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(card)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
+    }
+
     fn request_reveal(&mut self, margin: f32) {
         self.reveal = Some(Reveal { margin, jump: Jump::Unmoved, frame: self.painted.borrow().frame });
     }
@@ -538,6 +594,7 @@ impl SourceEditor {
     /// Every caret move that is not an edit ends here. It stays out of the
     /// fold, and with `reveal` it comes into view.
     fn move_caret(&mut self, place: Place, reveal: bool, cx: &mut Context<Self>) {
+        self.stops.clear();
         let (sel, caret) = (self.buffer.sel.clone(), self.buffer.caret());
         let outside = |editor: &Self, offset| editor.folded.as_ref().map_or(offset, |fold| fold.outside(offset, caret));
         match place {
@@ -633,6 +690,7 @@ impl SourceEditor {
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
         self.completion = None;
+        self.stop_pointing(cx);
         let caret = self.buffer.caret();
         let at = self.offset_at(event.position);
         let offset = self.folded.as_ref().map_or(at, |fold| fold.outside(at, caret));
@@ -652,6 +710,7 @@ impl SourceEditor {
 
     fn on_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.selecting { self.move_caret(Place::Extend(self.offset_at(event.position)), false, cx); }
+        else { self.point_at(self.text_at(event.position), cx); }
     }
 
     fn on_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) { self.selecting = false; }
@@ -818,7 +877,13 @@ impl SourceEditor {
         let indent: String = self.buffer.text()[start..self.buffer.sel.start.max(start)].chars().take_while(|ch| *ch == ' ' || *ch == '\t').collect();
         self.insert(&format!("\n{indent}"), EditKind::Other, cx);
     }
-    fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) { self.insert("  ", EditKind::Typing, cx); }
+    fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.stops.is_empty() { return self.insert("  ", EditKind::Typing, cx); }
+        let mut rest = std::mem::take(&mut self.stops);
+        let next = rest.remove(0);
+        self.move_caret(Place::Select(next), true, cx);
+        self.stops = rest;
+    }
 }
 
 impl EntityInputHandler for SourceEditor {
@@ -873,9 +938,11 @@ impl Render for SourceEditor {
         self.painted.borrow_mut().begin_frame();
         if self.reveal.is_some() { cx.on_next_frame(window, |editor, _, cx| editor.settle_reveal(cx)); }
         let completion = self.render_completion(window, cx);
+        let hover = self.render_hover();
         let mut context = KeyContext::new_with_defaults();
         context.add("SourceEditor");
         if completion.is_some() { context.add("completing"); }
+        if hover.is_some() { context.add("hovering"); }
         let entity = cx.entity();
         let focus = self.focus.clone();
         div()
@@ -920,9 +987,12 @@ impl Render for SourceEditor {
             .on_action(cx.listener(|e, _: &CompletionDown, _, cx| e.completion_step(true, cx)))
             .on_action(cx.listener(Self::completion_accept))
             .on_action(cx.listener(Self::completion_dismiss))
+            .on_action(cx.listener(Self::hover_dismiss))
             .on_action(cx.listener(|e, _: &CompletionTrigger, _, cx| e.refresh_completion(Trigger::Asked, cx)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_down))
             .on_mouse_move(cx.listener(Self::on_move))
+            .on_hover(cx.listener(|e, hovered: &bool, _, cx| if !hovered { e.stop_pointing(cx); }))
+            .on_scroll_wheel(cx.listener(|e, _: &ScrollWheelEvent, _, cx| e.stop_pointing(cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_up))
             .child(div().size_full().pl(px(PAD_X)).pr(px(PAD_X)).pt(px(16.)).child(list(self.list.clone(), cx.processor(Self::render_line)).size_full().pb(px(END_PADDING))))
@@ -930,6 +1000,7 @@ impl Render for SourceEditor {
                 window.handle_input(&focus, ElementInputHandler::new(bounds, entity.clone()), cx);
             }).absolute().size_full())
             .children(completion)
+            .children(hover)
     }
 }
 

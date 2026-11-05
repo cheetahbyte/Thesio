@@ -3,10 +3,12 @@
 use super::viewer::{PANEL_W, PaperPanel};
 use crate::app::Workspace;
 use crate::citations::CitationKeys;
-use crate::completion::CompletionKind;
+use crate::completion::{CompletionKind, Provider};
 use crate::document::Edit;
+use crate::session::DocumentSession;
 use thesio_core::library::{NOTES_DIR, note_file, paper_file};
 use crate::source::{SourceEditor, SourceEvent};
+use crate::typst_code::TypstCode;
 use crate::ui::ToastKind;
 use gpui::*;
 use std::rc::Rc;
@@ -17,6 +19,8 @@ use thesio_core::paths::moved;
 pub(crate) struct Notes {
     pub(crate) id: String,
     pub(crate) editor: Entity<SourceEditor>,
+    /// Its compiles, for completion and hover: notes have no `Preview`.
+    session: Entity<DocumentSession>,
     unsaved: bool,
     /// Why the last save failed, for the Save failed dialog.
     error: Option<String>,
@@ -29,8 +33,15 @@ impl PaperPanel {
         self.notes.as_ref().filter(|notes| notes.id == id).map(|notes| notes.editor.clone())
     }
 
-    pub(crate) fn path_changed(&mut self, old: &str, new: &str) {
-        if let Some(notes) = &mut self.notes && let Some(path) = moved(&notes.id, old, new) { notes.id = path; }
+    pub(crate) fn path_changed(&mut self, old: &str, new: &str, cx: &mut App) {
+        let Some(notes) = &mut self.notes else { return };
+        let Some(path) = moved(&notes.id, old, new) else { return };
+        notes.id = path.clone();
+        let text = notes.editor.read(cx).text().to_string();
+        notes.session.update(cx, |session, cx| {
+            session.set_path(path.clone(), path);
+            session.set_text(text, cx);
+        });
     }
 }
 
@@ -54,23 +65,33 @@ impl Workspace {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not read the notes: {e}"), cx);
             }
         };
-        // Paper notes have no path of their own here, so they offer no note links.
+        // A note is its own main file. Paper notes have no path of their own
+        // here, so they offer no note links.
+        let root = self.store.borrow().root().to_path_buf();
+        let session = cx.new(|_| DocumentSession::without_pages(root, note.clone(), note.clone()));
         let workspace = cx.weak_entity();
+        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace)), Rc::new(TypstCode::new(session.downgrade()))];
         let editor = cx.new(|cx| {
-            let mut editor = SourceEditor::new(text, true, vec![Rc::new(CitationKeys(workspace))], cx);
+            let mut editor = SourceEditor::new(text.clone(), true, providers, cx);
             // Inside the panel: the viewer would hide what crosses onto it.
             editor.completion_w = PANEL_W - 40.;
+            editor.set_session(session.clone());
             editor
         });
+        session.update(cx, |session, cx| session.set_text(text, cx));
         let subscription = cx.subscribe(&editor, |w, editor, event: &SourceEvent, cx| {
             let Some(note) = w.papers.panel.notes.as_ref().map(|notes| notes.id.clone()) else { return };
             match event {
-                SourceEvent::Changed => w.schedule_notes_save(cx),
+                SourceEvent::Changed => {
+                    let text = editor.read(cx).text().to_string();
+                    if let Some(notes) = &w.papers.panel.notes { notes.session.update(cx, |session, cx| session.set_text(text, cx)); }
+                    w.schedule_notes_save(cx);
+                }
                 SourceEvent::Completed(CompletionKind::Citation) => w.link_note_library(&note, &editor, cx),
                 SourceEvent::Completed(_) | SourceEvent::Caret | SourceEvent::Follow(_) => {}
             }
         });
-        self.papers.panel.notes = Some(Notes { id: note, editor, unsaved: false, error: None, save_task: None, _subscription: subscription });
+        self.papers.panel.notes = Some(Notes { id: note, editor, session, unsaved: false, error: None, save_task: None, _subscription: subscription });
         self.papers.panel.comment = None;
     }
 

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thesio_core::compiler::{Compilation, Compiler, Diagnostic, render_changed};
+use thesio_core::ide::{Hover, Newest, Suggestion};
 use thesio_core::packages::PackageSpec;
 use thesio_core::project::{LaunchTarget, launch_target};
 
@@ -142,6 +143,8 @@ pub struct DocumentSession {
     took: Option<Duration>,
     /// Counts published results.
     published: u64,
+    /// Completion and hover take turns here, off the main thread.
+    questions: Arc<Newest>,
 }
 
 impl EventEmitter<SessionEvent> for DocumentSession {}
@@ -155,7 +158,7 @@ impl DocumentSession {
     /// A session for an editor with no `Preview`, such as paper notes: the
     /// document compiles and nothing is rendered.
     pub fn without_pages(root: PathBuf, path: String, main: String) -> Self {
-        Self { root, compiler: Default::default(), path, main, rendered: false, text: String::new(), downloading: vec![], latest: Default::default(), first: None, delivery: None, newest: None, document: None, pages: Default::default(), diagnostics: Default::default(), took: None, published: 0 }
+        Self { root, compiler: Default::default(), path, main, rendered: false, text: String::new(), downloading: vec![], latest: Default::default(), first: None, delivery: None, newest: None, document: None, pages: Default::default(), diagnostics: Default::default(), took: None, published: 0, questions: Default::default() }
     }
 
     pub fn path(&self) -> &str { &self.path }
@@ -163,12 +166,29 @@ impl DocumentSession {
     pub fn diagnostics(&self) -> Rc<Vec<Diagnostic>> { self.diagnostics.clone() }
     pub fn took(&self) -> Option<Duration> { self.took }
     pub fn published(&self) -> u64 { self.published }
-    /// The newest result, which has no document if that compile failed.
-    pub fn newest(&self) -> Option<&Arc<Compilation>> { self.newest.as_ref() }
     /// The last result with a document, for moving between pages and source.
     pub fn document(&self) -> Option<&Arc<Compilation>> { self.document.as_ref() }
     /// The document's words by file, as of the last good compile.
     pub fn words(&self) -> &[(String, usize)] { self.document.as_ref().map_or(&[], |document| &document.words) }
+
+    /// What answers questions about text being typed: the last good compile,
+    /// since one that failed stopped before reading most of what is imported.
+    fn knowledge(&self) -> Option<Arc<Compilation>> { self.document.clone().or_else(|| self.newest.clone()) }
+
+    /// What can complete `text` at `caret`, which a newer question supersedes.
+    pub fn complete(&self, text: String, caret: usize, explicit: bool, cx: &App) -> Task<Vec<Suggestion>> {
+        let Some(compilation) = self.knowledge() else { return Task::ready(vec![]) };
+        let (path, questions, ticket) = (self.path.clone(), self.questions.clone(), self.questions.ticket());
+        cx.background_spawn(async move { questions.run(ticket, || compilation.complete(&path, &text, caret, explicit)).unwrap_or_default() })
+    }
+
+    /// What is known about the byte at `offset` of `text`, which a newer
+    /// question supersedes.
+    pub fn hover(&self, text: String, offset: usize, cx: &App) -> Task<Option<Hover>> {
+        let Some(compilation) = self.knowledge() else { return Task::ready(None) };
+        let (path, questions, ticket) = (self.path.clone(), self.questions.clone(), self.questions.ticket());
+        cx.background_spawn(async move { questions.run(ticket, || compilation.hover(&path, &text, offset)).flatten() })
+    }
 
     /// The document this file compiles within.
     pub fn main(&self) -> &str { &self.main }

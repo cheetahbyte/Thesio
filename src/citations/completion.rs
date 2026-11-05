@@ -2,7 +2,7 @@
 
 use super::table::DEFAULT_SORT;
 use crate::app::Workspace;
-use crate::completion::{CompletionKind, Found, Item, Provider, Query};
+use crate::completion::{CompletionKind, Found, Item, Provider, Query, Reach};
 use gpui::*;
 use thesio_core::references::citation_at;
 
@@ -11,7 +11,7 @@ pub struct CitationKeys(pub WeakEntity<Workspace>);
 impl Provider for CitationKeys {
     fn kind(&self) -> CompletionKind { CompletionKind::Citation }
 
-    fn find(&self, text: &str, caret: usize) -> Option<Found> {
+    fn find(&self, text: &str, caret: usize, _: Reach) -> Option<Found> {
         let range = citation_at(text, caret)?;
         Some(Found { query: text[range.start + 1..caret].to_lowercase(), range })
     }
@@ -35,6 +35,8 @@ impl Workspace {
             title: row.label().to_string(),
             info: None,
             selection: None,
+            stops: vec![],
+            from: None,
         }).collect()
     }
 }

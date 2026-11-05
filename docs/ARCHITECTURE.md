@@ -25,11 +25,13 @@ main.rs: window
     source.rs: SourceEditor, the open file's text
       text.rs: shaping and painting a line, shared with TextField
       completion.rs: what a provider of the popup's items answers
+      typst_code.rs: the provider of Typst code
       buffer.rs: text, selection, undo [core]
       syntax.rs: highlighting from Typst's parser [core]
     preview.rs: Preview, the view of the pages and diagnostics
     session.rs: DocumentSession, one document's compiles and its newest result
       compiler.rs: the Typst World, PDF export, page images [core]
+      ide.rs: completion and hover from typst-ide [core]
 ```
 
 ## Core modules
@@ -38,6 +40,7 @@ main.rs: window
 |---|---|
 | `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
+| `ide.rs` | Asks `typst-ide` what can follow the caret and what is under the pointer. See [Completion](#completion). |
 | `packages.rs` | Finds Typst packages on disk and fetches missing ones. See [Packages](#packages). |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
@@ -63,7 +66,7 @@ main.rs: window
 3. `Workspace` passes the text to the `DocumentSession` and schedules a save 500 ms later.
 4. `DocumentSession` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `session::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
 5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
-6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last. The editor holds the same session and reads its newest result from `SourceEditor::compilation`. An editor with no `Preview`, such as paper notes, can get a session from `DocumentSession::without_pages`, which compiles and renders no pages.
+6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last. The editor holds the same session, which answers completion and hover. An editor with no `Preview`, such as paper notes, gets a session from `DocumentSession::without_pages`, which compiles and renders no pages, with the note as its own main file.
 
 A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
 
@@ -85,11 +88,17 @@ Importing a package is the only network use a document can trigger. It requests 
 
 Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
 
-Rows also paint `Decoration`s: an underline over a precise byte range, in a colour, which moves with edits around it. `SourceEditor::set_decorations` sets them for diagnostics, and `SourceEditor::text_at` says which byte the pointer is on, if any, for hover. Neither has a caller yet.
+Rows also paint `Decoration`s: an underline over a precise byte range, in a colour, which moves with edits around it. `SourceEditor::set_decorations` sets them for diagnostics, which do not call it yet.
 
 ## Completion
 
-`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, and optional `info` shown under the list. Both ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
+`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, the other placeholders that Tab selects in order, and optional `info` shown under the list. Citations and note links ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
+
+`TypstCode` in `typst_code.rs` is the provider of Typst code, and it comes last in the list, so `@` and `[[` stay with the other two. Typing opens it after a `#` or the dot of a field access, which `CodeStart` tells from a dot in prose. It keeps the parsed text, so that keystroke costs an edit and not a parse. ⌃Space opens it anywhere, and `Reach` says which of these `find` is answering. `typst_ide` knows the replaced range only once it answers, so an `Item` can override where `find` said it starts.
+
+`typst_ide` reads the text through a compile's `World`, and the text is usually newer than the compile. `Compilation::complete` and `Compilation::hover` take the current text and stand it in for its file, in a copy of the world. `DocumentSession` asks the last compile that had a document, since one that failed on a half-typed line stopped before reading what the document imports. A question may compile the whole document to find a value, so it runs on a background thread on a large stack. `Newest` runs one at a time and skips any that a newer one has overtaken. `typst_ide` finds no call inside a `(` nobody closed, or a string with no closing quote, and the editor closes neither, so `complete` adds what is missing after the caret to the text it asks about. It also matches what is typed, which `typst_ide` leaves to its caller, and continues a snippet's lines at the line's indent.
+
+Hover follows the pointer through `SourceEditor::text_at`. A pointer on a new word waits 350 ms and then asks the session. The popover closes when the pointer leaves the word or the editor, on a scroll, a click, or an edit, and with Esc, after which that word stays quiet until the pointer moves to another.
 
 ## Overlays
 
@@ -154,6 +163,9 @@ The first citation in a document embeds a block unless one already covers it. A 
 ## Limits
 
 - Fonts are the set bundled with Typst.
+- `@preview` package names are not offered in `#import`: that needs the package index, which no question may fetch.
+- Fields after a dot come from evaluating the document, so an error earlier in the file leaves `typst_ide` no value to list. Names in the standard library are still offered.
+- Paper notes compile on their own, so they see what they import but not a document that includes them.
 - A failed package download is tried again only by a compile, so a document left untouched keeps showing the error.
 - An editor with no `Preview`, such as paper notes, downloads packages without showing it.
 - A rename can break code that uses a module by its file name, as in `#import "a.typ"` followed by `a.title`.
