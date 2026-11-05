@@ -4,10 +4,10 @@
 
 use crate::bibliography::LIBRARY_FILE;
 use crate::biblatex;
-use crate::history;
-use crate::lookup::PaperIds;
+use crate::history::Versions;
+use crate::identifier::PaperIds;
+use crate::paths::{base_name, document_name, natural_cmp, write_atomic};
 use crate::source_type::{self, DOI, Field, MISC, Slot, SourceType, read, write};
-use crate::store::{natural_cmp, write_atomic};
 use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::collections::BTreeSet;
@@ -22,8 +22,8 @@ pub const NOTES_DIR: &str = "notes";
 
 /// The notes document that goes with paper `id`, or with `paper_file(key)`.
 pub fn note_file(paper: &str) -> String {
-    let name = paper.rsplit('/').next().unwrap_or(paper);
-    format!("{NOTES_DIR}/{}.typ", name.strip_suffix(".pdf").unwrap_or(name))
+    let name = base_name(paper);
+    format!("{NOTES_DIR}/{}", document_name(name.strip_suffix(".pdf").unwrap_or(name)))
 }
 
 pub fn paper_file(key: &str) -> String {
@@ -89,8 +89,9 @@ impl Library {
         Ok(Self { path, entries, parsed })
     }
 
-    fn history_dir(&self) -> PathBuf {
-        history::dir(self.path.parent().unwrap_or(Path::new("")), LIBRARY_FILE)
+    /// The library's earlier versions.
+    pub fn versions(&self) -> Versions {
+        Versions::of(self.path.parent().unwrap_or(Path::new("")), LIBRARY_FILE)
     }
 
     /// The file as it stands.
@@ -98,24 +99,12 @@ impl Library {
         std::fs::read_to_string(&self.path).unwrap_or_default()
     }
 
-    /// The times of the library's versions, newest first.
-    pub fn versions(&self) -> Vec<u64> {
-        history::list(&self.history_dir())
-    }
-
-    pub fn version(&self, time: u64) -> Result<String> {
-        history::read(&self.history_dir(), time)
-    }
-
     /// Keeps the file as it stands before a change. A run of quick edits keeps
     /// the state before the first, unless `now`.
     fn keep_version(&self, now: bool) -> Result<()> {
-        let text = self.text();
-        let dir = self.history_dir();
-        let time = crate::time::now();
-        let recent = history::list(&dir).first().is_some_and(|last| time.saturating_sub(*last) < history::INTERVAL);
-        if text.is_empty() || (recent && !now) { return Ok(()); }
-        history::save(&dir, &text, time).map(|_| ())
+        let (text, versions) = (self.text(), self.versions());
+        if text.is_empty() { return Ok(()); }
+        (if now { versions.keep(&text) } else { versions.keep_paced(&text) }).map(|_| ())
     }
 
     /// Puts a version back, keeping what it replaces. It is checked first, so
@@ -451,13 +440,13 @@ mod tests {
     fn a_deleted_entry_can_come_back_from_a_version() {
         let mut library = library("versions");
         library.import_biblatex(ZOTERO).unwrap();
-        let _ = std::fs::remove_dir_all(library.history_dir());
+        let _ = std::fs::remove_dir_all(library.versions().dir);
         let before = library.text();
         library.delete_entries(&["knuth1984".to_string()]).unwrap();
         assert!(!library.contains("knuth1984"));
-        let versions = library.versions();
+        let versions = library.versions().list();
         assert_eq!(versions.len(), 1);
-        assert_eq!(library.version(versions[0]).unwrap(), before);
+        assert_eq!(library.versions().read(versions[0]).unwrap(), before);
         assert!(library.restore("not: [valid").is_err());
         assert!(!library.contains("knuth1984"), "a bad version changes nothing");
         library.restore(&before).unwrap();

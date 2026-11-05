@@ -35,7 +35,7 @@ struct Overview {
 pub struct Home { overview: Option<(u64, Overview)> }
 
 fn visited(e: &Entry) -> u64 {
-    if e.meta.opened > 0 { e.meta.opened } else { e.meta.modified }
+    if e.meta.opened > 0 { e.meta.opened } else { e.modified }
 }
 
 /// The words of a document's prose, roughly: Typst set-up and comments stay out.
@@ -67,7 +67,7 @@ fn tile(value: usize, label: &'static str) -> Div {
 impl Workspace {
     fn overview_stamp(&self) -> u64 {
         let mut hash = DefaultHasher::new();
-        for e in &self.entries { (&e.id, e.meta.modified, e.body.len()).hash(&mut hash); }
+        for e in &self.entries { (&e.id, e.modified, e.body.len()).hash(&mut hash); }
         for row in self.citations.library.iter().flat_map(|library| library.rows()) { (row.key, row.title).hash(&mut hash); }
         hash.finish()
     }

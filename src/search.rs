@@ -174,7 +174,7 @@ pub(crate) fn extra_line(e: &Entry) -> Div {
     if e.meta.opened > 0 {
         extra.push(extra_segment(Some(Icon::Show), format!("Opened {}", format_visit(e.meta.opened))));
     }
-    extra.push(extra_segment(Some(Icon::Edit), format!("Modified {}", format_visit(e.meta.modified))));
+    extra.push(extra_segment(Some(Icon::Edit), format!("Modified {}", format_visit(e.modified))));
     let last = extra.len() - 1;
     let extra = extra.into_iter().enumerate().flat_map(|(i, seg)| {
         let seg = if i == last { seg.flex_shrink().min_w_0().overflow_hidden() } else { seg };
@@ -342,7 +342,7 @@ impl Workspace {
         let q = self.query(cx);
         if q.is_empty() {
             let mut recent: Vec<&Entry> = self.entries.iter().filter(|e| e.typst).collect();
-            recent.sort_by_key(|e| std::cmp::Reverse(e.meta.opened.max(e.meta.modified)));
+            recent.sort_by_key(|e| std::cmp::Reverse(e.meta.opened.max(e.modified)));
             recent.truncate(RECENT);
             return recent;
         }

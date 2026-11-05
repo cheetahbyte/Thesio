@@ -1,7 +1,8 @@
 //! A document's bibliography, read from its text: the generated block that
 //! carries its cited entries, the `#bibliography` call, its style and its mode.
 
-use crate::typst_source::{args_of, callee, dir_of, escape_string, quoted, relative, string, vault_path, walk};
+use crate::paths::dir_parts;
+use crate::typst_source::{args_of, callee, escape_string, quoted, relative, string, vault_path, walk};
 use std::ops::Range;
 use typst::syntax::ast::{AstNode, Str};
 use typst::syntax::{LinkedNode, Source, SyntaxKind};
@@ -56,7 +57,7 @@ fn source_path(call: &LinkedNode, file: &str) -> Option<String> {
     let mut sources = args.children().flat_map(|arg| if arg.kind() == SyntaxKind::Array { arg.children().collect() } else { vec![arg] })
         .filter(|arg| arg.kind() == SyntaxKind::Str);
     let source = sources.next().filter(|_| sources.next().is_none())?;
-    vault_path(&dir_of(file), &string(&source)?)
+    vault_path(&dir_parts(file), &string(&source)?)
 }
 
 fn is_linked(call: &LinkedNode, file: &str) -> bool { source_path(call, file).as_deref() == Some(LIBRARY_FILE) }
@@ -153,7 +154,7 @@ pub fn embed(text: &str, yaml: &str) -> String {
 
 /// `text` with a `#bibliography` line for the library added at the end.
 pub fn link(text: &str, file: &str) -> String {
-    append(text, &format!("#bibliography({})\n", quoted(&relative(&dir_of(file), LIBRARY_FILE))))
+    append(text, &format!("#bibliography({})\n", quoted(&relative(&dir_parts(file), LIBRARY_FILE))))
 }
 
 /// `text` without its generated block or linked `#bibliography` line. A

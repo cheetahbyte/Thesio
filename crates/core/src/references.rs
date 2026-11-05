@@ -3,7 +3,8 @@
 //! touched, found with Typst's parser, so matching text in prose, comments, or
 //! ordinary strings is left alone.
 
-use crate::typst_source::{callee, cited_key, dir_of, escape_markup, in_plain_text, quoted, relative, string, vault_path, walk, with_hash};
+use crate::paths::{dir_parts, is_document};
+use crate::typst_source::{callee, cited_key, escape_markup, in_plain_text, quoted, relative, string, vault_path, walk, with_hash};
 use std::ops::Range;
 use typst::syntax::{LinkedNode, Side, Source, SyntaxKind, is_id_continue};
 
@@ -33,7 +34,7 @@ fn note_literal(node: &LinkedNode) -> Option<String> {
     let args = node.parent().filter(|parent| parent.kind() == SyntaxKind::Args)?;
     args.parent().filter(|call| call.kind() == SyntaxKind::FuncCall && callee(call).as_deref() == Some("link"))?;
     (args.children().find(|child| child.kind() == SyntaxKind::Str)?.offset() == node.offset()).then_some(())?;
-    string(node).filter(|literal| literal.ends_with(".typ"))
+    string(node).filter(|literal| is_document(literal))
 }
 
 /// A `#link` to another file in the vault.
@@ -50,7 +51,7 @@ pub struct NoteLink {
 /// The note links in `text`, a document at vault path `file`.
 pub fn note_links(text: &str, file: &str) -> Vec<NoteLink> {
     let source = Source::detached(text);
-    let dir = dir_of(file);
+    let dir = dir_parts(file);
     let mut links = vec![];
     walk(&LinkedNode::new(source.root()), &mut |node| {
         if node.kind() != SyntaxKind::Str { return; }
@@ -64,7 +65,7 @@ pub fn note_links(text: &str, file: &str) -> Vec<NoteLink> {
 
 /// The `#link` to write in `file` for a note: `#link("a/b.typ")[Title]`.
 pub fn note_link(file: &str, target: &str, title: &str) -> String {
-    format!("#link({})[{}]", quoted(&relative(&dir_of(file), target)), escape_markup(title))
+    format!("#link({})[{}]", quoted(&relative(&dir_parts(file), target)), escape_markup(title))
 }
 
 /// The `[[query` being written at `caret`, brackets included. Strings, raw
@@ -91,7 +92,7 @@ pub fn rewrite_paths(text: &str, old_file: &str, new_file: &str, moved: impl Fn(
             literals.push((node.range(), value));
         }
     });
-    let (old_dir, new_dir) = (dir_of(old_file), dir_of(new_file));
+    let (old_dir, new_dir) = (dir_parts(old_file), dir_parts(new_file));
     let mut out = text.to_string();
     let mut changed = false;
     for (range, literal) in literals.into_iter().rev() {

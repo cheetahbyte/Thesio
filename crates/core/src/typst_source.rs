@@ -59,13 +59,6 @@ pub(crate) fn with_hash(text: &str, node: &LinkedNode) -> Range<usize> {
     range.start - usize::from(text[..range.start].ends_with('#'))..range.end
 }
 
-/// The dir of a vault path, as path segments.
-pub(crate) fn dir_of(path: &str) -> Vec<&str> {
-    let mut parts: Vec<&str> = path.split('/').collect();
-    parts.pop();
-    parts
-}
-
 /// The vault path a path literal in `dir` points at, unless it leaves the
 /// vault. `@preview/…` is a package, and a URL has no place in the vault.
 pub(crate) fn vault_path(dir: &[&str], literal: &str) -> Option<String> {

@@ -6,6 +6,7 @@
 use crate::{app::{View, Workspace}, theme::{self, Theme}, ui};
 use crate::ui::{Icon, TitleBarExt, TipExt};
 use crate::sidebar as sb;
+use thesio_core::paths::{STATE_DIR, write_atomic};
 use gpui::{prelude::FluentBuilder, *};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock, RwLock};
@@ -38,7 +39,7 @@ impl Default for Preferences {
 }
 
 
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(".thesio/preferences.json") }
+fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(STATE_DIR).join("preferences.json") }
 
 pub fn load() {
     let p = std::fs::read(path()).ok().and_then(|b| serde_json::from_slice::<Preferences>(&b).ok()).unwrap_or_default();
@@ -85,14 +86,8 @@ pub fn prefs() -> Preferences {
 }
 
 fn save(p: &Preferences) -> anyhow::Result<()> {
-    use std::io::Write;
-    let root = crate::store::Store::root_dir().join(".thesio");
-    std::fs::create_dir_all(&root)?;
-    let tmp = root.join("preferences.json.tmp");
-    let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(&serde_json::to_vec_pretty(p)?)?;
-    f.sync_all()?;
-    std::fs::rename(tmp, path())?;
+    std::fs::create_dir_all(crate::store::Store::root_dir().join(STATE_DIR))?;
+    write_atomic(&path(), &serde_json::to_vec_pretty(p)?)?;
     apply(p.clone());
     Ok(())
 }

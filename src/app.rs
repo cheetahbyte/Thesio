@@ -9,6 +9,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
+use thesio_core::paths;
 use thesio_core::project::{self, Heading, Project};
 use thesio_core::references::note_links;
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
@@ -216,7 +217,6 @@ pub struct Workspace {
     /// The Version History dialog.
     pub history: Option<crate::history::History>,
     /// When each file last became a version, this session.
-    pub last_version: HashMap<String, u64>,
     pub search: Entity<TextField>,
     /// Keyboard highlight inside search results.
     pub search_sel: Option<usize>,
@@ -349,7 +349,6 @@ impl Workspace {
             preview: None,
             citations,
             history: None,
-            last_version: HashMap::new(),
             search,
             search_sel: None,
             paper_index: HashMap::new(),
@@ -402,18 +401,14 @@ impl Workspace {
             None => ws.new_doc(window, cx),
         }
         // Kept in the top bar (not just a toast): the user should notice.
-        let warnings = ws.store.take_warnings();
-        if !warnings.is_empty() {
-            let msg = warnings.iter().map(|s| crate::settings::diagnostic(s)).collect::<Vec<_>>().join("; ");
-            ws.show_toast_kind(ToastKind::Error, &msg, cx);
-            ws.status = SaveStatus::Failed(msg);
-        }
+        let warnings = ws.store.take_opening_warnings();
+        ws.show_warnings(&warnings, cx);
         ws
     }
 
     /// Most recently modified first.
     pub(crate) fn sort(&mut self) {
-        self.entries.sort_by_key(|e| std::cmp::Reverse(e.meta.modified));
+        self.entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     }
 
     pub fn query(&self, cx: &App) -> String {
@@ -452,7 +447,7 @@ impl Workspace {
             Ok(text) => text,
             Err(e) => {
                 // Binary files belong to the system's apps; scripted runs must not start any.
-                if !id.ends_with(".typ") && std::env::var_os("THESIO_SCRIPT").is_none() {
+                if !paths::is_document(id) && std::env::var_os("THESIO_SCRIPT").is_none() {
                     cx.open_with_system(&self.store.root().join(id));
                 } else {
                     self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {}", crate::settings::diagnostic(&e.to_string())), cx);
@@ -461,7 +456,7 @@ impl Workspace {
                 return false;
             }
         };
-        let typst = id.ends_with(".typ");
+        let typst = paths::is_document(id);
         let opened_text = text.clone();
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.root();
@@ -525,7 +520,7 @@ impl Workspace {
     /// Follows a rename or move: the entry list, and the open document if it
     /// or a folder above it changed path. Its editor and undo history stay.
     pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
-        let moved = self.current.as_deref().and_then(|c| (c == old).then(|| new.to_string()).or_else(|| c.strip_prefix(&format!("{old}/")).map(|rest| format!("{new}/{rest}"))));
+        let moved = self.current.as_deref().and_then(|c| paths::moved(c, old, new));
         if let Some(path) = moved {
             self.current = Some(path.clone());
             self.entries = self.store.list();
@@ -534,8 +529,7 @@ impl Workspace {
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
         if self.paper.as_deref() == Some(old) { self.paper = Some(new.to_string()); }
-        let prefix = format!("{old}/");
-        let renamed: Vec<String> = self.expanded.iter().filter(|e| *e == old || e.starts_with(&prefix)).cloned().collect();
+        let renamed: Vec<String> = self.expanded.iter().filter(|e| paths::is_within(e, old)).cloned().collect();
         for path in renamed {
             self.expanded.remove(&path);
             self.expanded.insert(format!("{new}{}", &path[old.len()..]));
@@ -594,7 +588,7 @@ impl Workspace {
     }
 
     fn first_document(&self) -> Option<String> {
-        project::newest(self.entries.iter().filter(|e| e.typst).map(|e| (e.id.as_str(), e.meta.modified))).map(str::to_string)
+        project::newest(self.entries.iter().filter(|e| e.typst).map(|e| (e.id.as_str(), e.modified))).map(str::to_string)
     }
 
     pub fn new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -640,7 +634,7 @@ impl Workspace {
 
     /// Moves files and folders to the Trash; if the open one goes, opens the next.
     pub fn delete_docs(&mut self, ids: &[String], window: &mut Window, cx: &mut Context<Self>) {
-        let inside = |doc: &str, id: &String| doc == id || doc.starts_with(&format!("{id}/"));
+        let inside = |doc: &str, id: &String| paths::is_within(doc, id);
         if self.current.as_ref().is_some_and(|c| ids.iter().any(|id| inside(c, id))) {
             let retry = ids.to_vec();
             if !self.save_before(cx, move |w, window, cx| w.delete_docs(&retry, window, cx)) {
@@ -648,12 +642,15 @@ impl Workspace {
             }
         }
         // An item inside another selected folder goes with it.
-        let topmost: Vec<&String> = ids.iter().filter(|id| !ids.iter().any(|o| o != *id && id.starts_with(&format!("{o}/")))).collect();
+        let topmost: Vec<&String> = ids.iter().filter(|id| !ids.iter().any(|o| o != *id && paths::is_within(id, o))).collect();
         let mut deleted: Vec<String> = vec![];
         let mut errors = vec![];
         for id in topmost {
             match self.store.delete(id) {
-                Ok(()) => deleted.push(id.clone()),
+                Ok(warnings) => {
+                    deleted.push(id.clone());
+                    errors.extend(warnings);
+                }
                 Err(e) => errors.push(format!("Could not delete document: {}", crate::settings::diagnostic(&e.to_string()))),
             }
         }
@@ -681,9 +678,9 @@ impl Workspace {
             self.view = view;
         }
         if self.view == View::Trash {
+            errors.extend(self.store.purge_expired());
             self.trash = self.store.list_trash();
         }
-        errors.extend(self.store.take_warnings().iter().map(|s| crate::settings::diagnostic(s)));
         if errors.is_empty() {
             self.show_toast("Deleted successfully", cx);
         } else {
@@ -741,7 +738,7 @@ impl Workspace {
                 let mut first = None;
                 for path in &paths {
                     match w.store.import(path) {
-                        Ok(id) => if id.ends_with(".typ") { first.get_or_insert(id); },
+                        Ok(id) => if paths::is_document(&id) { first.get_or_insert(id); },
                         Err(e) => w.show_toast_kind(ToastKind::Error, &format!("Could not import {}: {e}", path.display()), cx),
                     }
                 }
@@ -782,7 +779,7 @@ impl Workspace {
     /// Switch the main pane to Home or Trash (or back to the document).
     pub fn show_view(&mut self, view: View, cx: &mut Context<Self>) {
         if view == View::Trash {
-            self.trash = self.store.list_trash();
+            self.refresh_trash(cx);
         }
         if matches!(view, View::Library | View::Sources) {
             self.flush(cx);
@@ -850,9 +847,10 @@ impl Workspace {
         if commit && old.is_some_and(|o| o != title) {
             self.flush(cx);
             match self.store.rename(&r.id, &title) {
-                Ok((new, rewritten)) => {
-                    self.path_changed(&r.id, &new, &rewritten, cx);
-                    if !rewritten.is_empty() { self.show_toast(&updated_paths(rewritten.len()), cx); }
+                Ok(moved) => {
+                    self.path_changed(&r.id, &moved.id, &moved.rewritten, cx);
+                    if !moved.rewritten.is_empty() { self.show_toast(&updated_paths(moved.rewritten.len()), cx); }
+                    self.show_warnings(&moved.warnings, cx);
                 }
                 Err(e) => self.status = SaveStatus::Failed(format!("Could not rename document: {}", crate::settings::diagnostic(&e.to_string()))),
             }
@@ -902,7 +900,7 @@ impl Workspace {
             Ok(()) => {
                 if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
                     e.body = text;
-                    e.meta.modified = crate::time::now();
+                    e.modified = crate::time::now();
                 }
                 self.status = SaveStatus::Saved;
                 self.unsaved = false;

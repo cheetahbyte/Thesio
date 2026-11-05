@@ -2,6 +2,7 @@
 //! is a Hayagriva type plus the type of its parent, so `library.yaml` stays
 //! plain Hayagriva and entries from any tool get a kind without a new field.
 
+use crate::identifier::arxiv_of_link;
 use serde_yaml::{Mapping, Value};
 
 /// Where a field's value lives in an entry.
@@ -164,10 +165,7 @@ const PREPRINT_GENRE: &str = "Preprint";
 pub fn arxiv_id(entry: &Mapping) -> Option<String> {
     let stated = read(entry, ARXIV.slot);
     if !stated.is_empty() { return Some(stated); }
-    match crate::lookup::identify(&read(entry, Slot::Url)) {
-        Some(crate::lookup::Identifier::Arxiv(id)) => Some(id),
-        _ => None,
-    }
+    arxiv_of_link(&read(entry, Slot::Url))
 }
 
 /// An article with no journal is a preprint only if something says so. Most

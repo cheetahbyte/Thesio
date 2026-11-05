@@ -25,7 +25,7 @@ main.rs: window
 
 | Module | Responsibility |
 |---|---|
-| `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. See [FORMAT.md](FORMAT.md). |
+| `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. It keeps the last good document, and `typst-ide` maps between that document and the source for the preview. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
@@ -33,10 +33,14 @@ main.rs: window
 | `biblatex.rs` | BibLaTeX import and export, by the names in the field table. |
 | `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
 | `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
+| `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
 | `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
 | `references.rs` | Note links, citations, and rewriting path arguments after a move. |
 | `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
+| `history.rs` | `Versions`: a file's earlier versions and how often they are kept. |
+| `diff.rs` | What changed between two texts, by line. |
+| `paths.rs` | Vault path helpers, file naming, natural order, atomic writes. |
 | `time.rs` | Local dates without a time zone database. |
 
 ## Editing flow
@@ -69,7 +73,7 @@ The search dialog lists documents, then sources, then PDF highlights. Highlights
 
 The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`Project::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
 
-`tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`store::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
+`tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`paths::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
 
 A rename or move also updates the paths in every vault document: `#include`, `#import`, the path arguments of `image`, `bibliography`, `read`, and the data loaders, and `#link`s to `.typ` files. A moved file's own relative paths are adjusted too. If the open document changes, its editor takes the new text as one undoable edit.
 

@@ -221,9 +221,11 @@ impl Workspace {
     }
 
     fn restore_doc(&mut self, id: &str, cx: &mut Context<Self>) {
+        let mut warnings = vec![];
         match self.store.restore(id) {
-            Ok(moved) => {
-                self.show_toast(if moved { "Restored. Some documents were moved to My documents because their original location no longer exists." } else { "Restored successfully" }, cx);
+            Ok(restored) => {
+                warnings = restored.warnings;
+                self.show_toast(if restored.renamed { "Restored. Some documents were moved to My documents because their original location no longer exists." } else { "Restored successfully" }, cx);
             }
             Err(e) => {
                 let detail = e.chain().map(|cause| crate::settings::diagnostic(&cause.to_string())).collect::<Vec<_>>().join(": ");
@@ -234,8 +236,8 @@ impl Workspace {
         }
         self.entries = self.store.list();
         self.sort();
-        self.trash = self.store.list_trash();
-        self.show_store_warnings(cx);
+        self.refresh_trash(cx);
+        self.show_warnings(&warnings, cx);
     }
 
     fn purge_doc(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -243,12 +245,17 @@ impl Workspace {
             Ok(()) => self.show_toast("Permanently deleted", cx),
             Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not delete document: {}", crate::settings::diagnostic(&e.to_string()))),
         }
-        self.trash = self.store.list_trash();
-        self.show_store_warnings(cx);
+        self.refresh_trash(cx);
     }
 
-    fn show_store_warnings(&mut self, cx: &mut Context<Self>) {
-        let warnings = self.store.take_warnings();
+    /// Lists the Trash, emptying what is past its time.
+    pub(crate) fn refresh_trash(&mut self, cx: &mut Context<Self>) {
+        let warnings = self.store.purge_expired();
+        self.trash = self.store.list_trash();
+        self.show_warnings(&warnings, cx);
+    }
+
+    pub(crate) fn show_warnings(&mut self, warnings: &[String], cx: &mut Context<Self>) {
         if !warnings.is_empty() {
             let msg = warnings.iter().map(|s| crate::settings::diagnostic(s)).collect::<Vec<_>>().join("; ");
             self.show_toast_kind(crate::ui::ToastKind::Error, &msg, cx);

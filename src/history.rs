@@ -7,7 +7,8 @@ use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_line, primary_button, scrim, secondary_button};
 use crate::ui::{ToastKind, format_visit, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use thesio_core::history::{DiffLine, INTERVAL, LineKind, diff};
+use thesio_core::diff::{DiffLine, LineKind, diff};
+use thesio_core::paths::base_name;
 
 const WIDTH: f32 = 960.;
 const HEIGHT: f32 = 620.;
@@ -25,20 +26,16 @@ pub struct History {
 }
 
 impl Workspace {
-    /// Keeps the open text as a version, at most once per `INTERVAL` unless `now`.
+    /// Keeps the open text as a version; while writing, at most every few minutes.
     pub(crate) fn keep_version(&mut self, id: &str, text: &str, now: bool, cx: &mut Context<Self>) {
-        let time = crate::time::now();
-        if !now && self.last_version.get(id).is_some_and(|last| time.saturating_sub(*last) < INTERVAL) { return; }
-        match self.store.snapshot(id, text) {
-            Ok(_) => { self.last_version.insert(id.to_string(), time); }
-            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not keep a version of {id}: {e}"), cx),
-        }
+        let kept = self.store.versions(id).and_then(|versions| if now { versions.keep(text) } else { versions.keep_paced(text) });
+        if let Err(e) = kept { self.show_toast_kind(ToastKind::Error, &format!("Could not keep a version of {id}: {e}"), cx); }
     }
 
     pub(crate) fn open_history(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
         if !self.flush(cx) { return; }
-        let versions = self.store.versions(&id);
+        let versions = self.store.versions(&id).map_or(vec![], |versions| versions.list());
         self.history = Some(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
         self.show_version(0, cx);
     }
@@ -46,7 +43,7 @@ impl Workspace {
     pub(crate) fn open_library_history(&mut self, cx: &mut Context<Self>) {
         self.save_inspector(cx);
         let Some(library) = &self.citations.library else { return };
-        let versions = library.versions();
+        let versions = library.versions().list();
         self.history = Some(History { library: true, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
         self.show_version(0, cx);
     }
@@ -61,8 +58,8 @@ impl Workspace {
 
     fn version_text(&self, time: u64) -> anyhow::Result<String> {
         match (self.history.as_ref().is_some_and(|history| history.library), &self.citations.library, &self.current) {
-            (true, Some(library), _) => library.version(time),
-            (false, _, Some(id)) => self.store.version(id, time),
+            (true, Some(library), _) => library.versions().read(time),
+            (false, _, Some(id)) => self.store.versions(id)?.read(time),
             _ => anyhow::bail!("Nothing is open"),
         }
     }
@@ -151,7 +148,7 @@ impl Workspace {
             })).flex_1().min_h_0();
             div().flex_1().min_w_0().flex().flex_col().py(px(8.)).child(changes).into_any_element()
         };
-        let title = if history.library { "the Library".to_string() } else { self.current.as_deref().map_or("", |id| id.rsplit('/').next().unwrap_or(id)).to_string() };
+        let title = if history.library { "the Library".to_string() } else { self.current.as_deref().map_or("", base_name).to_string() };
         let can_restore = !history.diff.is_empty();
         let panel = dialog("history").w(px(WIDTH)).h(px(HEIGHT)).flex().flex_col()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

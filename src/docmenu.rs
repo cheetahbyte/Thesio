@@ -52,7 +52,7 @@ impl Workspace {
     pub(crate) fn copy_doc(&mut self, id: &str, cx: &mut Context<Self>) -> Option<String> {
         let text = self.text_of(id, cx)?;
         let entry = self.entries.iter().find(|e| e.id == id)?;
-        let (title, parent) = (format!("{} copy", entry.title), entry.meta.parent.clone());
+        let (title, parent) = (format!("{} copy", entry.title), entry.parent.clone());
         match self.store.create_from(parent.as_deref(), &title, &text) {
             Ok(new) => Some(new),
             Err(e) => {

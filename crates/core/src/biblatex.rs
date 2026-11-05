@@ -1,8 +1,8 @@
 //! BibLaTeX import and export. Hayagriva does the parsing; what it drops, and
 //! every field name, comes from the table in `source_type.rs`.
 
+use crate::paths::natural_cmp;
 use crate::source_type::{self, ACCESSED, ARTICLE, ARXIV, Field, LANGUAGE, MISC, REPOSITORY, Slot, TITLE, VERSION, WEB, biblatex_type, read, write};
-use crate::store::natural_cmp;
 use anyhow::{Context, Result};
 use biblatex::ChunksExt;
 use hayagriva::types::Date;

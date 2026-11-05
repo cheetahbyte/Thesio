@@ -19,7 +19,6 @@ struct Edit {
     sel_after: Range<usize>,
 }
 
-#[derive(Default)]
 pub struct Buffer {
     text: String,
     line_starts: Vec<usize>,
@@ -32,9 +31,13 @@ pub struct Buffer {
     generation: u64,
 }
 
+impl Default for Buffer {
+    fn default() -> Self { Self::new("") }
+}
+
 impl Buffer {
     pub fn new(text: impl Into<String>) -> Self {
-        let mut buffer = Self { text: text.into(), ..Default::default() };
+        let mut buffer = Self { text: text.into(), line_starts: vec![], sel: 0..0, reversed: false, undo: vec![], redo: vec![], last: None, generation: 0 };
         buffer.index_lines();
         buffer
     }
@@ -122,8 +125,8 @@ impl Buffer {
         self.undo.push(Edit { at: range.start, old, new: new.to_string(), sel_before, sel_after });
     }
 
-    /// Replaces text outside the undo history: the generated bibliography
-    /// block follows the document rather than being an edit in it.
+    /// Replaces text outside the undo history, for text derived from the
+    /// document rather than edited in it.
     pub fn replace_silently(&mut self, range: Range<usize>, new: &str, caret: usize) {
         self.text.replace_range(range, new);
         self.index_lines();
@@ -137,18 +140,21 @@ impl Buffer {
     pub fn redo(&mut self) -> bool { self.step(false) }
 
     fn step(&mut self, back: bool) -> bool {
-        let Some(edit) = (if back { self.undo.pop() } else { self.redo.pop() }) else { return false };
-        let (remove, insert, sel) = if back { (&edit.new, &edit.old, &edit.sel_before) } else { (&edit.old, &edit.new, &edit.sel_after) };
-        // A silent replacement can overtake an edit made inside it.
-        if self.text.get(edit.at..edit.at + remove.len()) != Some(remove.as_str()) { return false; }
-        self.text.replace_range(edit.at..edit.at + remove.len(), insert);
-        self.index_lines();
-        self.sel = sel.clone();
-        self.reversed = false;
-        self.generation += 1;
-        self.last = None;
-        if back { self.redo.push(edit); } else { self.undo.push(edit); }
-        true
+        while let Some(edit) = if back { self.undo.pop() } else { self.redo.pop() } {
+            let (remove, insert, sel) = if back { (&edit.new, &edit.old, &edit.sel_before) } else { (&edit.old, &edit.new, &edit.sel_after) };
+            // A silent replacement can overwrite an edit. That one is gone,
+            // and the step goes to the edit before it.
+            if self.text.get(edit.at..edit.at + remove.len()) != Some(remove.as_str()) { continue; }
+            self.text.replace_range(edit.at..edit.at + remove.len(), insert);
+            self.index_lines();
+            self.sel = sel.clone();
+            self.reversed = false;
+            self.generation += 1;
+            self.last = None;
+            if back { self.redo.push(edit); } else { self.undo.push(edit); }
+            return true;
+        }
+        false
     }
 
     pub fn prev_grapheme(&self, offset: usize) -> usize {
@@ -170,5 +176,26 @@ impl Buffer {
     /// The word around `offset`, for double clicks.
     pub fn word_at(&self, offset: usize) -> Range<usize> {
         self.text.split_word_bound_indices().map(|(i, w)| i..i + w.len()).find(|r| r.contains(&offset)).unwrap_or(offset..offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_edit_overwritten_silently_does_not_cost_an_undo() {
+        let mut buffer = Buffer::new("text\nblock");
+        buffer.replace(0..0, "more ", EditKind::Other);
+        buffer.replace(10..15, "BLOCK", EditKind::Other);
+        buffer.replace_silently(10..15, "fresh", 0);
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "text\nfresh");
+        assert!(!buffer.undo());
+    }
+
+    #[test]
+    fn a_default_buffer_has_one_line() {
+        assert_eq!(Buffer::default().line_count(), 1);
     }
 }

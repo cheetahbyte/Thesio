@@ -1,17 +1,24 @@
 //! Wall-clock time and local civil dates, without a time-zone database:
 //! the offset comes from `date +%z` once per run.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const DAY: u64 = 86_400;
+
 /// Wall-clock unix seconds.
-pub fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+pub fn now() -> u64 { unix_secs(Ok(SystemTime::now())) }
+
+/// A file time in unix seconds, 0 when unknown.
+pub(crate) fn unix_secs(time: std::io::Result<SystemTime>) -> u64 {
+    time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
 }
 
 /// Local (fixed +08:00 fallback when TZ unknown) civil time from a unix timestamp.
 pub fn civil(secs: u64) -> (i64, u32, u32, u32, u32) {
     let off = local_offset();
     let t = secs as i64 + off;
-    let days = t.div_euclid(86_400);
-    let rem = t.rem_euclid(86_400);
+    let days = t.div_euclid(DAY as i64);
+    let rem = t.rem_euclid(DAY as i64);
     // Howard Hinnant's days-from-civil inverse.
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -40,7 +47,7 @@ pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 
 /// Unix seconds of a local date and time (inverse of `civil`).
 pub fn local_to_unix(y: i64, m: u32, d: u32, h: u32, mi: u32) -> i64 {
-    days_from_civil(y, m, d) * 86_400 + (h * 3600 + mi * 60) as i64 - local_offset()
+    days_from_civil(y, m, d) * DAY as i64 + (h * 3600 + mi * 60) as i64 - local_offset()
 }
 
 pub fn days_in_month(y: i64, m: u32) -> u32 {
@@ -59,7 +66,7 @@ pub fn weekday(y: i64, m: u32, d: u32) -> u32 {
 
 /// Wall-clock unix milliseconds.
 pub fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 pub fn local_offset() -> i64 {

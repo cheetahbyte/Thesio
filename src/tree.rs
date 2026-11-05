@@ -5,6 +5,7 @@ use crate::app::Workspace;
 use crate::settings::display_title;
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::Entry;
+use thesio_core::paths::{is_within, natural_cmp};
 use crate::theme::{self, Theme, craft};
 use crate::trash::{close_button, dialog, primary_button, scrim, secondary_button};
 use crate::ui::{Icon, ROW_RADIUS, icon, ui_text};
@@ -21,7 +22,7 @@ pub(crate) struct Tree<'a> {
 impl<'a> Tree<'a> {
     pub fn new(entries: &'a [Entry]) -> Self {
         let ids: HashSet<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-        let parent = |e: &'a Entry| e.meta.parent.as_deref().filter(|p| ids.contains(p));
+        let parent = |e: &'a Entry| e.parent.as_deref().filter(|p| ids.contains(p));
         let mut roots: Vec<&Entry> = vec![];
         let mut kids: HashMap<&str, Vec<&Entry>> = HashMap::new();
         for e in entries {
@@ -30,7 +31,7 @@ impl<'a> Tree<'a> {
                 None => roots.push(e),
             }
         }
-        let order = |a: &&Entry, b: &&Entry| b.folder.cmp(&a.folder).then_with(|| crate::store::natural_cmp(&a.title, &b.title));
+        let order = |a: &&Entry, b: &&Entry| b.folder.cmp(&a.folder).then_with(|| natural_cmp(&a.title, &b.title));
         roots.sort_by(order);
         for v in kids.values_mut() {
             v.sort_by(order);
@@ -89,7 +90,7 @@ impl Workspace {
     pub(crate) fn ancestors(&self, id: &str) -> Vec<&Entry> {
         let mut out: Vec<&Entry> = vec![];
         let mut cur = self.entries.iter().find(|e| e.id == id);
-        while let Some(p) = cur.and_then(|e| e.meta.parent.as_deref()).and_then(|p| self.entries.iter().find(|e| e.id == p)) {
+        while let Some(p) = cur.and_then(|e| e.parent.as_deref()).and_then(|p| self.entries.iter().find(|e| e.id == p)) {
             if p.id == id || out.iter().any(|e| e.id == p.id) {
                 break;
             }
@@ -110,7 +111,7 @@ impl Workspace {
     /// A new document in the folder `parent`, or beside it when it is a file.
     pub fn new_child(&mut self, parent: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Only folders hold files: a file's "+" adds a sibling.
-        let parent = self.entries.iter().find(|e| e.id == parent).and_then(|e| if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() });
+        let parent = self.entries.iter().find(|e| e.id == parent).and_then(|e| if e.folder { Some(e.id.clone()) } else { e.parent.clone() });
         let parent = parent.as_deref();
         let p = parent.map(str::to_string);
         if !self.save_before(cx, move |w, window, cx| match &p { Some(p) => w.new_child(p, window, cx), None => w.new_doc(window, cx) }) {
@@ -158,19 +159,20 @@ impl Workspace {
     /// what is already there and moves of a folder into itself.
     pub(crate) fn move_docs(&mut self, ids: &[String], target: Option<String>, cx: &mut Context<Self>) {
         self.flush(cx);
-        let (mut moved, mut updated) = (0, 0);
+        let (mut moved, mut updated, mut warnings) = (0, 0, vec![]);
         // An item inside another selected folder goes with it.
-        for id in ids.iter().filter(|id| !ids.iter().any(|o| id.starts_with(&format!("{o}/")))) {
-            let parent = self.entries.iter().find(|e| &e.id == id).and_then(|e| e.meta.parent.clone());
-            let inside = target.as_ref().is_some_and(|t| t == id || t.starts_with(&format!("{id}/")));
+        for id in ids.iter().filter(|id| !ids.iter().any(|o| o != *id && is_within(id, o))) {
+            let parent = self.entries.iter().find(|e| &e.id == id).and_then(|e| e.parent.clone());
+            let inside = target.as_ref().is_some_and(|t| is_within(t, id));
             if inside || parent == target {
                 continue;
             }
             match self.store.set_parent(id, target.as_deref()) {
-                Ok((new, rewritten)) => {
-                    self.path_changed(id, &new, &rewritten, cx);
+                Ok(outcome) => {
+                    self.path_changed(id, &outcome.id, &outcome.rewritten, cx);
                     moved += 1;
-                    updated += rewritten.len();
+                    updated += outcome.rewritten.len();
+                    warnings.extend(outcome.warnings);
                 }
                 Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move: {}", crate::settings::diagnostic(&e.to_string()))),
             }
@@ -184,7 +186,6 @@ impl Workspace {
         } else if moved > 0 {
             self.show_toast("Moved successfully", cx);
         }
-        let warnings = self.store.take_warnings();
         if !warnings.is_empty() { self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx); }
         cx.notify();
     }

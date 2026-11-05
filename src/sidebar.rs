@@ -122,7 +122,7 @@ impl Workspace {
         let inside = format!("{PAPERS_DIR}/");
         // A `sources` folder holding anything else is the user's own.
         let papers_only = !self.entries.iter().any(|e| e.id.starts_with(&inside) && !e.id.ends_with(".pdf"));
-        self.entries.iter().filter(move |e| !(hide && (e.id == LIBRARY_FILE || papers_only && (e.id == PAPERS_DIR || e.id.starts_with(&inside)))))
+        self.entries.iter().filter(move |e| !(hide && (e.id == LIBRARY_FILE || papers_only && (thesio_core::paths::is_within(&e.id, PAPERS_DIR)))))
     }
 
     pub(crate) fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -471,7 +471,7 @@ impl Workspace {
         if ids.is_empty() {
             return;
         }
-        for id in ids.iter().filter(|id| id.ends_with(".typ")) {
+        for id in ids.iter().filter(|id| thesio_core::paths::is_document(id)) {
             self.copy_doc(id, cx);
         }
         self.entries = self.store.list();
@@ -600,7 +600,7 @@ impl Workspace {
             .children((0..if batch.is_none() { depth } else { 0 }).map(|level| div().absolute().top(px(-ROW_GAP)).bottom_0().left(px(16. + 16. * level as f32)).w(px(1.)).bg(Theme::sidebar_guide())))
             .when(key == "doc" && !renaming && batch.is_none(), |d| {
                 // Dropping on a file means the folder it sits in.
-                let target = if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() };
+                let target = if e.folder { Some(e.id.clone()) } else { e.parent.clone() };
                 let dragged = DraggedRow { id: e.id.clone(), title: display_title(&e.title).into() };
                 d.on_drag(dragged, |row, _, _, cx| cx.new(|_| row.clone()))
                     .drag_over::<DraggedRow>(|s, _, _, _| s.bg(Theme::sidebar_selected()))

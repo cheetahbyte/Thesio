@@ -4,6 +4,7 @@
 //! access happens only here, and only for sources the user added to the library.
 
 use crate::source_type::{ARTICLE, ARXIV, AUTHORS, BOOK, CHAPTER, DATE, DOI, ISBN, PAGES, PARENT_ISSUE, PARENT_TITLE, PARENT_VOLUME, PERIODICAL, PMID, PUBLISHER, Slot, TITLE, URL, read, write};
+use crate::identifier::{Identifier, PaperIds, arxiv_doi};
 use anyhow::{Context, Result};
 use serde_json::Value as Json;
 use serde_yaml::Mapping;
@@ -11,97 +12,28 @@ use std::path::Path;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
-const USER_AGENT: &str = "Thesio/0.1";
+const USER_AGENT: &str = concat!("Thesio/", env!("CARGO_PKG_VERSION"));
 const PAPER_TIMEOUT: Duration = Duration::from_secs(120);
 const PAPER_LIMIT: u64 = 200 * 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Identifier {
-    Doi(String),
-    Arxiv(String),
-    Pmid(String),
-    Isbn(String),
+/// The service has no such record.
+#[derive(Debug)]
+struct NotFound;
+
+impl std::fmt::Display for NotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str("not found") }
 }
 
-impl std::fmt::Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Doi(id) => write!(f, "DOI {id}"),
-            Self::Arxiv(id) => write!(f, "arXiv {id}"),
-            Self::Pmid(id) => write!(f, "PMID {id}"),
-            Self::Isbn(id) => write!(f, "ISBN {id}"),
-        }
-    }
-}
+impl std::error::Error for NotFound {}
 
-/// The ISBN digits of a token, when its check digit is right.
-fn isbn(token: &str) -> Option<String> {
-    let digits: String = token.chars().filter(|c| !matches!(c, '-' | ' ')).collect::<String>().to_uppercase();
-    let valid = match digits.len() {
-        10 if digits[..9].bytes().all(|b| b.is_ascii_digit()) => {
-            let total: u32 = digits.chars().enumerate().map(|(i, c)| (10 - i as u32) * if c == 'X' { 10 } else { c.to_digit(10).unwrap_or(99) }).sum();
-            total.is_multiple_of(11)
-        }
-        13 if digits.bytes().all(|b| b.is_ascii_digit()) => {
-            let total: u32 = digits.chars().enumerate().map(|(i, c)| c.to_digit(10).unwrap_or(0) * if i % 2 == 0 { 1 } else { 3 }).sum();
-            total.is_multiple_of(10)
-        }
-        _ => false,
-    };
-    valid.then_some(digits)
-}
-
-/// Whether a token has the shape of an arXiv ID, with or without a version.
-fn arxiv_id(token: &str) -> Option<String> {
-    let bare = token.split_once('v').filter(|(_, v)| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).map_or(token, |(id, _)| id);
-    let modern = bare.split_once('.').is_some_and(|(month, serial)| {
-        month.len() == 4 && matches!(serial.len(), 4 | 5) && month.bytes().chain(serial.bytes()).all(|b| b.is_ascii_digit())
-    });
-    let legacy = bare.split_once('/').is_some_and(|(area, serial)| {
-        area.bytes().all(|b| b.is_ascii_lowercase() || b == b'-' || b == b'.') && !area.is_empty() && serial.len() == 7 && serial.bytes().all(|b| b.is_ascii_digit())
-    });
-    (modern || legacy).then(|| bare.to_string())
-}
-
-fn strip_prefix_any<'a>(text: &'a str, prefixes: &[&str]) -> Option<&'a str> {
-    let lower = text.to_ascii_lowercase();
-    prefixes.iter().find(|p| lower.starts_with(**p)).map(|p| &text[p.len()..])
-}
-
-/// One identifier from a token, or `None` when it is not recognised.
-pub fn identify(token: &str) -> Option<Identifier> {
-    let token = token.trim().trim_end_matches(['.', ',', ';', ')', ']']);
-    if let Some(rest) = strip_prefix_any(token, &["https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi.org/", "doi:"]) {
-        return Some(Identifier::Doi(rest.trim().to_string()));
-    }
-    if let Some(rest) = strip_prefix_any(token, &["https://arxiv.org/abs/", "http://arxiv.org/abs/", "https://arxiv.org/pdf/", "arxiv:"]) {
-        return arxiv_id(rest.trim_end_matches(".pdf")).map(Identifier::Arxiv);
-    }
-    if let Some(rest) = strip_prefix_any(token, &["pmid:", "https://pubmed.ncbi.nlm.nih.gov/"]) {
-        let digits = rest.trim().trim_end_matches('/');
-        return (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| Identifier::Pmid(digits.to_string()));
-    }
-    if let Some(rest) = strip_prefix_any(token, &["isbn:"]) {
-        return isbn(rest).map(Identifier::Isbn);
-    }
-    if token.starts_with("10.") && token.contains('/') { return Some(Identifier::Doi(token.to_string())); }
-    if let Some(id) = arxiv_id(token) { return Some(Identifier::Arxiv(id)); }
-    if let Some(number) = isbn(token) { return Some(Identifier::Isbn(number)); }
-    (token.len() <= 8 && !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())).then(|| Identifier::Pmid(token.to_string()))
-}
-
-/// Tokens split on whitespace and commas. An unrecognised one comes back as
-/// its text, so the user can see what was not understood.
-pub fn identifiers(text: &str) -> Vec<Result<Identifier, String>> {
-    text.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.trim().is_empty()).map(|t| identify(t).ok_or_else(|| t.to_string())).collect()
+fn request(url: &str, accept: &str, timeout: Duration) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    ureq::get(url).header("Accept", accept).header("User-Agent", USER_AGENT).config().timeout_global(Some(timeout)).build().call()
 }
 
 fn get(url: &str, accept: &str) -> Result<String> {
-    let response = ureq::get(url).header("Accept", accept).header("User-Agent", USER_AGENT)
-        .config().timeout_global(Some(TIMEOUT)).build().call();
-    match response {
+    match request(url, accept, TIMEOUT) {
         Ok(mut response) => Ok(response.body_mut().read_to_string()?),
-        Err(ureq::Error::StatusCode(404)) => anyhow::bail!("not found"),
+        Err(ureq::Error::StatusCode(404)) => Err(NotFound.into()),
         Err(ureq::Error::StatusCode(code)) => anyhow::bail!("the service answered with status {code}"),
         Err(e) => Err(e.into()),
     }
@@ -124,7 +56,7 @@ fn fetch_doi(doi: &str) -> Result<Mapping> {
 }
 
 fn fetch_arxiv(id: &str) -> Result<Mapping> {
-    let mut entry = fetch_doi(&format!("10.48550/arXiv.{id}"))?;
+    let mut entry = fetch_doi(&arxiv_doi(id))?;
     write(&mut entry, ARXIV.slot, id);
     Ok(entry)
 }
@@ -136,7 +68,7 @@ fn text<'a>(json: &'a Json, key: &str) -> Option<&'a str> {
 fn fetch_pmid(id: &str) -> Result<Mapping> {
     let body = get(&format!("https://pmc.ncbi.nlm.nih.gov/api/ctxp/v1/pubmed/?format=csl&id={id}"), "*/*")?;
     let json: Json = serde_json::from_str(&body).context("the service returned no record")?;
-    let title = text(&json, "title").context("not found")?;
+    let title = text(&json, "title").ok_or(NotFound)?;
     let (kind, parent_kind) = match text(&json, "type") {
         Some("book") => (BOOK, BOOK),
         Some("chapter") => (CHAPTER, BOOK),
@@ -176,8 +108,8 @@ fn fetch_isbn(id: &str) -> Result<Mapping> {
     let key = format!("ISBN:{id}");
     let body = get(&format!("https://openlibrary.org/api/books?bibkeys={key}&format=json&jscmd=data"), "application/json")?;
     let json: Json = serde_json::from_str(&body).context("the service returned no record")?;
-    let book = json.get(&key).context("not found")?;
-    let title = text(book, "title").context("not found")?;
+    let book = json.get(&key).ok_or(NotFound)?;
+    let title = text(book, "title").ok_or(NotFound)?;
     let title = text(book, "subtitle").map_or(title.to_string(), |subtitle| format!("{title}: {subtitle}"));
     let mut entry = Mapping::new();
     write(&mut entry, Slot::Type, BOOK);
@@ -191,25 +123,11 @@ fn fetch_isbn(id: &str) -> Result<Mapping> {
     Ok(entry)
 }
 
-/// What a paper can be found by.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PaperIds {
-    pub doi: Option<String>,
-    pub arxiv: Option<String>,
-}
-
-impl PaperIds {
-    /// arXiv's own DOIs name the same paper.
-    fn arxiv_id(&self) -> Option<String> {
-        self.arxiv.clone().or_else(|| strip_prefix_any(self.doi.as_deref()?, &["10.48550/arxiv."]).map(str::to_string))
-    }
-}
-
 /// Unpaywall's PDF links for `doi`, best first. None when it has no record.
 fn unpaywall_links(doi: &str, email: &str) -> Result<Vec<String>> {
     let body = match get(&format!("https://api.unpaywall.org/v2/{}?email={}", encode(doi), encode(email)), "application/json") {
         Ok(body) => body,
-        Err(e) if e.to_string() == "not found" => return Ok(vec![]),
+        Err(e) if e.is::<NotFound>() => return Ok(vec![]),
         Err(e) => return Err(e),
     };
     let json: Json = serde_json::from_str(&body).context("Unpaywall returned no record")?;
@@ -224,17 +142,12 @@ fn unpaywall_links(doi: &str, email: &str) -> Result<Vec<String>> {
 /// Saves the PDF at `url` to `dest`, whole or not at all.
 fn download(url: &str, dest: &Path) -> Result<()> {
     anyhow::ensure!(url.starts_with("https://") || url.starts_with("http://"), "not a web link");
-    let mut response = ureq::get(url).header("Accept", "application/pdf").header("User-Agent", USER_AGENT)
-        .config().timeout_global(Some(PAPER_TIMEOUT)).build().call()?;
+    let mut response = request(url, "application/pdf", PAPER_TIMEOUT)?;
     let bytes = response.body_mut().with_config().limit(PAPER_LIMIT).read_to_vec()?;
     // Publishers often answer a PDF link with a login page.
     anyhow::ensure!(bytes.starts_with(b"%PDF-"), "the link did not lead to a PDF");
-    let name = dest.file_name().context("no file name")?.to_string_lossy();
-    let partial = dest.with_file_name(format!(".{name}.part"));
     if let Some(dir) = dest.parent() { std::fs::create_dir_all(dir)?; }
-    std::fs::write(&partial, bytes)?;
-    std::fs::rename(&partial, dest)?;
-    Ok(())
+    crate::paths::write_atomic(dest, &bytes)
 }
 
 /// Downloads an open-access copy to `dest`: arXiv first, then Unpaywall when

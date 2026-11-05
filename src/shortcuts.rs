@@ -1,7 +1,7 @@
 use gpui::*;
 use std::collections::BTreeMap;
 
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(".thesio/shortcuts.json") }
+fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(thesio_core::paths::STATE_DIR).join("shortcuts.json") }
 /// Applies `.thesio/shortcuts.json` over the built-in keys. An empty key unbinds an action.
 pub fn init(cx: &mut App) {
     let base = cx.key_bindings().borrow().bindings().cloned().collect::<Vec<_>>();

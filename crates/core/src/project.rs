@@ -1,8 +1,8 @@
 //! A document and the files it includes, found the way the compiler finds
 //! them, and which document opens at launch.
 
-use crate::store::visit_vault;
-use crate::typst_source::{dir_of, include_literal, vault_path, walk};
+use crate::paths::{dir_parts, parent_of, visit_vault};
+use crate::typst_source::{include_literal, vault_path, walk};
 use std::collections::HashMap;
 use std::path::Path;
 use typst::syntax::ast::{self, AstNode};
@@ -15,8 +15,7 @@ pub type Read<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
 /// vault holds several: `/template.typ` is sought from the main file's folder
 /// upward, then at the vault root, as `typst compile` run in that project would.
 pub fn candidates<'a>(main: &'a str, file: &'a str) -> impl Iterator<Item = String> + 'a {
-    let folder = |path: &&'a str| path.rsplit_once('/').map(|(parent, _)| parent);
-    std::iter::successors(folder(&main), folder).map(move |dir| format!("{dir}/{file}")).chain(std::iter::once(file.to_string()))
+    std::iter::successors(parent_of(main), |dir| parent_of(dir)).map(move |dir| format!("{dir}/{file}")).chain(std::iter::once(file.to_string()))
 }
 
 /// A heading in a document's outline.
@@ -40,7 +39,7 @@ struct File {
 
 fn parse(path: String, text: String) -> File {
     let source = Source::detached(text);
-    let dir = dir_of(&path);
+    let dir = dir_parts(&path);
     let (mut includes, mut headings) = (vec![], vec![]);
     walk(&LinkedNode::new(source.root()), &mut |node| match node.kind() {
         SyntaxKind::Heading => {

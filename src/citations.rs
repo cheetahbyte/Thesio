@@ -7,9 +7,10 @@ use crate::app::RowMenu;
 use crate::library::{Added, Library, PAPERS_DIR, Row, note_file, paper_file};
 use thesio_core::bibliography::{self, Mode};
 use crate::source::SourceEditor;
-use thesio_core::lookup::{self, Identifier};
+use thesio_core::identifier::{Identifier, identifiers};
+use thesio_core::lookup;
 use thesio_core::source_type::{Field, JOURNAL_ARTICLE, SOURCE_TYPES, SourceType};
-use crate::store::natural_cmp;
+use thesio_core::paths::{base_name, is_document, natural_cmp};
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
 use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
@@ -521,7 +522,7 @@ impl Workspace {
         let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone()) else {
             return self.show_toast_kind(ToastKind::Error, "Open a document to insert a citation", cx);
         };
-        if !id.ends_with(".typ") {
+        if !is_document(&id) {
             return self.show_toast_kind(ToastKind::Error, "Citations go in Typst documents", cx);
         }
         self.show_view(View::Doc, cx);
@@ -849,7 +850,7 @@ impl Workspace {
         let Some(dialog) = &mut self.citations.lookup else { return };
         if dialog.busy { return; }
         let text = dialog.field.read(cx).text.clone();
-        let parsed = lookup::identifiers(&text);
+        let parsed = identifiers(&text);
         if parsed.is_empty() { return; }
         dialog.busy = true;
         dialog.problems.clear();
@@ -1151,7 +1152,7 @@ impl Workspace {
 
     /// The ids of the papers in the vault.
     fn paper_ids(&self) -> BTreeSet<String> {
-        self.entries.iter().filter(|e| !e.folder && e.meta.parent.as_deref() == Some(PAPERS_DIR)).map(|e| e.id.clone()).collect()
+        self.entries.iter().filter(|e| !e.folder && e.parent.as_deref() == Some(PAPERS_DIR)).map(|e| e.id.clone()).collect()
     }
 
     pub(crate) fn has_paper(&self, key: &str) -> bool {
@@ -1176,7 +1177,7 @@ impl Workspace {
     /// The name a paper goes by: its source's title, or its file name.
     pub(crate) fn paper_title(&self, id: &str) -> String {
         let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
-        row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id).to_string())
+        row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| base_name(id).to_string())
     }
 
     /// The viewer goes under what GPUI draws over the pane, or it would hide it.
@@ -1241,9 +1242,12 @@ impl Workspace {
     /// Renames a file that is named after a citation key.
     fn follow_key(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
         if from == to || !self.entries.iter().any(|e| e.id == from) { return; }
-        let name = to.rsplit('/').next().unwrap_or(to).to_string();
+        let name = base_name(to).to_string();
         match self.store.rename(from, &name) {
-            Ok((id, rewritten)) => self.path_changed(from, &id, &rewritten, cx),
+            Ok(moved) => {
+                self.path_changed(from, &moved.id, &moved.rewritten, cx);
+                self.show_warnings(&moved.warnings, cx);
+            }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename {from}: {e}"), cx),
         }
         self.entries = self.store.list();
@@ -1299,7 +1303,7 @@ impl Workspace {
         let mut papers: Vec<(String, Option<Row>, String)> = self.paper_ids().into_iter().filter(|id| id.ends_with(".pdf")).map(|id| {
             let row = rows.iter().find(|row| paper_file(&row.key) == id).cloned();
             let title = row.as_ref().map(|row| row.title.clone()).filter(|title| !title.is_empty())
-                .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(&id).to_string());
+                .unwrap_or_else(|| base_name(&id).to_string());
             (id, row, title)
         }).collect();
         papers.sort_by(|a, b| natural_cmp(&a.2, &b.2));
@@ -1351,7 +1355,7 @@ impl Workspace {
     }
 
     fn can_cite(&self) -> bool {
-        self.current.as_deref().is_some_and(|id| id.ends_with(".typ"))
+        self.current.as_deref().is_some_and(is_document)
     }
 
     pub(crate) fn render_library_row_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

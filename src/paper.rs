@@ -161,7 +161,7 @@ impl Workspace {
     fn quote_target(&self) -> Option<(String, Entity<SourceEditor>)> {
         let note = self.paper.as_deref().map(note_file);
         match (&self.current, &self.editor) {
-            (Some(id), Some(editor)) if id.ends_with(".typ") && Some(id) != note.as_ref() => Some((id.clone(), editor.clone())),
+            (Some(id), Some(editor)) if thesio_core::paths::is_document(id) && Some(id) != note.as_ref() => Some((id.clone(), editor.clone())),
             _ => Some((note?, self.paper_panel.notes.as_ref()?.0.clone())),
         }
     }

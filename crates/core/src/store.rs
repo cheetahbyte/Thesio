@@ -3,36 +3,30 @@
 //! changes its id. App state lives beside the files in `.thesio/`, and deleted
 //! files move to `.trash/`.
 
+use crate::history::Versions;
+use crate::paths::{self, EXTENSION, STATE_DIR, VaultItem, base_name, document_name, document_title, is_document, join, parent_of, visit_vault, write_atomic};
+use crate::time::{DAY, now, now_ms};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use crate::time::{now, now_ms};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) const STATE_DIR: &str = ".thesio";
 const TRASH_DIR: &str = ".trash";
-const EXTENSION: &str = "typ";
+const FORMAT_FILE: &str = "format.json";
+const INDEX_FILE: &str = "index.json";
+const TRASH_FILE: &str = "trash.json";
+const SETTINGS_FILE: &str = "settings.json";
 pub const UNTITLED: &str = "Untitled";
 
 /// App state for a vault path. Timestamps come from the file; this holds what
 /// a plain file cannot.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Meta {
-    #[serde(skip)]
-    pub created: u64,
-    #[serde(skip)]
-    pub modified: u64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
     /// Last time the document was opened.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub opened: u64,
-    /// The containing folder; derived from the path.
-    #[serde(skip)]
-    pub parent: Option<String>,
     /// Star time (0: not starred).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub starred: u64,
@@ -86,6 +80,10 @@ pub const TRASH_DAYS: u64 = 30;
 pub struct Entry {
     pub id: String,
     pub meta: Meta,
+    /// The file's own time.
+    pub modified: u64,
+    /// The containing folder.
+    pub parent: Option<String>,
     pub title: String,
     pub folder: bool,
     /// A `.typ` document, as opposed to a folder or another kind of file.
@@ -104,7 +102,24 @@ pub struct Store {
     index: HashMap<String, Meta>,
     trash: HashMap<String, Trashed>,
     bodies: HashMap<String, CachedBody>,
-    /// Problems found while opening the vault, for the window to show once.
+}
+
+/// A rename or move that went through.
+#[derive(Debug)]
+pub struct Moved {
+    /// The file's new id.
+    pub id: String,
+    /// The documents whose paths were updated.
+    pub rewritten: Vec<String>,
+    /// What went wrong without stopping it.
+    pub warnings: Vec<String>,
+}
+
+/// A trashed item put back.
+#[derive(Debug)]
+pub struct Restored {
+    /// It came back under a new name because its old one was taken.
+    pub renamed: bool,
     pub warnings: Vec<String>,
 }
 
@@ -114,18 +129,6 @@ pub const FORMAT: u32 = 1;
 #[derive(Serialize, Deserialize)]
 struct FormatMarker {
     format: u32,
-}
-
-/// Write `bytes` to `path` through a temporary file, so a crash leaves
-/// either the old or the new contents.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let mut file = std::fs::File::create(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -171,10 +174,6 @@ fn save_json<T: Serialize>(path: &Path, v: &T) -> Result<()> {
     write_atomic(path, &bytes)
 }
 
-fn unix_secs(time: std::io::Result<SystemTime>) -> u64 {
-    time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
-}
-
 /// A file name for a title: no separators or leading dots.
 fn file_stem(title: &str) -> String {
     let clean: String = title.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '-' } else { c }).collect();
@@ -182,79 +181,12 @@ fn file_stem(title: &str) -> String {
     if clean.is_empty() { UNTITLED.to_string() } else { clean.to_string() }
 }
 
-/// Orders names as people read them: ignoring case, with runs of digits
-/// compared by value, so "Chapter 2" sorts before "Chapter 10".
-pub fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
-    loop {
-        match (x.peek().copied(), y.peek().copied()) {
-            (None, None) => return a.cmp(b),
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(p), Some(q)) if p.is_ascii_digit() && q.is_ascii_digit() => {
-                let take = |it: &mut std::iter::Peekable<std::str::Chars>| {
-                    let mut digits = String::new();
-                    while let Some(d) = it.next_if(char::is_ascii_digit) { digits.push(d); }
-                    digits
-                };
-                let (m, n) = (take(&mut x), take(&mut y));
-                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
-                let order = m.len().cmp(&n.len()).then_with(|| m.cmp(n));
-                if order != Ordering::Equal { return order; }
-            }
-            (Some(p), Some(q)) => {
-                let order = p.to_lowercase().cmp(q.to_lowercase());
-                if order != Ordering::Equal { return order; }
-                x.next();
-                y.next();
-            }
-        }
-    }
-}
-
 /// A file name from a title. A document's title may leave out the extension;
 /// other names are whole.
 fn renamed_file(title: &str, typst: bool) -> String {
     let stem = file_stem(title);
     if !typst { return stem; }
-    format!("{}.{EXTENSION}", stem.strip_suffix(&format!(".{EXTENSION}")).unwrap_or(&stem))
-}
-
-fn parent_of(id: &str) -> Option<&str> { id.rsplit_once('/').map(|(parent, _)| parent) }
-fn base_name(id: &str) -> &str { id.rsplit_once('/').map_or(id, |(_, name)| name) }
-fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }
-
-/// A visible file or folder of a vault.
-pub(crate) struct VaultItem {
-    pub id: String,
-    pub name: String,
-    pub parent: Option<String>,
-    pub path: PathBuf,
-    pub info: std::fs::Metadata,
-}
-
-impl VaultItem {
-    pub fn is_document(&self) -> bool { !self.info.is_dir() && self.path.extension().is_some_and(|e| e == EXTENSION) }
-    pub fn modified(&self) -> u64 { unix_secs(self.info.modified()) }
-}
-
-/// Visits every visible file and folder under `root`, parents before children.
-pub(crate) fn visit_vault(root: &Path, visit: &mut dyn FnMut(VaultItem)) {
-    fn walk(dir: &Path, parent: Option<&str>, visit: &mut dyn FnMut(VaultItem)) {
-        let Ok(read) = std::fs::read_dir(dir) else { return };
-        let mut items: Vec<_> = read.flatten().collect();
-        items.sort_by_key(|e| e.file_name());
-        for item in items {
-            let name = item.file_name().to_string_lossy().into_owned();
-            let Ok(info) = item.metadata() else { continue };
-            if name.starts_with('.') { continue; }
-            let id = join(parent, &name);
-            let folder = info.is_dir();
-            visit(VaultItem { id: id.clone(), name, parent: parent.map(str::to_string), path: item.path(), info });
-            if folder { walk(&item.path(), Some(&id), visit); }
-        }
-    }
-    walk(root, None, visit);
+    document_name(document_title(&stem))
 }
 
 impl Store {
@@ -265,22 +197,24 @@ impl Store {
             .unwrap_or_else(|| dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents"))).unwrap_or_else(|| PathBuf::from(".")).join("Thesio"))
     }
 
-    pub fn open() -> Result<Self> {
+    /// The vault, and problems found opening it, for the window to show once.
+    pub fn open() -> Result<(Self, Vec<String>)> {
         Self::open_at(Self::root_dir())
     }
 
-    pub fn open_at(root: PathBuf) -> Result<Self> {
+    pub fn open_at(root: PathBuf) -> Result<(Self, Vec<String>)> {
         std::fs::create_dir_all(root.join(STATE_DIR))?;
+        let state = |file: &str| root.join(STATE_DIR).join(file);
         let mut warnings = vec![];
-        let format_path = root.join(STATE_DIR).join("format.json");
+        let format_path = state(FORMAT_FILE);
         match load_json::<Option<FormatMarker>>(&format_path, "the vault format", &mut warnings) {
             Some(m) if m.format > FORMAT => warnings.push("This vault was created by a newer version of Thesio. Update the app before editing it.".into()),
             Some(_) => {}
             None => save_json(&format_path, &FormatMarker { format: FORMAT })?,
         }
-        let index = load_json(&root.join(STATE_DIR).join("index.json"), "the vault index", &mut warnings);
-        let trash = load_json(&root.join(STATE_DIR).join("trash.json"), "the Trash index", &mut warnings);
-        Ok(Self { root, index, trash, bodies: HashMap::new(), warnings })
+        let index = load_json(&state(INDEX_FILE), "the vault index", &mut warnings);
+        let trash = load_json(&state(TRASH_FILE), "the Trash index", &mut warnings);
+        Ok((Self { root, index, trash, bodies: HashMap::new() }, warnings))
     }
 
     pub fn root(&self) -> &Path { &self.root }
@@ -292,35 +226,31 @@ impl Store {
         Ok(self.root.join(relative))
     }
 
-    fn save_index(&self) -> Result<()> { save_json(&self.root.join(STATE_DIR).join("index.json"), &self.index) }
-    fn save_trash(&self) -> Result<()> { save_json(&self.root.join(STATE_DIR).join("trash.json"), &self.trash) }
+    fn state_file(&self, file: &str) -> PathBuf { self.root.join(STATE_DIR).join(file) }
+    fn save_index(&self) -> Result<()> { save_json(&self.state_file(INDEX_FILE), &self.index) }
+    fn save_trash(&self) -> Result<()> { save_json(&self.state_file(TRASH_FILE), &self.trash) }
 
     /// Every visible file and folder, parents before children.
     pub fn list(&mut self) -> Vec<Entry> {
         let mut out = vec![];
-        visit_vault(&self.root.clone(), &mut |item| {
-            let mut meta = self.index.get(&item.id).cloned().unwrap_or_default();
-            meta.created = unix_secs(item.info.created());
-            meta.modified = item.modified();
-            meta.parent = item.parent.clone();
-            let (id, name) = (item.id.clone(), item.name.clone());
-            if item.info.is_dir() {
-                out.push(Entry { id, meta, title: name, folder: true, typst: false, body: String::new() });
-            } else if !item.is_document() {
-                out.push(Entry { id, meta, title: name, folder: false, typst: false, body: String::new() });
-            } else {
-                let stamp = (meta.modified, item.info.len());
-                let fresh = self.bodies.get(&id).filter(|b| b.stamp == stamp).map(|b| b.text.clone());
-                let body = fresh.unwrap_or_else(|| {
-                    let text = std::fs::read_to_string(&item.path).unwrap_or_default();
-                    self.bodies.insert(id.clone(), CachedBody { stamp, text: text.clone() });
-                    text
-                });
-                let title = name.strip_suffix(".typ").unwrap_or(&name).to_string();
-                out.push(Entry { id, meta, title, folder: false, typst: true, body });
-            }
-        });
+        visit_vault(&self.root.clone(), &mut |item| out.push(self.entry(item)));
         out
+    }
+
+    fn entry(&mut self, item: VaultItem) -> Entry {
+        let meta = self.index.get(&item.id).cloned().unwrap_or_default();
+        let modified = item.modified();
+        let (document, folder, length) = (item.is_document(), item.info.is_dir(), item.info.len());
+        let VaultItem { id, name, parent, path, .. } = item;
+        if !document { return Entry { id, meta, modified, parent, title: name, folder, typst: false, body: String::new() }; }
+        let stamp = (modified, length);
+        let fresh = self.bodies.get(&id).filter(|b| b.stamp == stamp).map(|b| b.text.clone());
+        let body = fresh.unwrap_or_else(|| {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            self.bodies.insert(id.clone(), CachedBody { stamp, text: text.clone() });
+            text
+        });
+        Entry { id, meta, modified, parent, title: document_title(&name).to_string(), folder, typst: true, body }
     }
 
     pub fn load(&self, id: &str) -> Result<String> {
@@ -328,34 +258,15 @@ impl Store {
     }
 
     pub fn save(&mut self, id: &str, text: &str) -> Result<()> {
+        // A second write can leave the time and size `list` compares unchanged.
+        self.bodies.remove(id);
         write_atomic(&self.path(id)?, text.as_bytes())
     }
 
-    fn history_dir(&self, id: &str) -> Result<PathBuf> {
+    /// `id`'s earlier versions.
+    pub fn versions(&self, id: &str) -> Result<Versions> {
         self.path(id)?;
-        Ok(crate::history::dir(&self.root, id))
-    }
-
-    /// Keeps `text` as a version of `id`, unless nothing changed.
-    pub fn snapshot(&self, id: &str, text: &str) -> Result<bool> {
-        crate::history::save(&self.history_dir(id)?, text, crate::time::now())
-    }
-
-    /// The times of `id`'s versions, newest first.
-    pub fn versions(&self, id: &str) -> Vec<u64> {
-        self.history_dir(id).map_or(vec![], |dir| crate::history::list(&dir))
-    }
-
-    pub fn version(&self, id: &str, time: u64) -> Result<String> {
-        crate::history::read(&self.history_dir(id)?, time)
-    }
-
-    /// A file's versions follow it. Losing them must not fail the move.
-    fn move_history(&self, old: &str, new: &str) {
-        let (Ok(from), Ok(to)) = (self.history_dir(old), self.history_dir(new)) else { return };
-        if !from.exists() { return; }
-        if let Some(parent) = to.parent() { let _ = std::fs::create_dir_all(parent); }
-        if let Err(e) = std::fs::rename(from, to) { eprintln!("Could not move the history of {old}: {e}"); }
+        Ok(Versions::of(&self.root, id))
     }
 
     /// A free name for `stem` in `parent`.
@@ -378,7 +289,7 @@ impl Store {
 
     pub fn create_from(&mut self, parent: Option<&str>, title: &str, text: &str) -> Result<String> {
         let id = self.free_id(parent, &file_stem(title), Some(EXTENSION))?;
-        write_atomic(&self.path(&id)?, text.as_bytes())?;
+        self.save(&id, text)?;
         Ok(id)
     }
 
@@ -393,43 +304,37 @@ impl Store {
     }
 
     /// Moves `old` to `new`, carrying app state, including for a folder's files,
-    /// and updates the paths in vault documents. Returns the documents rewritten.
-    fn relocate(&mut self, old: &str, new: &str) -> Result<Vec<String>> {
-        if old == new { return Ok(vec![]); }
+    /// and updates the paths in vault documents.
+    fn relocate(&mut self, old: &str, new: &str) -> Result<Moved> {
+        let mut outcome = Moved { id: new.to_string(), rewritten: vec![], warnings: vec![] };
+        if old == new { return Ok(outcome); }
         let target = self.path(new)?;
         // A change of case alone names the same file on case-insensitive disks.
         anyhow::ensure!(old.to_lowercase() == new.to_lowercase() || !target.try_exists()?, "{new} already exists");
         std::fs::rename(self.path(old)?, target)?;
-        self.move_history(old, new);
-        let prefix = format!("{old}/");
-        let moved: Vec<String> = self.index.keys().filter(|k| *k == old || k.starts_with(&prefix)).cloned().collect();
+        // A file's versions follow it. Losing them must not fail the move.
+        if let Err(e) = self.versions(old)?.move_to(&self.versions(new)?) { outcome.warnings.push(format!("Could not move the history of {old}: {e}")); }
+        let moved: Vec<String> = self.index.keys().filter(|k| paths::is_within(k, old)).cloned().collect();
         for key in moved {
-            if let Some(meta) = self.index.remove(&key) {
-                self.index.insert(format!("{new}{}", &key[old.len()..]), meta);
-            }
+            if let Some(meta) = self.index.remove(&key) && let Some(renamed) = paths::moved(&key, old, new) { self.index.insert(renamed, meta); }
         }
         self.save_index()?;
-        Ok(self.rewrite_references(old, new))
+        self.rewrite_references(old, new, &mut outcome);
+        Ok(outcome)
     }
 
     /// Fixes paths that the move from `old` to `new` broke. A file that cannot
     /// be rewritten keeps its text and raises a warning.
-    fn rewrite_references(&mut self, old: &str, new: &str) -> Vec<String> {
-        let swap = |path: &str, from: &str, to: &str| {
-            if path == from { return Some(to.to_string()); }
-            path.strip_prefix(from)?.strip_prefix('/').map(|rest| format!("{to}/{rest}"))
-        };
-        let mut rewritten = vec![];
+    fn rewrite_references(&mut self, old: &str, new: &str, outcome: &mut Moved) {
         for entry in self.list().into_iter().filter(|e| e.typst) {
             let Ok(text) = self.load(&entry.id) else { continue };
-            let previous = swap(&entry.id, new, old).unwrap_or_else(|| entry.id.clone());
-            let Some(updated) = crate::references::rewrite_paths(&text, &previous, &entry.id, |path| swap(path, old, new)) else { continue };
+            let previous = paths::moved(&entry.id, new, old).unwrap_or_else(|| entry.id.clone());
+            let Some(updated) = crate::references::rewrite_paths(&text, &previous, &entry.id, |path| paths::moved(path, old, new)) else { continue };
             match self.save(&entry.id, &updated) {
-                Ok(()) => rewritten.push(entry.id),
-                Err(e) => self.warnings.push(format!("Could not update paths in {}: {e}", entry.id)),
+                Ok(()) => outcome.rewritten.push(entry.id),
+                Err(e) => outcome.warnings.push(format!("Could not update paths in {}: {e}", entry.id)),
             }
         }
-        rewritten
     }
 
     /// Copies the outside file `from` to `id`, never over an existing file.
@@ -441,28 +346,22 @@ impl Store {
         Ok(())
     }
 
-    /// Renames a file or folder in place. Returns its new id and the documents
-    /// whose paths were updated.
-    pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> {
-        let typst = self.path(id)?.is_file() && id.ends_with(".typ");
-        let new = join(parent_of(id), &renamed_file(title, typst));
-        let rewritten = self.relocate(id, &new)?;
-        Ok((new, rewritten))
+    /// Renames a file or folder in place.
+    pub fn rename(&mut self, id: &str, title: &str) -> Result<Moved> {
+        let typst = self.path(id)?.is_file() && is_document(id);
+        self.relocate(id, &join(parent_of(id), &renamed_file(title, typst)))
     }
 
-    /// Moves a file or folder into `parent`. Returns its new id and the
-    /// documents whose paths were updated.
-    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> {
+    /// Moves a file or folder into `parent`.
+    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<Moved> {
         if let Some(parent) = parent {
-            anyhow::ensure!(parent != id && !parent.starts_with(&format!("{id}/")), "A folder cannot move into itself");
+            anyhow::ensure!(!paths::is_within(parent, id), "A folder cannot move into itself");
         }
-        let new = join(parent, base_name(id));
-        let rewritten = self.relocate(id, &new)?;
-        Ok((new, rewritten))
+        self.relocate(id, &join(parent, base_name(id)))
     }
 
-    /// Moves a file or folder to the Trash.
-    pub fn delete(&mut self, id: &str) -> Result<()> {
+    /// Moves a file or folder to the Trash. Returns what went wrong without stopping it.
+    pub fn delete(&mut self, id: &str) -> Result<Vec<String>> {
         let from = self.path(id)?;
         let mut stamp = now_ms();
         // Items deleted together can share a millisecond.
@@ -481,23 +380,22 @@ impl Store {
             let _ = self.save_trash();
             return Err(error.into());
         }
-        self.index.retain(|k, _| k != id && !k.starts_with(&prefix));
-        if let Err(e) = self.save_index() {
-            self.warnings.push(format!("Moved to Trash, but the vault index could not be cleaned up: {e}"));
-        }
-        Ok(())
+        self.index.retain(|k, _| !paths::is_within(k, id));
+        Ok(self.save_index().err().map(|e| format!("Moved to Trash, but the vault index could not be cleaned up: {e}")).into_iter().collect())
     }
 
-    /// Trash contents, newest first, dropping what is past its time.
-    pub fn list_trash(&mut self) -> Vec<TrashEntry> {
-        let cutoff = now().saturating_sub(TRASH_DAYS * 24 * 3600);
+    /// Permanently deletes what is past its time in the Trash. Returns what could not be.
+    pub fn purge_expired(&mut self) -> Vec<String> {
+        let cutoff = now().saturating_sub(TRASH_DAYS * DAY);
         let expired: Vec<String> = self.trash.iter().filter(|(_, t)| t.deleted < cutoff).map(|(k, _)| k.clone()).collect();
-        for key in expired {
-            if let Err(e) = self.purge(&key) { self.warnings.push(format!("Could not empty Trash: {e}")); }
-        }
+        expired.iter().filter_map(|key| self.purge(key).err()).map(|e| format!("Could not empty Trash: {e}")).collect()
+    }
+
+    /// Trash contents, newest first.
+    pub fn list_trash(&self) -> Vec<TrashEntry> {
         let mut out: Vec<TrashEntry> = self.trash.iter().map(|(key, t)| TrashEntry {
             id: key.clone(),
-            title: base_name(&t.original).strip_suffix(".typ").unwrap_or(base_name(&t.original)).to_string(),
+            title: document_title(base_name(&t.original)).to_string(),
             deleted: t.deleted,
             parent: parent_of(&t.original).map(str::to_string),
         }).collect();
@@ -506,8 +404,7 @@ impl Store {
     }
 
     /// Puts a trashed item back, under a new name when its old one is taken.
-    /// Returns true in that case.
-    pub fn restore(&mut self, key: &str) -> Result<bool> {
+    pub fn restore(&mut self, key: &str) -> Result<Restored> {
         let entry = self.trash.get(key).cloned().context("Not in Trash")?;
         let original = &entry.original;
         let parent = parent_of(original);
@@ -528,10 +425,8 @@ impl Store {
         self.index.insert(target, entry.meta);
         self.trash.remove(key);
         self.save_index()?;
-        if let Err(e) = self.save_trash() {
-            self.warnings.push(format!("Restored, but the Trash index could not be cleaned up: {e}"));
-        }
-        Ok(taken)
+        let warnings = self.save_trash().err().map(|e| format!("Restored, but the Trash index could not be cleaned up: {e}")).into_iter().collect();
+        Ok(Restored { renamed: taken, warnings })
     }
 
     /// Permanently deletes a trashed item.
@@ -562,11 +457,11 @@ impl Store {
 
     pub fn settings(&self) -> Settings {
         let mut warnings = vec![];
-        load_json(&self.root.join(STATE_DIR).join("settings.json"), "settings", &mut warnings)
+        load_json(&self.state_file(SETTINGS_FILE), "settings", &mut warnings)
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
-        save_json(&self.root.join(STATE_DIR).join("settings.json"), settings)
+        save_json(&self.state_file(SETTINGS_FILE), settings)
     }
 
     /// Records that a document was opened.
@@ -592,6 +487,43 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vault(name: &str) -> Store {
+        let root = std::env::temp_dir().join(format!("thesio-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        Store::open_at(root).unwrap().0
+    }
+
+    #[test]
+    fn a_save_shows_in_the_list_even_within_the_same_second_and_size() {
+        let mut store = vault("bodies");
+        let id = store.create_from(None, "doc", "aaa").unwrap();
+        assert_eq!(store.list()[0].body, "aaa");
+        store.save(&id, "bbb").unwrap();
+        assert_eq!(store.list()[0].body, "bbb");
+    }
+
+    #[test]
+    fn listing_the_trash_deletes_nothing() {
+        let mut store = vault("trash");
+        let id = store.create(None).unwrap();
+        store.delete(&id).unwrap();
+        let key = store.list_trash()[0].id.clone();
+        store.trash.get_mut(&key).unwrap().deleted = 1;
+        assert_eq!(store.list_trash().len(), 1);
+        assert_eq!(store.purge_expired(), Vec::<String>::new());
+        assert!(store.list_trash().is_empty());
+    }
+
+    #[test]
+    fn a_move_reports_what_it_could_not_update() {
+        let mut store = vault("moved");
+        let id = store.create_from(None, "a", "x").unwrap();
+        store.create_from(None, "b", "#include \"a.typ\"").unwrap();
+        let moved = store.rename(&id, "c").unwrap();
+        assert_eq!((moved.id.as_str(), moved.rewritten.as_slice()), ("c.typ", ["b.typ".to_string()].as_slice()));
+        assert!(moved.warnings.is_empty());
+    }
 
     #[test]
     fn a_document_name_gets_one_extension() {
