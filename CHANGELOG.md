@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show which documents cite a source in the Library's panel, and go to the first citation on click.
 - Show the word count of the open file and the whole document under the preview, with every file's count in Word Count in the "…" menu.
 - Keep versions of `library.yaml` before changes, and restore them from Version History in the Library's "…" menu.
 - Keep earlier versions of each document automatically, and compare or restore them from Version History in its "…" menu.

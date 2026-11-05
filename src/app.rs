@@ -760,7 +760,10 @@ impl Workspace {
             self.trash = self.store.list_trash();
         }
         if matches!(view, View::Library | View::Sources) {
+            self.flush(cx);
             self.reload_library();
+            // Rebuilt on the next frame, with what documents cite now.
+            self.citations.close_inspector();
         }
         self.view = view;
         self.row_menu = None;

@@ -190,8 +190,8 @@ pub fn outline(root: &str, read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<
     out
 }
 
-/// `text` with every citation of `old` changed to `new`, or `None` without any.
-pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
+/// Where `key` is cited in `text`: the byte after each `@` or `<`.
+pub fn citations_of(text: &str, key: &str) -> Vec<usize> {
     let source = Source::detached(text);
     let mut starts = vec![];
     walk(&LinkedNode::new(source.root()), &mut |node| {
@@ -203,8 +203,14 @@ pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
             _ => None,
         };
         // Past the `@` or `<`.
-        if target.as_deref() == Some(old) { starts.push(node.offset() + 1); }
+        if target.as_deref() == Some(key) { starts.push(node.offset() + 1); }
     });
+    starts
+}
+
+/// `text` with every citation of `old` changed to `new`, or `None` without any.
+pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
+    let starts = citations_of(text, old);
     if starts.is_empty() { return None; }
     let mut out = text.to_string();
     for start in starts.into_iter().rev() { out.replace_range(start..start + old.len(), new); }

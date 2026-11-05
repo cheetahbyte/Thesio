@@ -695,6 +695,7 @@ mod tests {
         let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
         assert_eq!(references::rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");
         assert_eq!(references::rename_citation("nothing here", "old", "new"), None);
+        assert_eq!(references::citations_of(text, "old"), [5, 25, 46]);
     }
 
     #[test]

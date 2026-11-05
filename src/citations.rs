@@ -16,7 +16,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use thesio_core::references::{bibliography_style, cited_keys, included_files, rename_citation, set_bibliography_style};
+use thesio_core::references::{bibliography_style, cited_keys, citations_of, included_files, rename_citation, set_bibliography_style};
 
 const ROW_H: f32 = 32.;
 /// Rows inset their cells, so cell text lines up with the page title.
@@ -72,6 +72,8 @@ pub struct Inspector {
     error: Option<String>,
     /// The type menu, and where it opened.
     type_menu: Option<Point<Pixels>>,
+    /// The documents citing this entry: file, times cited, and where it first is.
+    cited_in: Vec<(String, usize, usize)>,
     _subs: Vec<Subscription>,
 }
 
@@ -158,6 +160,8 @@ pub struct Citations {
 }
 
 impl Citations {
+    pub(crate) fn close_inspector(&mut self) { self.inspector = None; }
+
     pub fn new(root: &Path, cx: &mut Context<Workspace>) -> Self {
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search library", cx);
@@ -717,7 +721,11 @@ impl Workspace {
         let mut subs = vec![];
         let key_field = self.inspector_field("knuth1984", &key, false, &mut subs, window, cx);
         let fields = values.into_iter().map(|(field, text)| (field, self.inspector_field(field.hint, &text, field.long, &mut subs, window, cx))).collect();
-        Some(Inspector { key, key_field, fields, error: None, type_menu: None, _subs: subs })
+        let cited_in = self.entries.iter().filter(|e| e.typst).filter_map(|e| {
+            let places = citations_of(&e.body, &key);
+            places.first().map(|first| (e.id.clone(), places.len(), *first))
+        }).collect();
+        Some(Inspector { key, key_field, fields, error: None, type_menu: None, cited_in, _subs: subs })
     }
 
     /// Esc: back to what the file holds.
@@ -1542,6 +1550,16 @@ impl Workspace {
             .child(row("Type".into(), type_button.into_any_element()))
             .children(inspector.fields.iter().map(|(field, entity)| row(field.label.into(), entity.clone().into_any_element())))
             .child(row("Citation Key".into(), inspector.key_field.clone().into_any_element()))
+            .child(div().mt(px(14.)).mb(px(2.)).pl(px(4.)).text_size(px(12.)).text_color(Theme::text_caption()).child("Cited In"))
+            .when(inspector.cited_in.is_empty(), |d| d.child(div().pl(px(4.)).text_size(px(13.)).text_color(Theme::text_placeholder()).child("No document yet")))
+            .children(inspector.cited_in.iter().enumerate().map(|(i, (id, count, first))| {
+                let (id, offset) = (id.clone(), *first);
+                div().id(("cited-in", i)).h(px(28.)).px(px(4.)).flex().items_center().gap(px(8.)).rounded(px(crate::ui::ROW_RADIUS)).cursor_pointer().text_size(px(13.))
+                    .active(|s| s.bg(Theme::fill_pressed()))
+                    .child(div().flex_1().min_w_0().truncate().child(ui_text(id.clone())))
+                    .child(div().flex_none().text_size(px(12.)).text_color(Theme::text_caption()).child(count.to_string()))
+                    .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&id, offset, window, cx)))
+            }))
             .when_some(inspector.error.clone(), |d, error| d.child(div().mt(px(8.)).text_size(px(12.)).line_height(px(16.)).text_color(theme::c(craft::R400)).child(error)))
             .into_any_element())
     }
