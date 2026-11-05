@@ -107,13 +107,7 @@ pub(crate) fn summary_text(text: String, mut hits: Vec<Range<usize>>, width: f32
     StyledText::new(text).with_runs(runs)
 }
 
-/// A result's icon: the page's emoji, or the page glyph.
-pub(crate) fn entry_icon(e: &Entry) -> Div {
-    match &e.icon {
-        Some(em) => div().flex_none().size(px(24.)).mr(px(10.)).flex().items_center().justify_center().text_size(px(20.)).child(em.clone()),
-        None => doc_icon(),
-    }
-}
+pub(crate) fn entry_icon(_: &Entry) -> Div { doc_icon() }
 
 /// A page without an emoji: the monochrome page glyph (the sidebar's), in
 /// a 24 slot.
@@ -210,7 +204,6 @@ impl Workspace {
         self.search_sel = Some(0);
         self.row_menu = None;
         self.doc_menu = false;
-        self.doc_sub = None;
         let search = self.search.clone();
         search.update(cx, |s, cx| {
             // The dialog's query reads at body size, above the 13pt rows.

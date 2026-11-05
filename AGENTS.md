@@ -1,28 +1,25 @@
 # Thesio
 
-Read PRODUCT.md for direction and docs/ARCHITECTURE.md before changing the engine. Code is the source of truth for UI details.
+Thesio is Obsidian for Typst: a plain-file vault of `.typ` notes and papers. Read PRODUCT.md for direction and docs/ARCHITECTURE.md before changing the engine.
 
 ## Code
 
 - rustfmt stays off: the compact style is deliberate. Match the surrounding code and its comment density.
-- `crates/core` (`thesio_core`) is the document engine and stays free of GPUI: model, format, editing core, library, import, Markdown export. Dependencies point from the root crate to core only.
-- Structural document edits go through `editor::Core`, in order: `checkpoint`, Core method, `Editor::changed()`. Add each new structural operation to `step` in `fuzz_tests.rs`.
-- Only `BlockKind::nests()` blocks and containers (quote, callout, grid, column) have children. Code blocks hold plain text.
-- DocxXML output is stable: `crates/core/tests/fixtures/all-blocks.xml` must round-trip unchanged. Add the canonical form of each new block there.
+- `crates/core` (`thesio_core`) stays free of GPUI: vault, compiler, buffer, syntax. Dependencies point from the root crate to core only.
+- A document's id is its vault-relative path. Anything that renames or moves a file goes through `Workspace::path_changed`.
+- Plain files come first. Keep app state in `.thesio/` only for what a file cannot hold, and keep the vault readable without the app.
+- All vault paths pass through `Store::path`, which rejects anything leaving the vault.
 - Colors use `Theme::*` tokens, then the `theme::craft` scale. Shadows use `theme::shadow_*`, menus use `ui::popover` and `ui::menu_row`.
 - Record every `vendor/` change in vendor/PATCHES.md. Patch markers there read `quiet.md:` for provenance.
-- Bump `store::FORMAT` when a library layout change would mislead older builds. New Meta fields take `#[serde(default)]`.
-- User-facing strings go through `tr(zh, en)`.
+- Bump `store::FORMAT` when a change to `.thesio/` would mislead older builds. New Meta fields take `#[serde(default)]`.
 
 ## Checks
 
-Run `scripts/check.sh` (tests plus clippy with zero warnings) before committing. After editing the core, also run `THESIO_FUZZ_SEEDS=2000 cargo test --release random_edits`.
-
-Code moves that keep the UI identical must pass `tools/harness/compare.py` with matching screenshots.
+Run `scripts/check.sh` (tests plus clippy with zero warnings) before committing. Without the Metal Toolchain, add `--features gpui/runtime_shaders` to the cargo commands.
 
 ## User data
 
-`~/Documents/Thesio` and `~/Documents/Quiet.md` hold real user documents. Tests use a temporary library through `THESIO_HOME`. Stop only processes running this checkout's own binary.
+`~/Documents/Thesio` holds real user documents. Tests and scripted runs use a temporary vault through `THESIO_HOME`. Stop only processes running this checkout's own binary.
 
 ## UI scripts
 

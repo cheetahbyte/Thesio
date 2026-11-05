@@ -5,7 +5,7 @@ use crate::{app::Workspace, theme::Theme};
 
 pub struct Shortcuts { base: Vec<KeyBinding>, custom: BTreeMap<String, String> }
 impl Global for Shortcuts {}
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join("shortcuts.json") }
+fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(".thesio/shortcuts.json") }
 pub fn init(cx: &mut App) {
     let base = cx.key_bindings().borrow().bindings().cloned().collect::<Vec<_>>();
     #[cfg(target_os = "windows")]
@@ -31,20 +31,6 @@ fn windows_binding(binding: KeyBinding) -> Option<KeyBinding> {
     KeyBinding::load(&keys, binding.action().boxed_clone(), binding.predicate(), false, binding.action_input(), &DummyKeyboardMapper).ok()
 }
 
-#[cfg(all(test, target_os = "windows"))]
-mod tests {
-    use super::windows_binding;
-    use gpui::KeyBinding;
-    #[test]
-    fn copy_and_inline_code_keep_distinct_windows_shortcuts() {
-        use crate::editor::keymap::{Copy, InlineCode};
-        let copy = windows_binding(KeyBinding::new("cmd-c", Copy, Some("Editor"))).unwrap();
-        let code = windows_binding(KeyBinding::new("cmd-ctrl-c", InlineCode, Some("Editor"))).unwrap();
-        assert_eq!(copy.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>(), ["ctrl-c"]);
-        assert_eq!(code.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>(), ["ctrl-shift-c"]);
-        assert_ne!(copy.keystrokes(), code.keystrokes());
-    }
-}
 /// The user's keys, for `hint` (which runs where no `App` is at hand).
 static CUSTOM: std::sync::RwLock<BTreeMap<String, String>> = std::sync::RwLock::new(BTreeMap::new());
 static HINTS: std::sync::Mutex<BTreeMap<String, &'static str>> = std::sync::Mutex::new(BTreeMap::new());
@@ -83,6 +69,7 @@ const GROUPS: [(&str, &str); 5] = [("应用与窗口", "App & windows"), ("文�
 fn info(name: &str) -> Option<(usize, &'static str, &'static str)> {
     Some(match name.rsplit("::").next().unwrap_or(name) {
         "NewDoc" => (0, "新建文档", "New document"),
+        "NewFolder" => (0, "新建文件夹", "New folder"),
         "CloseWindow" => (0, "关闭窗口", "Close window"),
         "HideApp" => (0, "隐藏 Thesio", "Hide Thesio"),
         "Minimize" => (0, "最小化窗口", "Minimize window"),
@@ -91,51 +78,13 @@ fn info(name: &str) -> Option<(usize, &'static str, &'static str)> {
         "GoHome" => (0, "返回主页", "Go to Home"),
         "ToggleSidebar" => (0, "展开 / 收起侧栏", "Show / hide sidebar"),
         "FocusSearch" => (0, "搜索文档", "Search documents"),
-        "ToggleShortcuts" => (0, "查看快捷键", "Show shortcuts"),
         "ImportDoc" => (1, "导入文档", "Import documents"),
-        "Save" => (1, "保存文档", "Save document"),
-        "EditMode" => (1, "编辑模式", "Edit mode"),
-        "ReadMode" => (1, "阅读模式", "Reading mode"),
-        "FindInDoc" => (1, "文档内查找", "Find in document"),
-        "ReplaceInDoc" => (1, "查找和替换", "Find and replace"),
         "Undo" => (2, "撤销", "Undo"),
         "Redo" => (2, "重做", "Redo"),
         "Copy" => (2, "复制", "Copy"),
         "Cut" => (2, "剪切", "Cut"),
         "Paste" => (2, "粘贴", "Paste"),
         "SelectAll" => (2, "全选", "Select all"),
-        "PastePlain" => (2, "粘贴为纯文本", "Paste as plain text"),
-        "Link" => (2, "插入链接", "Insert link"),
-        "InsertReminder" => (2, "插入提醒", "Insert reminder"),
-        "MoveBlockUp" => (2, "上移当前块", "Move block up"),
-        "MoveBlockDown" => (2, "下移当前块", "Move block down"),
-        "ToggleTodo" => (2, "切换任务完成状态", "Check / uncheck to-do"),
-        "Bold" => (3, "加粗", "Bold"),
-        "Italic" => (3, "斜体", "Italic"),
-        "Underline" => (3, "下划线", "Underline"),
-        "Strike" => (3, "删除线", "Strikethrough"),
-        "InlineCode" => (3, "行内代码", "Inline code"),
-        "ApplyLastColor" => (3, "应用上次的文字色和背景色", "Apply last colors"),
-        "TurnText" => (4, "正文", "Text"),
-        "TurnH1" => (4, "1 级标题", "Heading 1"),
-        "TurnH2" => (4, "2 级标题", "Heading 2"),
-        "TurnH3" => (4, "3 级标题", "Heading 3"),
-        "TurnH4" => (4, "4 级标题", "Heading 4"),
-        "TurnH5" => (4, "5 级标题", "Heading 5"),
-        "TurnH6" => (4, "6 级标题", "Heading 6"),
-        "TurnH7" => (4, "7 级标题", "Heading 7"),
-        "TurnH8" => (4, "8 级标题", "Heading 8"),
-        "TurnH9" => (4, "9 级标题", "Heading 9"),
-        "TurnOrdered" => (4, "有序列表", "Numbered list"),
-        "TurnBullet" => (4, "无序列表", "Bulleted list"),
-        "TurnTodo" => (4, "任务列表", "To-do list"),
-        "TurnCode" => (4, "代码块", "Code block"),
-        "TurnQuote" => (4, "引用", "Quote"),
-        "InsertDivider" => (4, "分隔线", "Divider"),
-        "InsertTable" => (4, "插入表格", "Insert table"),
-        "AlignLeft" => (4, "左对齐", "Align left"),
-        "AlignCenter" => (4, "居中对齐", "Align center"),
-        "AlignRight" => (4, "右对齐", "Align right"),
         _ => return None,
     })
 }

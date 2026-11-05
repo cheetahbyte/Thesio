@@ -206,3 +206,11 @@ pub fn vault_path(root: &Path, path: &Path) -> Option<String> {
     let vpath = VirtualPath::virtualize(root, path).ok()?;
     Some(vpath.get_without_slash().to_string())
 }
+
+/// One page's content hash, and its image unless `known` already has that hash.
+pub fn render_changed(document: &PagedDocument, scale: f32, known: &[u128]) -> Vec<(u128, Option<PageImage>)> {
+    (0..document.pages().len()).map(|i| {
+        let hash = typst::utils::hash128(&document.pages()[i]);
+        (hash, (!known.contains(&hash)).then(|| render_page(document, i, scale)).flatten())
+    }).collect()
+}

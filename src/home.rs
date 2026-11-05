@@ -4,14 +4,9 @@
 //! hairline list with quiet hover fills, white cards and pills, native menus.
 
 use crate::app::{RowMenu, Workspace};
-#[path = "home_preview_style.rs"]
-mod bs;
-#[path = "home_text.rs"]
-mod text_preview;
 #[path = "home_scrollbar.rs"]
 mod scrollbar;
 use crate::settings::display_title;
-use crate::model::BlockKind;
 use crate::search::doc_icon;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
@@ -53,231 +48,6 @@ impl Col {
 const RECENT_COLS: [Col; 3] = [Col::Modified, Col::Created, Col::Visited];
 const STARRED_COLS: [Col; 4] = [Col::Modified, Col::Created, Col::Visited, Col::Starred];
 
-/// Bounded document trees retain formatting without retaining a whole long document.
-type EquationNumbers = HashMap<crate::model::BlockId, u32>;
-struct ThumbContent { blocks: Vec<crate::model::Block>, eqnos: EquationNumbers, cover: Option<crate::model::Cover> }
-type Thumb = Rc<ThumbContent>;
-
-fn thumb_blocks(blocks: &[crate::model::Block], budget: &mut usize, depth: usize, numbers: &EquationNumbers, eqnos: &mut EquationNumbers) -> Vec<crate::model::Block> {
-    if depth > 8 { return vec![]; }
-    let mut out = vec![];
-    let mut sequence = 0;
-    for b in blocks {
-        if *budget == 0 { break; }
-        *budget -= 1;
-        let end = b.text.text.char_indices().nth(600).map_or(b.text.text.len(), |(i, _)| i);
-        // A table owns its cell trees inside the kind, so bound those before cloning.
-        let kind = match &b.kind {
-            BlockKind::Table(t) => {
-                let nr = t.rows.len().min(6); let nc = t.col_widths.len().min(6);
-                let rows = t.rows.iter().take(nr).enumerate().map(|(r, row)| row.iter().take(nc).enumerate().map(|(c, cell)| {
-                    crate::model::TableCell { blocks: thumb_blocks(&cell.blocks, budget, depth + 1, numbers, eqnos), bg: cell.bg.clone(), valign: cell.valign.clone(),
-                        colspan: cell.colspan.min((nc - c) as u32), rowspan: cell.rowspan.min((nr - r) as u32) }
-                }).collect()).collect();
-                BlockKind::Table(crate::model::Table { col_widths: t.col_widths.iter().take(nc).copied().collect(), header_rows: t.header_rows.min(nr), header_col: t.header_col, rows })
-            }
-            BlockKind::Image { src, width, height, .. } => {
-                let mut kind = b.kind.clone();
-                // Resolve missing dimensions once per cached thumbnail, not each frame.
-                let dimensions = crate::store::image_path(src).and_then(|p| image::ImageReader::open(p).ok())
-                    .and_then(|r| r.with_guessed_format().ok()).and_then(|r| r.into_dimensions().ok());
-                let (iw, ih) = dimensions.map(|(w, h)| (w.max(1) as f32, h.max(1) as f32)).unwrap_or((690., 460.));
-                let w = width.unwrap_or_else(|| height.map(|h| h * iw / ih).unwrap_or(iw)).max(1.);
-                let h = height.unwrap_or(w * ih / iw).max(1.);
-                if let BlockKind::Image { width, height, .. } = &mut kind { *width = Some(w); *height = Some(h); }
-                kind
-            }
-            BlockKind::Raw { tag, .. } => BlockKind::Raw { tag: tag.clone(), xml: String::new() },
-            kind => kind.clone(),
-        };
-        let text = b.text.slice(0..end);
-        let mut preview = crate::model::RichText::default();
-        for (range, marks) in text.spans() {
-            let mut marks = marks.clone();
-            if marks.inline.as_ref().is_some_and(|i| i.equation().is_some()) {
-                preview.push(&text.text[range], marks);
-                continue;
-            }
-            let label = marks.inline.as_ref().map(|inline| match &inline.kind {
-                crate::model::InlineKind::Equation(_) => unreachable!(),
-                crate::model::InlineKind::File(file) => file.name.clone(),
-                crate::model::InlineKind::Button(button) => button.text.clone(),
-                crate::model::InlineKind::Reminder(reminder) => {
-                    let (y, m, d, h, mi) = crate::time::civil(reminder.expire.max(0) as u64 / 1000);
-                    if reminder.whole_day { format!("{y}-{m:02}-{d:02}") } else { format!("{y}-{m:02}-{d:02} {h:02}:{mi:02}") }
-                },
-                crate::model::InlineKind::DocLink(doc) => display_title(&doc.title).to_string(),
-                crate::model::InlineKind::Other { tag } => tag.clone(),
-            }).map(|label| label.chars().take(160).collect::<String>());
-            if let Some(inline) = &marks.inline { match &inline.kind {
-                crate::model::InlineKind::Equation(_) => {},
-                crate::model::InlineKind::Button(_) => marks.bold = true,
-                crate::model::InlineKind::DocLink(_) | crate::model::InlineKind::File(_) => marks.link = Some(String::new()),
-                _ => {},
-            } }
-            marks.inline = None;
-            preview.push(&text.text[range].replace('\u{fffc}', label.as_deref().unwrap_or("")), marks);
-        }
-        let mut copy = crate::model::Block::new(kind, preview);
-        if let Some(n) = numbers.get(&b.id) { eqnos.insert(copy.id, *n); }
-        if let BlockKind::Ordered { seq } = &mut copy.kind { sequence = seq.unwrap_or(sequence + 1); *seq = Some(sequence); } else { sequence = 0; }
-        copy.bg = b.bg.clone(); copy.align = b.align;
-        copy.children = thumb_blocks(&b.children, budget, depth + 1, numbers, eqnos);
-        out.push(copy);
-    }
-    out
-}
-
-fn thumb_block(b: &crate::model::Block, depth: usize, inherited: Hsla, quote: bool, eqnos: &EquationNumbers) -> AnyElement {
-    thumb_block_in(b, depth, inherited, quote, false, 0, eqnos)
-}
-
-fn thumb_block_in(b: &crate::model::Block, depth: usize, inherited: Hsla, quote: bool, cell: bool, list_depth: usize, eqnos: &EquationNumbers) -> AnyElement {
-    let s = bs::SCALE;
-    let metrics = bs::typography(&b.kind);
-    let (font_size, line_height) = if cell && !matches!(b.kind, BlockKind::Heading { .. } | BlockKind::Code { .. }) { (14., 22.) } else { (metrics.size, metrics.line_height) };
-    let done = matches!(b.kind, BlockKind::Todo { done: true });
-    let color = if done { Theme::todo_done() } else { inherited };
-    let mut node = div().w_full().min_w_0().flex_none().flex().flex_col()
-        .text_size(px(font_size * s)).line_height(px(line_height * s)).text_color(color)
-        .when(b.kind.has_text(), |d| d.min_h(px(line_height * s)));
-    if let Some(bg) = b.bg.as_ref().and_then(|c| theme::block_bg(&c.0)) { node = node.rounded(px(6. * s)).bg(bs::display_fill(bg)); }
-    match &b.kind {
-        BlockKind::Image { src, width, height, caption, .. } => {
-            let path = crate::store::image_path(src);
-            let ratio = width.unwrap_or(690.).max(1.) / height.unwrap_or(460.).max(1.);
-            node = match b.align { crate::model::Align::Left => node.items_start(), crate::model::Align::Center => node.items_center(), crate::model::Align::Right => node.items_end() };
-            // Reserve the proportional height at the available width before loading.
-            let media = div().relative().flex_none().w_full().max_w_full().overflow_hidden().when_some(*width, |d, w| d.w(px(w * s)))
-                .map(|mut d| { d.style().aspect_ratio = Some(ratio); d });
-            node = node.child(if let Some(path) = path {
-                media.child(img(path).absolute().inset_0().size_full().min_w_0().min_h_0().rounded(px(bs::RADIUS * s)).object_fit(ObjectFit::Contain)).into_any_element()
-            } else {
-                media.rounded(px(bs::RADIUS * s)).bg(bs::code_surface()).flex().items_center().justify_center().child(icon("image-broken", 24. * s, Theme::text_disabled())).into_any_element()
-            });
-            return node.when_some(caption.as_ref().filter(|c| !c.is_empty()), |d, caption| d.child(div().w_full().max_w_full().when_some(*width, |d, w| d.w(px(w * s))).mt(px(6. * s)).text_size(px(13. * s)).line_height(px(20. * s)).text_color(Theme::text_caption()).text_center().child(caption.clone()))).into_any_element();
-        }
-        BlockKind::Divider => return node.h(px(25. * s)).justify_center().child(div().h(px(s)).w_full().bg(Theme::line_divider())).into_any_element(),
-        BlockKind::Grid => node = node.flex_row().gap(px(20. * s)),
-        BlockKind::Column { .. } => node = node.flex_1(),
-        BlockKind::Quote => node = node.relative().py(px(bs::QUOTE_PAD * s)).pl(px(bs::QUOTE_INSET * s))
-            .child(div().absolute().left_0().top_0().bottom_0().w(px(bs::QUOTE_BAR * s)).rounded_full().bg(color)),
-        BlockKind::Callout { emoji, bg, border, text_color } => {
-            let tc = text_color.as_ref().and_then(|c| theme::text_color(&c.0)).map(bs::display_ink).unwrap_or(color);
-            let mut body = div().flex_1().min_w_0().flex().flex_col();
-            if depth < 8 { for (i, child) in b.children.iter().enumerate() {
-                let gap = if i == 0 { 0. } else { bs::gap(&b.children[i - 1].kind).1.max(bs::gap(&child.kind).0) };
-                body = body.child(div().mt(px(gap * s)).child(thumb_block_in(child, depth + 1, tc, quote, cell, list_depth, eqnos)));
-            } }
-            let first_line = b.children.first().map(|b| bs::typography(&b.kind).line_height).unwrap_or(theme::BODY_LINE);
-            return node.relative().p(px(bs::INSET * s)).rounded(px(bs::CALLOUT_RADIUS * s)).border(px(s)).border_color(bs::border(border.as_ref().map(|c| c.0.as_str()))).bg(bs::fill(bg.as_ref().map(|c| c.0.as_str())))
-                .child(div().flex().gap(px(bs::ICON_GAP * s)).child(div().size(px(bs::ICON * s)).mt(px((first_line - bs::ICON) / 2. * s)).text_size(px(20. * s)).line_height(px(22. * s)).flex_none().child(emoji.clone())).child(body)).into_any_element();
-        }
-        BlockKind::Code { lang, caption, wrap } => {
-            node = node.rounded(px(bs::RADIUS * s)).border(px(s)).border_color(Theme::line_border()).bg(bs::code_surface()).font_family(theme::MONO_FONT)
-                .child(div().h(px(bs::CODE_HEADER * s)).pl(px(28. * s)).pr(px(8. * s)).rounded_t(px((bs::RADIUS - 1.) * s)).bg(bs::code_header()).flex().items_center().font_family(theme::UI_FONT).text_size(px(13. * s)).text_color(Theme::text_caption()).child(caption.clone().unwrap_or_else(|| "Code block".into())));
-            let spans = crate::highlight::spans(lang, &b.text.text);
-            let mut body = div().pt(px(14. * s)).pb(px(18. * s)).pr(px(20. * s)).flex().flex_col();
-            let mut off = 0;
-            for (i, line) in b.text.text.split('\n').enumerate() {
-                let end = off + line.len();
-                let mut cuts = vec![off, end];
-                for (r, _, _) in &spans {
-                    if r.start > off && r.start < end { cuts.push(r.start); }
-                    if r.end > off && r.end < end { cuts.push(r.end); }
-                }
-                cuts.sort_unstable(); cuts.dedup();
-                let runs = cuts.windows(2).map(|r| {
-                    let h = spans.iter().find(|(h, _, _)| h.start <= r[0] && r[1] <= h.end);
-                    let mut f = font(theme::MONO_FONT); if h.is_some_and(|(_, _, it)| *it) { f.style = FontStyle::Italic; }
-                    TextRun { len: r[1] - r[0], font: f, color: h.map_or(Theme::text_code(), |(_, c, _)| *c), background_color: None, underline: None, strikethrough: None }
-                }).collect::<Vec<_>>();
-                body = body.child(div().flex().items_start()
-                    .child(div().w(px(bs::CODE_GUTTER * s)).mr(px(bs::CODE_GAP * s)).flex_none().text_right().text_color(Theme::text_caption()).child((i + 1).to_string()))
-                    .child(div().min_w_0().flex_1().overflow_hidden().when(!*wrap, |d| d.whitespace_nowrap()).child(if line.is_empty() { StyledText::new(" ") } else { StyledText::new(line.to_string()).with_runs(runs) })));
-                off = end + 1;
-            }
-            return node.child(body).into_any_element();
-        }
-        BlockKind::Table(table) => {
-            let widths: Vec<f32> = table.col_widths.iter().map(|w| w * s).collect();
-            let mut table_el = div().grid().grid_col_widths(widths.clone()).w(px(widths.iter().sum())).max_w_full();
-            for (r, c, value) in table.cells() {
-                let (rs, cs) = (value.rowspan as usize, value.colspan as usize);
-                let header = r < table.header_rows || (table.header_col && c == 0);
-                let mut col = div().min_w_0().flex().flex_col().row_start(r as i16 + 1).row_end((r + rs) as i16 + 1).col_start(c as i16 + 1).col_end((c + cs) as i16 + 1)
-                    .p(px(8. * s)).border_r(px(s)).border_b(px(s)).when(r == 0, |d| d.border_t(px(s))).when(c == 0, |d| d.border_l(px(s))).border_color(bs::table_line())
-                    .when(header, |d| d.bg(Theme::table_header())).when_some(value.bg.as_ref().and_then(|c| theme::block_bg(&c.0)), |d, c| d.bg(bs::display_fill(c)))
-                    .map(|d| match value.valign.as_deref() { Some("middle") => d.justify_center(), Some("bottom") => d.justify_end(), _ => d });
-                for (i, child) in value.blocks.iter().enumerate() {
-                    let gap = if i == 0 { 0. } else { bs::gap(&value.blocks[i - 1].kind).1.min(6.).max(bs::gap(&child.kind).0.min(8.)) };
-                    col = col.child(div().mt(px(gap * s)).child(thumb_block_in(child, depth + 1, color, quote, true, 0, eqnos)));
-                }
-                table_el = table_el.child(col);
-            }
-            return node.child(table_el).into_any_element();
-        }
-        BlockKind::File(f) => return node.p(px(12. * s)).rounded(px(bs::RADIUS * s)).border(px(s)).border_color(Theme::line_border()).bg(bs::code_surface()).flex_row().items_center().gap(px(12. * s))
-            .child(icon("file-text", 30. * s, Theme::text_caption())).child(div().flex_1().min_w_0().text_size(px(15. * s)).font_weight(FontWeight::MEDIUM).child(f.name.clone())).into_any_element(),
-        BlockKind::Countdown(c) => {
-            let left = c.remaining(crate::time::now_ms());
-            let color = u32::from_str_radix(c.color.trim_start_matches('#'), 16).map(theme::c).unwrap_or(Theme::primary_500());
-            let mut ink = bs::display_ink(color); ink.l = ink.l.min(0.38);
-            let mut row = div().flex().justify_center().gap(px(16. * s));
-            for (i, value) in [left / 86400, left / 3600 % 24, left / 60 % 60, left % 60].into_iter().enumerate() {
-                row = row.child(div().flex().flex_col().items_center().child(div().size(px(52. * s)).rounded(px(8. * s)).bg(bs::highlight(color)).flex().items_center().justify_center().font_family(theme::MONO_FONT).font_weight(FontWeight::MEDIUM).text_size(px(26. * s)).text_color(ink).child(format!("{value:02}")))
-                    .child(div().mt(px(4. * s)).text_size(px(14. * s)).line_height(px(20. * s)).text_color(Theme::text_caption()).child(["d", "h", "min", "s"][i])));
-            }
-            return node.py(px(18. * s)).rounded(px(bs::RADIUS * s)).border(px(s)).border_color(Theme::line_border()).bg(bs::code_surface()).child(row).into_any_element();
-        }
-        BlockKind::SubPageList => {
-            node = node.p(px(8. * s)).rounded(px(bs::RADIUS * s)).border(px(s)).border_color(Theme::line_border()).bg(Theme::bg_overlay());
-            if b.children.is_empty() { return node.h(px(96. * s)).justify_center().text_center().text_color(Theme::text_caption()).child("No child pages yet").into_any_element(); }
-            for child in &b.children { node = node.child(div().py(px(9. * s)).px(px(6. * s)).flex().items_start().gap(px(6. * s)).child(icon("doc", 16. * s, Theme::text_caption())).child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).child(child.text.text.clone()))); }
-            return node.into_any_element();
-        }
-        BlockKind::Raw { tag, .. } => return node.p(px(8. * s)).rounded(px(8. * s)).bg(Theme::bg_overlay()).text_color(Theme::text_caption()).child(format!("<{tag}> Preserved content")).into_any_element(),
-        _ => {}
-    }
-    if b.kind.has_text() {
-        let runs = b.text.runs.iter().map(|r| {
-            let mut f = font(if r.marks.code { theme::MONO_FONT } else { theme::UI_FONT });
-            f.weight = if r.marks.bold { FontWeight::BOLD } else { bs::weight(&b.kind) };
-            if r.marks.italic || quote { f.style = FontStyle::Italic; }
-            let mut ink = if r.marks.link.is_some() { Theme::link() } else { r.marks.text_color.as_ref().and_then(|c| theme::text_color(&c.0)).map(bs::display_ink).unwrap_or(color) };
-            if done { ink.a = 0.5; }
-            let mark = r.marks.bg_color.as_ref().and_then(|c| theme::bg_color(&c.0)).map(bs::highlight);
-            TextRun { len: r.len, font: f, color: if mark.is_some() { crate::theme::on_mark(ink) } else { ink },
-                background_color: mark.or_else(|| r.marks.code.then(bs::code_surface)),
-                underline: (r.marks.underline || r.marks.link.is_some()).then_some(UnderlineStyle { thickness: px(s), color: None, wavy: false }),
-                strikethrough: (r.marks.strike || done).then_some(StrikethroughStyle { thickness: px(s), color: None }) }
-        }).collect::<Vec<_>>();
-        let marker = match b.kind {
-            BlockKind::Bullet => Some(div().w(px(24. * s)).h(px(line_height * s)).pl(px(4. * s)).flex_none().flex().items_center().child(match list_depth % 3 {
-                0 => div().size(px(5.5 * s)).rounded_full().bg(Theme::text_caption()),
-                1 => div().size(px(5.5 * s)).rounded_full().border(px(s)).border_color(Theme::text_caption()),
-                _ => div().size(px(5. * s)).bg(Theme::text_caption()),
-            }).into_any_element()),
-            BlockKind::Ordered { seq } => Some(div().min_w(px(18. * s)).mr(px(6. * s)).flex_none().text_color(Theme::text_caption()).child(crate::editor::core::ordered_marker(seq.unwrap_or(1), list_depth)).into_any_element()),
-            BlockKind::Todo { done } => Some(div().w(px(24. * s)).h(px(line_height * s)).flex_none().flex().items_center().child(div().size(px(16. * s)).rounded(px(4. * s)).border(px(s)).border_color(if done { Theme::primary_500() } else { Theme::text_disabled() }).bg(if done { Theme::primary_500() } else { Theme::bg_body() }).flex().items_center().justify_center().when(done, |d| d.child(icon("todo-check", 12. * s, gpui::white())))).into_any_element()),
-            _ => None,
-        };
-        let text = if b.text.runs.iter().any(|r| r.marks.inline.as_ref().is_some_and(|i| i.equation().is_some())) {
-            text_preview::PreviewText { text: b.text.clone(), runs, size: font_size * s, line_height: line_height * s, align: b.align, eq_counter: eqnos.get(&b.id).copied().unwrap_or(0) }.into_any_element()
-        } else { StyledText::new(b.text.text.clone()).with_runs(runs).into_any_element() };
-        node = node.child(div().flex().items_start().children(marker).child(div().min_w_0().flex_1().map(|d| match b.align { crate::model::Align::Center => d.text_center(), crate::model::Align::Right => d.text_right(), _ => d }).child(text)));
-    }
-    if depth < 8 { for (i, child) in b.children.iter().enumerate() {
-        let nested = b.kind.nests();
-        let gap = if i == 0 { if nested { 8. } else { 0. } } else { bs::gap(&b.children[i - 1].kind).1.max(bs::gap(&child.kind).0) };
-        node = node.child(div().min_w_0().when(!matches!(b.kind, BlockKind::Grid), |d| d.mt(px(gap * s)))
-            .when(nested, |d| d.pl(px(25. * s)))
-            .when(matches!(b.kind, BlockKind::Grid), |d| d.flex().w_0().map(|mut d| { d.style().flex_grow = Some(match child.kind { BlockKind::Column { ratio } => ratio, _ => 1. }); d }))
-            .child(thumb_block_in(child, depth + 1, color, quote || matches!(b.kind, BlockKind::Quote), cell, list_depth + usize::from(nested), eqnos)));
-    } }
-    node.into_any_element()
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HomeSort { Visited, Modified, Created, Title }
 impl HomeSort {
@@ -304,7 +74,6 @@ pub struct Home {
     list_scrollbar: Rc<scrollbar::Scrollbar>,
     sort: HomeSort,
     pub sort_menu: bool,
-    thumbs: RefCell<HashMap<String, (u64, Thumb)>>,
     /// Last-frame bounds of the controls the popovers hang from.
     anchors: Rc<RefCell<HashMap<&'static str, Bounds<Pixels>>>>,
 }
@@ -320,7 +89,6 @@ impl Default for Home {
             list_scrollbar: Default::default(),
             sort: HomeSort::Visited,
             sort_menu: false,
-            thumbs: Default::default(),
             anchors: Default::default(),
         }
     }
@@ -377,19 +145,15 @@ fn weight3(mut d: Div) -> Div {
     d
 }
 
-/// A document's icon: its emoji, or the monochrome page glyph.
-fn entry_icon(e: &Entry) -> AnyElement {
-    match &e.icon {
-        Some(em) => div().size(px(24.)).mr(px(12.)).flex_none().flex().items_center().justify_center().text_size(px(18.)).child(em.clone()).into_any_element(),
-        None => doc_icon().mr(px(12.)).into_any_element(),
-    }
+fn entry_icon(_: &Entry) -> AnyElement {
+    doc_icon().mr(px(12.)).into_any_element()
 }
 
 impl Workspace {
     fn home_entries(&self) -> Vec<Entry> {
         let mut v: Vec<Entry> = match self.home.tab {
-            HomeTab::Recent => self.entries.clone(),
-            HomeTab::Starred => self.entries.iter().filter(|e| e.meta.starred > 0).cloned().collect(),
+            HomeTab::Recent => self.entries.iter().filter(|e| !e.folder).cloned().collect(),
+            HomeTab::Starred => self.entries.iter().filter(|e| !e.folder && e.meta.starred > 0).cloned().collect(),
         };
         v.sort_by(|a, b| {
             let order = match self.home.sort {
@@ -403,41 +167,6 @@ impl Workspace {
         v
     }
 
-    fn thumb(&self, e: &Entry) -> Thumb {
-        use std::hash::{Hash, Hasher};
-        let children: Vec<&Entry> = self.entries.iter().filter(|p| p.meta.parent.as_deref() == Some(e.id.as_str())).collect();
-        let mut stamp = rustc_hash::FxHasher::default();
-        e.meta.modified.hash(&mut stamp);
-        crate::settings::feishu().hash(&mut stamp);
-        for child in &children { (&child.id, &child.title, &child.icon).hash(&mut stamp); }
-        let stamp = stamp.finish();
-        if let Some((m, t)) = self.home.thumbs.borrow().get(&e.id)
-            && *m == stamp { return t.clone(); }
-        // The derived rows exist only in this preview tree and never enter the editor/store.
-        fn subpages(blocks: &mut [crate::model::Block], entries: &[&Entry], budget: &mut usize) {
-            for b in blocks {
-                if matches!(b.kind, BlockKind::SubPageList) {
-                    b.children = entries.iter().take(*budget).map(|e| crate::model::Block::text(&format!("{}{}", e.icon.as_ref().map(|i| format!("{i} ")).unwrap_or_default(), display_title(&e.title)))).collect();
-                    *budget -= b.children.len();
-                } else {
-                    subpages(&mut b.children, entries, budget);
-                    if let BlockKind::Table(t) = &mut b.kind { for row in &mut t.rows { for cell in row { subpages(&mut cell.blocks, entries, budget); } } }
-                }
-            }
-        }
-        let mut budget = 64;
-        let mut eqnos = HashMap::new();
-        let mut cover = None;
-        let mut blocks = self.store.load(&e.id).map(|doc| {
-            cover = doc.cover.clone();
-            let numbers = crate::editor::equation_numbers(&doc);
-            thumb_blocks(&doc.blocks, &mut budget, 0, &numbers, &mut eqnos)
-        }).unwrap_or_default();
-        subpages(&mut blocks, &children, &mut budget);
-        let t: Thumb = Rc::new(ThumbContent { blocks, eqnos, cover });
-        self.home.thumbs.borrow_mut().insert(e.id.clone(), (stamp, t.clone()));
-        t
-    }
 
     fn open_row_menu(&mut self, id: &str, key: &str, cx: &mut Context<Self>) {
         let b = self.more_bounds.borrow().get(key).copied();
@@ -717,29 +446,10 @@ impl Workspace {
     fn render_home_card(&self, e: &Entry, card_h: f32, cx: &mut Context<Self>) -> AnyElement {
             let id = e.id.clone();
             let id2 = e.id.clone();
-            let thumb = self.thumb(e);
-            let page = if thumb.blocks.is_empty() && e.title.trim().is_empty() {
-                div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .child(img("illus/blank-doc.svg").size(px(64.)))
-                    .child(div().mt(px(4.)).text_size(px(14.)).line_height(px(22.)).text_color(Theme::text_placeholder()).child("Untitled"))
-            } else {
-                let mut p = div().size_full().p(px(18.)).overflow_hidden().flex().flex_col();
-                p = p.child(div().flex_none().flex().items_start().gap(px(6.)).mb(px(8.))
-                    .when_some(e.icon.as_ref(), |d, emoji| d.child(div().flex_none().text_size(px(14.)).line_height(px(20.)).child(emoji.clone())))
-                    .child(div().min_w_0().text_size(px(14.)).line_height(px(20.)).font_weight(FontWeight::BOLD).child(e.title.clone())));
-                for (i, block) in thumb.blocks.iter().enumerate() {
-                    let (mt, _) = bs::gap(&block.kind);
-                    let prev = if i == 0 { 0. } else { bs::gap(&thumb.blocks[i - 1].kind).1 };
-                    p = p.child(div().flex_none().mt(px(mt.max(prev) * bs::SCALE)).child(thumb_block(block, 0, Theme::text(), false, &thumb.eqnos)));
-                }
-                p
-            };
-            let cover = thumb.cover.as_ref().and_then(|c| crate::store::image_path(&c.src));
+            let preview: String = e.body.lines().filter(|l| !l.trim().is_empty()).take(12).collect::<Vec<_>>().join("\n");
+            let page = div().size_full().p(px(18.)).overflow_hidden().flex().flex_col()
+                .child(div().flex_none().mb(px(8.)).min_w_0().text_size(px(14.)).line_height(px(20.)).font_weight(FontWeight::BOLD).child(display_title(&e.title)))
+                .child(div().flex_1().min_h_0().overflow_hidden().text_size(px(11.)).line_height(px(16.)).font_family(theme::MONO_FONT).text_color(Theme::text_caption()).child(preview));
             let frame = 4.;
             let menu_on = self.row_menu.as_ref().is_some_and(|m| m.id == e.id);
                 div()
@@ -759,7 +469,6 @@ impl Workspace {
                             cx.notify();
                         }),
                     )
-                    .when_some(cover, |d, path| d.child(img(path).absolute().inset_0().size_full().object_fit(ObjectFit::Fill)))
                     .child(crate::ui::continuous_page(20. - frame).size_full().overflow_hidden().child(page.relative()))
                     .child(crate::ui::continuous_corner_mask(20., Theme::bg_body()))
                     .child(

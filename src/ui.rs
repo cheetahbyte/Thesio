@@ -2,7 +2,7 @@
 
 use crate::theme::{self, Theme, craft};
 use crate::time::civil;
-use gpui::{prelude::FluentBuilder, *};
+use gpui::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,7 +14,6 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
 pub enum ToastKind {
     Success,
     Error,
-    Info,
 }
 
 /// Toast: a white rounded card 32px below the top, centred, with a filled
@@ -34,7 +33,6 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, win
     let (fill, mark, mark_size) = match kind {
         ToastKind::Success => (theme::c(craft::old::G500), "check", 10.),
         ToastKind::Error => (Theme::danger(), "x", 10.),
-        ToastKind::Info => (Theme::primary(), "info-mark", 12.),
     };
     let vw = window.viewport_size().width;
     let card = div()
@@ -381,18 +379,6 @@ pub trait TipExt: Sized {
         };
         self.tip_label(label, TipSide::Below)
     }
-    /// Document controls: above, in the editor's shortcut format
-    /// ("粗体 (⌘ + B)"), optionally with a "Markdown: …" second line.
-    fn tip_above(self, text: &str, keys: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, None), TipSide::Above)
-    }
-    fn tip_md(self, text: &str, keys: Option<&str>, md: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, md), TipSide::Above)
-    }
-    /// Menu items: to the right.
-    fn tip_right(self, text: &str, keys: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, None), TipSide::Right)
-    }
     fn tip_label(self, label: String, side: TipSide) -> Self;
 }
 
@@ -439,19 +425,6 @@ pub(crate) fn window_controls(window: &Window) -> Option<Div> {
             .child(icon("x", 18., Theme::icon()))))
 }
 
-/// "名称 (键 + 键)" plus an optional "Markdown: …" line.
-pub fn doc_tip(text: &str, keys: Option<&str>, md: Option<&str>) -> String {
-    let text = crate::settings::text(text);
-    let mut s = match keys {
-        Some(k) => format!("{text} ({k})"),
-        None => text.to_string(),
-    };
-    if let Some(m) = md {
-        s.push_str("\nMarkdown: ");
-        s.push_str(crate::settings::text(m));
-    }
-    s
-}
 
 impl TipExt for Stateful<Div> {
     fn tip_label(self, label: String, side: TipSide) -> Self {
@@ -466,51 +439,9 @@ impl TipExt for Stateful<Div> {
     }
 }
 
-/// Human-friendly modification time ("今天 14:03", "昨天", "10月3日").
-pub fn format_time(secs: u64) -> String {
-    let now = crate::time::now();
-    let (y, mo, d, h, mi) = civil(secs);
-    let (ny, nmo, nd, _, _) = civil(now);
-    let (yy, ymo, yd, _, _) = civil(now.saturating_sub(86_400));
-    if (y, mo, d) == (ny, nmo, nd) {
-        format!("Today {h:02}:{mi:02}")
-    } else if (y, mo, d) == (yy, ymo, yd) {
-        format!("Yesterday {h:02}:{mi:02}")
-    } else if y == ny {
-        format!("{mo:02}-{d:02}")
-    } else {
-        format!("{y}-{mo:02}-{d:02}")
-    }
-}
 
-/// Header status time ("刚刚", "5 分钟前", then like `format_time`).
-pub fn format_ago(secs: u64) -> String {
-    let ago = crate::time::now().saturating_sub(secs);
-    if ago < 60 {
-        "just now".into()
-    } else if ago < 3600 {
-        format!("{} min ago", ago / 60)
-    } else {
-        format_time(secs)
-    }
-}
 
-/// Full date ("2025年12月2日"), as in 文档信息.
-pub fn format_date(secs: u64) -> String {
-    let (y, mo, d, _, _) = civil(secs);
-    format!("{y}-{mo:02}-{d:02}")
-}
 
-/// Relative time for 文档信息 ("几秒前", "3 分钟前", "2 小时前", then the date).
-pub fn format_relative(secs: u64) -> String {
-    let ago = crate::time::now().saturating_sub(secs);
-    match ago {
-        0..60 => "a few seconds ago".into(),
-        60..3600 => format!("{} min ago", ago / 60),
-        3600..86_400 => format!("{} hours ago", ago / 3600),
-        _ => format_date(secs),
-    }
-}
 
 /// Search result times (`space.date_format.*`): "刚刚", "N 分钟前",
 /// "今天 / 昨天 / 前天 HH:mm", "M月D日 HH:mm", across years "YYYY年M月D日".
@@ -866,14 +797,3 @@ pub fn header_icon(id: &'static str, name: &'static str) -> Stateful<Div> {
         .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(name, 18., Theme::icon()))
 }
 
-pub(crate) fn checkbox(on: bool) -> Div {
-    div()
-        .size(px(16.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(4.))
-        .when(on, |d| d.bg(Theme::primary()).child(icon("todo-check", 12., Theme::bg_body())))
-        .when(!on, |d| d.border_1().border_color(Theme::todo_box()).bg(crate::theme::raised(Theme::bg_body())))
-}

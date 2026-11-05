@@ -2,7 +2,7 @@
 
 A local-first workspace for academic research and writing. See [PRODUCT.md](PRODUCT.md) for the pitch.
 
-Thesio starts from [quiet.md](https://github.com/s1dashu/quiet-md) commit `937b254` (MIT), a native Rust and GPUI notes app. The app still behaves like that notes app: documents are stored as DocxXML, and there is no citation or Typst support yet.
+Thesio edits plain `.typ` files in a folder you own, with a live preview compiled by [Typst](https://typst.app/). Notes and papers share one vault, so `#include` and citations work across everything. Its window and sidebar started from [quiet.md](https://github.com/s1dashu/quiet-md) commit `937b254` (MIT).
 
 ## Build
 
@@ -16,11 +16,11 @@ scripts/preview.sh                            # bundle and launch dist-preview/T
 
 To build without the Metal Toolchain, compile shaders at startup instead: `cargo build --release --features gpui/runtime_shaders`.
 
-The default library is `~/Documents/Thesio`. Set `THESIO_HOME` to use another folder.
+The default vault is `~/Documents/Thesio`. Set `THESIO_HOME` to use another folder.
 
 ## Docs
 
-Conventions are in [AGENTS.md](AGENTS.md). The docs under [docs/](docs/) describe the architecture and storage format inherited from quiet.md.
+Conventions are in [AGENTS.md](AGENTS.md). The architecture and vault format are described in [docs/](docs/).
 
 ## License
 

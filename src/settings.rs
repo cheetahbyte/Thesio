@@ -1,38 +1,27 @@
-//! 设置: preferences (`preferences.json` in the library root) and the
+//! Settings: preferences (`.thesio/preferences.json` in the vault) and the
 //! settings view — a category list in the sidebar, one page per category,
 //! each page a column of grouped rows. Only what a
 //! user really needs to change lives here.
 
-use crate::{app::{View, Workspace}, theme::{self, craft, Theme}, themes, ui};
+use crate::{app::{View, Workspace}, theme::{self, craft, Theme}, ui};
 use crate::ui::{TitleBarExt, TipExt};
 use crate::sidebar as sb;
 use gpui::{prelude::FluentBuilder, *};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 // ---- preferences
 
-static FEISHU: AtomicBool = AtomicBool::new(false);
 static PREFS: RwLock<Option<Preferences>> = RwLock::new(None);
 
-/// The active document theme draws blocks the 飞书 way (else Craft's).
-pub fn feishu() -> bool { FEISHU.load(Ordering::Relaxed) }
-pub(crate) fn set_base(feishu: bool) { FEISHU.store(feishu, Ordering::Relaxed); }
 pub fn english() -> bool { true }
 pub fn tr(_zh: &'static str, en: &'static str) -> &'static str { en }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    /// Document theme id (themes.rs); empty in files from before themes, see `feishu`.
-    pub theme: String,
-    /// The old two-way switch, still written so older builds keep the base style.
-    pub feishu: bool,
     /// Retained for compatibility with existing preferences and older builds.
     pub english: bool,
-    /// Fetch `http(s)` images referenced by documents.
-    pub remote_images: bool,
     /// Retained for compatibility with existing preferences and older builds.
     pub quick_hotkey: bool,
     /// Light or dark look: "light", "dark", or empty to follow the system.
@@ -40,16 +29,11 @@ pub struct Preferences {
 }
 
 impl Default for Preferences {
-    fn default() -> Self { Preferences { theme: String::new(), feishu: true, english: true, remote_images: true, quick_hotkey: true, appearance: String::new() } }
+    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new() } }
 }
 
-impl Preferences {
-    pub fn theme_id(&self) -> String {
-        if !self.theme.is_empty() { self.theme.clone() } else if self.feishu { "feishu".into() } else { "craft".into() }
-    }
-}
 
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join("preferences.json") }
+fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(".thesio/preferences.json") }
 
 pub fn load() {
     let p = std::fs::read(path()).ok().and_then(|b| serde_json::from_slice::<Preferences>(&b).ok()).unwrap_or_default();
@@ -57,9 +41,6 @@ pub fn load() {
 }
 
 fn apply(p: Preferences) {
-    FEISHU.store(p.feishu, Ordering::Relaxed);
-    // Before the themes are read (startup) the base comes from `feishu`.
-    themes::select(&p.theme_id());
     *PREFS.write().unwrap() = Some(p);
 }
 
@@ -89,9 +70,7 @@ pub fn sync_dark(cx: &App) -> bool {
         "dark" => true,
         _ => matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark),
     };
-    let changed = theme::set_dark(on);
-    if changed { themes::touch(); }
-    changed
+    theme::set_dark(on)
 }
 
 /// The current preferences (loaded on first use).
@@ -102,7 +81,7 @@ pub fn prefs() -> Preferences {
 
 fn save(p: &Preferences) -> anyhow::Result<()> {
     use std::io::Write;
-    let root = crate::store::Store::root_dir();
+    let root = crate::store::Store::root_dir().join(".thesio");
     std::fs::create_dir_all(&root)?;
     let tmp = root.join("preferences.json.tmp");
     let mut f = std::fs::File::create(&tmp)?;
@@ -118,9 +97,6 @@ pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
     fn refresh(ws: &mut Workspace, cx: &mut Context<Workspace>) {
         ws.settings_filter.update(cx, |f, cx| { f.placeholder_color = Theme::text_disabled(); f.set_placeholder(tr("搜索快捷键", "Search shortcuts"), cx) });
         ws.search.update(cx, |f, _| f.placeholder_color = Theme::text_disabled());
-        if let Some(editor) = &ws.editor {
-            editor.update(cx, |e, cx| { e.cache.borrow_mut().clear(); e.refresh_theme(); cx.notify(); });
-        }
         cx.notify();
     }
     refresh(this, cx);
@@ -140,25 +116,7 @@ pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
     cx.refresh_windows();
 }
 
-/// A theme file in the user's editor; scripted runs only log it (they must
-/// not start other apps).
-fn open_in_editor(p: &std::path::Path, cx: &mut App) {
-    if std::env::var_os("THESIO_SCRIPT").is_some() { eprintln!("devtools: open {}", p.display()); return }
-    cx.open_url(&format!("file://{}", p.display()));
-}
 
-/// Theme files are watched: saving one in an editor redraws at once.
-pub(crate) fn watch_themes(cx: &mut Context<Workspace>) {
-    static LAST: Mutex<Option<Vec<(std::path::PathBuf, std::time::SystemTime, u64)>>> = Mutex::new(None);
-    *LAST.lock().unwrap() = Some(themes::stamp());
-    cx.spawn(async |this, cx| loop {
-        cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
-        let now = cx.background_executor().spawn(async { themes::stamp() }).await;
-        let changed = { let mut l = LAST.lock().unwrap(); let c = l.as_ref() != Some(&now); *l = Some(now); c };
-        if changed && this.update(cx, |w, cx| w.reload_themes(cx)).is_err() { break }
-        if this.upgrade().is_none() { break }
-    }).detach();
-}
 
 // ---- the view
 
@@ -217,15 +175,7 @@ fn row(title: impl Into<SharedString>, desc: Option<SharedString>, control: impl
         .child(div().flex_none().flex().items_center().gap(px(8.)).child(control))
 }
 
-fn desc(s: &'static str) -> Option<SharedString> { Some(s.into()) }
 
-/// The switch: the accent when on, black 16% when off, a white knob.
-pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
-    div().id(id).flex_none().w(px(32.)).h(px(19.)).p(px(2.)).rounded_full().cursor_pointer().flex().items_center()
-        .when(on, |d| d.bg(Theme::primary()).justify_end())
-        .when(!on, |d| d.bg(theme::ca(craft::N1000, 0.16)).justify_start())
-        .child(div().size(px(15.)).rounded_full().bg(gpui::white()).shadow(theme::shadow_button()))
-}
 
 /// A segmented control: a grey groove and a white selected pill.
 fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
@@ -264,188 +214,6 @@ pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<
         .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text()).child(label)
 }
 
-// ---- theme preview
-
-/// Preview scale against the real document. Its frame clips to a rectangle
-/// (GPUI masks have no radius), so the page is rounded inside the frame.
-const PAGE_S: f32 = 0.78;
-
-/// 外观's sample page: a short document with most of what a theme styles
-/// (headings, inline styles, lists, a task, quote, callout, table, divider,
-/// highlighted code), at scale `s`, in two columns so it reads at a glance.
-fn sample_page(t: &themes::Theme, s: f32) -> Div {
-    let st = t.style;
-    let sc = |v: f32| px((v * s).max(0.5));
-    let text = st.color("page.color").unwrap_or_else(|| st.token("text"));
-    let (body, line) = (st.num("page.size"), st.num("page.line"));
-    let (font, mono): (SharedString, SharedString) = (st.font("page.font").into(), st.font("pre.font").into());
-    let gap = sc(st.num("p.gap")).clamp(px(4.), px(9.));
-    let p = |c: Div| c.text_size(sc(body)).line_height(sc(line));
-    let heading = |l: u8, s: &'static str| {
-        let h = format!("h{l}");
-        div().text_size(sc(st.num(&format!("{h}.size")))).line_height(sc(st.num(&format!("{h}.line")))).font_weight(FontWeight(st.num(&format!("{h}.weight"))))
-            .text_color(st.color(&format!("{h}.color")).unwrap_or(text)).child(s)
-    };
-    let link = st.color("a.color").unwrap_or(text);
-    let chip = |s: &'static str| div().px(sc(st.num("code.pad")).max(px(2.))).rounded(sc(st.num("code.radius"))).bg(st.color("code.bg").unwrap_or_else(|| st.token("code_chip")))
-        .border_1().border_color(st.color("code.border").unwrap_or_else(|| st.token("code_chip_border"))).font_family(mono.clone()).text_color(st.color("code.color").unwrap_or(text)).child(s);
-    let para = p(div().flex().flex_wrap().items_center())
-        .child(tr("Thesio 是一款", "Thesio is a "))
-        .child(div().font_weight(FontWeight(st.num("strong.weight"))).text_color(st.color("strong.color").unwrap_or(text)).child(tr("本地优先的学术写作工作区", "local-first academic workspace")))
-        .child(tr("，", ", "))
-        .child(tr("文档就是电脑上的文件。", "your notes are files. "))
-        .child(tr("输入 ", "Type "))
-        .child(chip("/"))
-        .child(tr(" 插入内容，", " to insert, "))
-        .child(tr("详见", "see "))
-        // The full stop rides with the link, so it never wraps alone.
-        .child(div().flex().child(div().text_color(link).when(st.flag("a.underline"), |d| d.underline()).child(tr("写作基础", "Writing basics"))).child(tr("。", ".")));
-    let indent = sc(st.num("list.indent")).max(px(10.));
-    let marker = |m: Div| div().flex_none().w(indent).flex().justify_center().child(m);
-    let bullet_c = st.color("bullet.color").unwrap_or(text);
-    let bullet = |s: &'static str| div().flex().items_center().child(marker(div().size(sc(6.).max(px(3.))).rounded_full().bg(bullet_c))).child(p(div()).child(s));
-    let num_c = st.color("number.color").unwrap_or(text);
-    let number = |n: &'static str, s: &'static str| div().flex().items_center().child(marker(p(div()).text_color(num_c).child(n))).child(p(div()).child(s));
-    let task_size = st.num("task.size");
-    let task = |done: bool, label: &'static str| div().flex().items_center().child(marker(
-            div().size(sc(task_size)).rounded(sc(st.num("task.radius"))).flex().items_center().justify_center()
-                .when(done, |d| d.bg(st.color("task.checked").unwrap_or_else(|| st.token("primary")))
-                    .child(ui::icon("todo-check", (task_size * s * 0.75).round(), st.color("task.check").unwrap_or_else(gpui::white))))
-                .when(!done, |d| d.border_1().border_color(st.color("task.border").unwrap_or_else(|| st.token("todo_box"))))))
-        .child(p(div()).child(label).when(done, |d| d.text_color(st.color("done.color").unwrap_or_else(|| st.token("todo_done"))).when(st.flag("done.strike"), |d| d.line_through())));
-    let quote = div().flex().gap(sc((st.num("quote.indent") - st.num("quote.bar")).max(4.)))
-        .child(div().flex_none().w(sc(st.num("quote.bar")).max(px(1.))).rounded(px(1.)).bg(st.color("quote.bar-color").unwrap_or_else(|| st.token("quote_bar"))))
-        .child(p(div()).text_color(st.color("quote.color").unwrap_or(text)).when(st.flag("quote.italic"), |d| d.italic()).child(tr("每一篇指南都是用 Thesio 写成的，放心修改。", "Every guide is written in Thesio. Edit them freely.")));
-    let callout = div().px(sc(st.num("callout.pad-x"))).py(sc(st.num("callout.pad-y"))).rounded(sc(st.num("callout.radius")))
-        .bg(st.named("callout", "light-yellow").unwrap_or_else(|| st.token("code_chip")))
-        .when(st.num("callout.border") > 0., |d| d.border(sc(st.num("callout.border")).max(px(1.))).border_color(st.named("border", "yellow").unwrap_or_else(|| st.token("code_chip_border"))))
-        .child(p(div().flex().gap(px(6.))).child("💡").child(tr("一边读一边动手试，记得最快。", "Try things as you read; it sticks faster.")));
-    let line_c = st.color("table.line").unwrap_or_else(|| st.token("table_line"));
-    let cell = |s: &'static str, head: bool| div().flex_1().px(px(6.)).py(px(3.)).when(head, |d| d.bg(st.color("th.bg").unwrap_or_else(|| st.token("table_header"))).font_weight(FontWeight::SEMIBOLD)).child(s);
-    let row = |a: &'static str, b: &'static str, head: bool, last: bool| div().flex().when(!last, |d| d.border_b_1().border_color(line_c))
-        .child(cell(a, head).border_r_1().border_color(line_c)).child(cell(b, head));
-    let table = div().w_full().rounded(sc(st.num("table.radius"))).border_1().border_color(line_c).overflow_hidden()
-        .text_size(sc(st.num("table.size"))).line_height(sc(st.num("table.line-height")))
-        .child(row(tr("按键", "Keys"), tr("作用", "Does"), true, false)).child(row("⌘ N", tr("新建文档", "New document"), false, false)).child(row("⌘ J", tr("搜索所有文档", "Search documents"), false, true));
-    let (hr_c, hr_w) = (st.color("hr.color").unwrap_or_else(|| st.token("separator_dots")), (st.num("hr.width") * s).max(0.6));
-    // Painted to the column's width: a row of fixed-size dots would set the
-    // column's minimum width and squeeze its neighbour.
-    let hr_style = st.line("hr.style");
-    let hr = canvas(|_, _, _| {}, move |b, _, window, _| {
-        let (step, dash) = match hr_style { themes::LineStyle::Solid => return window.paint_quad(fill(Bounds::new(b.origin, size(b.size.width, px(hr_w))), hr_c)), themes::LineStyle::Dashed => (8., 4.), themes::LineStyle::Dotted => (hr_w + 2.5, hr_w) };
-        let mut x = 0.;
-        while x + dash <= f32::from(b.size.width) {
-            window.paint_quad(fill(Bounds::new(point(b.origin.x + px(x), b.origin.y), size(px(dash), px(hr_w))), hr_c).corner_radii(px(if hr_style == themes::LineStyle::Dotted { hr_w / 2. } else { 0. })));
-            x += step;
-        }
-    }).w_full().h(px(hr_w));
-    let syn = |k: &str| st.color(&format!("syntax.{k}")).unwrap_or(text);
-    let tok = |s: &'static str, c: Hsla| div().text_color(c).child(s);
-    let code_line = |n: &'static str, parts: Vec<Div>| div().flex()
-        .when(st.flag("pre.numbers"), |d| d.child(div().flex_none().w(px(16.)).mr(px(8.)).text_color(st.color("pre.number-color").unwrap_or_else(|| st.token("code_line_number"))).child(n)))
-        .children(parts);
-    let code = div().w_full().overflow_hidden().px(px(10.)).py(px(7.)).rounded(sc(st.num("pre.radius"))).bg(st.color("pre.bg").unwrap_or_else(|| st.token("code_bg")))
-        .border_1().border_color(st.color("pre.border").unwrap_or_else(|| st.token("code_border")))
-        .font_family(mono.clone()).text_size(sc(st.num("pre.size"))).line_height(sc(st.num("pre.line"))).text_color(st.color("pre.color").unwrap_or_else(|| st.token("code_text")))
-        .child(code_line("1", vec![tok("# ", syn("comment")), tok(tr("备份文档库", "back up your documents"), syn("comment"))]))
-        .child(code_line("2", vec![tok("cd ", syn("function")), tok("~/Documents ", text), tok("&& ", syn("keyword")), tok("tar ", syn("function")), tok("-czf ", syn("attr")), tok("\"Thesio.tar.gz\" ", syn("string")), tok("Thesio", text)]))
-        .child(code_line("3", vec![tok("echo ", syn("function")), tok("\"done\"", syn("string"))]));
-    // One column, like a page: a centred text column (the theme's width, scaled,
-    // up to 760 so a wide frame isn't mostly margin) whose bottom fades into
-    // the paper. Blocks come in the order the 开始指南 itself uses.
-    let paper = st.color("page.bg").unwrap_or_else(|| st.token("bg_body"));
-    // Its own bottom corners too: nothing clips it to the page's radius.
-    let fade = div().absolute().left_0().right_0().bottom_0().h(px(56.)).rounded_b(px(7.)).bg(linear_gradient(180., linear_color_stop(paper.opacity(0.), 0.), linear_color_stop(paper, 1.)));
-    // items_start: a column stretched to the frame would shrink its blocks to fit.
-    div().relative().size_full().flex().justify_center().items_start().bg(paper).font_family(font).text_color(text).overflow_hidden()
-        // min_w_0: the column follows the frame, not its widest unbreakable line.
-        .child(div().w_full().min_w_0().overflow_hidden().max_w((sc(st.num("page.width")) * 1.35).min(px(760.))).px(px(32.)).pt(px(22.)).flex().flex_col().gap(gap)
-            .child(div().text_size(sc(st.num("title.size"))).line_height(sc(st.num("title.size") * 1.25)).font_weight(FontWeight(st.num("title.weight")))
-                .font_family(SharedString::from(st.font("title.font"))).text_color(st.color("title.color").unwrap_or(text)).child(tr("开始指南", "Getting started")))
-            .child(para)
-            .child(callout)
-            .child(heading(1, tr("五分钟上手", "Five minutes")))
-            .child(div().flex().flex_col().child(task(true, tr("打开这份指南", "Open this guide"))).child(task(false, tr("按 ⌘ N 新建一篇文档", "Press ⌘ N for a new document"))))
-            .child(heading(2, tr("三种输入方式", "Three ways to write")))
-            .child(div().flex().flex_col().child(bullet(tr("斜杠菜单：输入 / 插入任意内容块", "Slash menu: type / to insert any block"))).child(bullet(tr("Markdown：# 加空格变标题", "Markdown: # and a space make a heading"))))
-            .child(div().flex().flex_col().child(number("1.", tr("先读「写作基础」", "Read Writing basics first"))).child(number("2.", tr("再看「内容块」", "Then Content blocks"))))
-            .child(quote)
-            .child(heading(3, tr("最常用的快捷键", "Shortcuts to know")))
-            .child(table)
-            .child(div().w_full().py(px(2.)).child(hr))
-            .child(code))
-        .child(fade)
-}
-
-fn badge(t: &themes::Theme) -> Option<&'static str> {
-    if t.customized() { Some(tr("已修改", "Edited")) } else if t.bundled.is_none() { Some(tr("自定义", "Custom")) } else { None }
-}
-
-/// A pop-up button (macOS): the current choice and a chevron on `button`'s white pill.
-fn popup_button(id: impl Into<ElementId>, label: impl Into<SharedString>, open: bool) -> Stateful<Div> {
-    div().id(id).flex_none().max_w(px(220.)).h(px(28.)).pl(px(12.)).pr(px(8.)).flex().items_center().gap(px(6.)).rounded(px(8.)).cursor_pointer()
-        .bg(if open { theme::c(craft::N100) } else { Theme::bg_body() }).border_1().border_color(Theme::button_border()).shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::N100))).active(|s| s.bg(theme::c(craft::N200)))
-        .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text())
-        .child(div().min_w_0().truncate().child(label.into()))
-        .child(ui::icon("chevron-down", 12., Theme::text_caption()))
-}
-
-fn apply_theme(w: &mut Workspace, id: String, cx: &mut Context<Workspace>) {
-    let feishu = themes::themes().iter().find(|t| t.id == id).is_some_and(|t| t.style.feishu);
-    w.theme_menu = None;
-    w.set_pref(move |p| { p.theme = id; p.feishu = feishu; }, cx)
-}
-
-impl Workspace {
-    /// A compact theme list; applying a choice updates the page preview below.
-    pub(crate) fn render_theme_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let focused = self.theme_menu.as_ref()?;
-        if self.view != View::Settings || self.settings_page != Page::Appearance { return None }
-        let b = self.theme_anchor.get()?;
-        let current = prefs().theme_id();
-        let list = themes::themes();
-        let rows: Vec<AnyElement> = list.iter().map(|t| {
-            let g = SharedString::from(format!("theme-opt-{}", t.id));
-            let (id, hover_id) = (t.id.clone(), t.id.clone());
-            ui::menu_row(g.clone(), g.clone())
-                .when(&t.id == focused, |d| d.bg(Theme::fill_hover()))
-                .child(div().flex_1().min_w_0().overflow_hidden().child(ui::menu_label(t.name().to_string(), g.clone(), gpui::white())))
-                .children(badge(t).map(|b| div().flex_none().text_size(px(11.)).text_color(Theme::text_caption()).child(ui::menu_label(b, g.clone(), gpui::white()))))
-                .child(div().flex_none().w(px(14.)).when(t.id == current, |d| d.child(ui::menu_glyph("check", 14., g.clone()))))
-                .on_hover(cx.listener(move |w, hovered: &bool, _, cx| if *hovered && w.theme_menu.as_ref() != Some(&hover_id) { w.theme_menu = Some(hover_id.clone()); cx.notify(); }))
-                .on_click(cx.listener(move |w, _, _, cx| apply_theme(w, id.clone(), cx)))
-                .into_any_element()
-        }).collect();
-        drop(list);
-        let anchor = self.theme_anchor.clone();
-        let menu = ui::popover().id("theme-menu").occlude().flex()
-            .on_mouse_down_out(cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                // A press on the button itself: its click closes the menu.
-                if anchor.get().is_some_and(|b| b.contains(&ev.position)) { return }
-                w.theme_menu = None;
-                cx.notify();
-            }))
-            .child(div().id("theme-menu-list").w(px(200.)).max_h(px(302.)).overflow_y_scroll().py(px(ui::MENU_PAD_Y)).flex().flex_col().children(rows));
-        Some(deferred(anchored().anchor(Corner::TopRight).position(point(b.right(), b.bottom() + px(4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
-    }
-
-    /// Keys while the theme dropdown is open; true when used.
-    pub(crate) fn theme_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        let ids: Vec<String> = themes::themes().iter().map(|t| t.id.clone()).collect();
-        let at = self.theme_menu.as_ref().and_then(|p| ids.iter().position(|id| id == p)).unwrap_or(0);
-        match key {
-            "escape" => self.theme_menu = None,
-            "up" => self.theme_menu = Some(ids[at.saturating_sub(1)].clone()),
-            "down" => self.theme_menu = Some(ids[(at + 1).min(ids.len().saturating_sub(1))].clone()),
-            "enter" | "space" => { apply_theme(self, ids[at].clone(), cx); return true }
-            _ => return false,
-        }
-        cx.notify();
-        true
-    }
-}
-
 impl Workspace {
     /// Change preferences and refresh what depends on them.
     pub(crate) fn set_pref(&mut self, f: impl FnOnce(&mut Preferences), cx: &mut Context<Self>) {
@@ -457,52 +225,19 @@ impl Workspace {
             return;
         }
         if p.appearance != old.appearance { apply_appearance(&p.appearance); }
-        if p.theme_id() != old.theme_id() || sync_dark(cx) {
+        if sync_dark(cx) {
             refresh_all(self, cx);
         }
         cx.notify();
     }
 
-    pub(crate) fn reload_themes(&mut self, cx: &mut Context<Self>) {
-        themes::load(&prefs().theme_id(), themes::all_loaded(), || cx.text_system().all_font_names());
-        refresh_all(self, cx);
-    }
 
-    /// Open the theme's stylesheet in the user's editor; a built-in theme is
-    /// first copied in full into the themes folder (the copy replaces it).
-    fn edit_theme(&mut self, id: &str, cx: &mut Context<Self>) {
-        match themes::editable_file(id) {
-            Ok(p) => {
-                self.reload_themes(cx);
-                open_in_editor(&p, cx);
-            }
-            Err(e) => self.show_toast_kind(ui::ToastKind::Error, &e.to_string(), cx),
-        }
-    }
 
-    fn duplicate_theme(&mut self, id: &str, cx: &mut Context<Self>) {
-        match themes::duplicate(id) {
-            Ok((new_id, p)) => {
-                themes::load(&new_id, themes::all_loaded(), || cx.text_system().all_font_names());
-                let feishu = themes::themes().iter().find(|t| t.id == new_id).is_some_and(|t| t.style.feishu);
-                self.set_pref(move |pr| { pr.theme = new_id; pr.feishu = feishu; }, cx);
-                open_in_editor(&p, cx);
-            }
-            Err(e) => self.show_toast_kind(ui::ToastKind::Error, &e.to_string(), cx),
-        }
-    }
 
-    fn remove_theme(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Err(e) = themes::remove(id) { return self.show_toast_kind(ui::ToastKind::Error, &e.to_string(), cx) }
-        self.reload_themes(cx);
-        // A deleted theme of the user's own: back to Craft.
-        if !themes::themes().iter().any(|t| t.id == id) { self.set_pref(|p| { p.theme = "craft".into(); p.feishu = false; }, cx); }
-    }
 
     pub(crate) fn open_settings(&mut self, page: Page, cx: &mut Context<Self>) {
         self.cancel_shortcut_recording(cx);
         self.settings_page = page;
-        self.theme_menu = None;
         self.settings_scroll.set_offset(point(px(0.), px(0.)));
         self.shortcut_error = None;
         if self.view != View::Settings { self.show_view(View::Settings, cx); }
@@ -588,67 +323,18 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn general_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = prefs();
-        div().w_full().flex().flex_col().gap(px(28.))
-            .child(group(None, vec![
-                row(tr("自动下载网络图片", "Download web images"), desc(tr("关闭后不联网，网络图片显示为占位，点击单独加载。", "When off the app stays offline; web images show a placeholder you can click to load.")),
-                    switch("pref-remote", p.remote_images).on_click(cx.listener(|w, _, _, cx| w.set_pref(|p| p.remote_images = !p.remote_images, cx)))).into_any_element(),
-            ]))
-            .into_any_element()
+    fn general_page(&self, _cx: &mut Context<Self>) -> AnyElement {
+        div().w_full().flex().flex_col().gap(px(28.)).into_any_element()
     }
 
     fn appearance_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = prefs().theme_id();
-        let list = themes::themes();
-        let sel = list.iter().find(|t| t.id == current).or_else(|| list.first());
-        let (sel_id, sel_name, sel_path, customized, own, warnings) = match sel {
-            Some(t) => (t.id.clone(), t.name().to_string(), t.path.clone(), t.customized(), t.bundled.is_none(), t.warnings.clone()),
-            None => ("craft".into(), "Craft".into(), None, false, false, vec![]),
-        };
-        drop(list);
-        let errors = themes::errors();
-        let where_: SharedString = match &sel_path {
-            // Inside the library: the short path (the full one wraps on narrow windows).
-            Some(p) => p.strip_prefix(crate::store::Store::root_dir()).unwrap_or(p).display().to_string().into(),
-            None => tr("内置主题", "Built in").into(),
-        };
-        let (edit_id, dup_id, rm_id, open_id) = (sel_id.clone(), sel_id.clone(), sel_id.clone(), sel_id);
-        let anchor = self.theme_anchor.clone();
-        let picker = popup_button("theme-picker", sel_name, self.theme_menu.is_some())
-            .child(canvas(move |b, _, _| anchor.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
-            .relative()
-            .on_click(cx.listener(move |w, _, _, cx| {
-                if w.theme_menu.is_none() && !themes::all_loaded() {
-                    themes::load(&prefs().theme_id(), true, || cx.text_system().all_font_names());
-                }
-                w.theme_menu = if w.theme_menu.is_some() { None } else { Some(open_id.clone()) };
-                cx.notify();
-            }));
-        // One group, top to bottom: the choice, how it looks, its stylesheet.
-        // The preview is a page of the theme on a quiet band, like a sheet on a desk.
-        let shown = { let list = themes::themes(); list.iter().find(|t| t.id == current).or_else(|| list.first()).map(|t| sample_page(t, PAGE_S).rounded(px(7.))) };
-        let sample = div().w_full().px(px(16.)).py(px(16.)).flex().justify_center().bg(Theme::fill_hover())
-            .child(div().w_full().h(px(360.)).rounded(px(8.)).overflow_hidden().border_1().border_color(Theme::line_border()).shadow(theme::shadow_button()).children(shown));
+        let at = match prefs().appearance.as_str() { "light" => 1, "dark" => 2, _ => 0 };
         div().w_full().flex().flex_col().gap(px(28.))
-            .child(div().w_full().flex().flex_col().gap(px(8.))
-                .child(group(None, vec![
-                    row(tr("外观", "Appearance"), None, {
-                        let at = match prefs().appearance.as_str() { "light" => 1, "dark" => 2, _ => 0 };
-                        segmented("appearance", &[tr("跟随系统", "System"), tr("浅色", "Light"), tr("深色", "Dark")], at,
-                            |w, i, cx| w.set_pref(|p| p.appearance = ["", "light", "dark"][i].into(), cx), cx)
-                    }).into_any_element(),
-                    row(tr("文档主题", "Document theme"), None, picker).into_any_element(),
-                    sample.into_any_element(),
-                    row(tr("主题 CSS", "Theme CSS"), Some(where_),
-                        div().flex().items_center().gap(px(8.))
-                            .when(customized || own, |d| d.child(link_button("theme-remove", if customized { tr("恢复默认", "Restore") } else { tr("删除", "Delete") })
-                                .on_click(cx.listener(move |w, _, _, cx| w.remove_theme(&rm_id, cx)))))
-                            .child(button("theme-duplicate", tr("复制为新主题", "Duplicate")).on_click(cx.listener(move |w, _, _, cx| w.duplicate_theme(&dup_id, cx))))
-                            .child(button("theme-edit", tr("编辑 CSS", "Edit CSS")).on_click(cx.listener(move |w, _, _, cx| w.edit_theme(&edit_id, cx))))).into_any_element(),
-                ]))
-                .children(errors.into_iter().chain(warnings.into_iter().take(8).map(|w| format!("{}：{w}", tr("未生效", "Ignored")))).map(|e| div().px(px(4.)).text_size(px(12.)).line_height(px(18.)).text_color(Theme::danger()).child(e)))
-                )
+            .child(group(None, vec![
+                row(tr("外观", "Appearance"), None,
+                    segmented("appearance", &[tr("跟随系统", "System"), tr("浅色", "Light"), tr("深色", "Dark")], at,
+                        |w, i, cx| w.set_pref(|p| p.appearance = ["", "light", "dark"][i].into(), cx), cx)).into_any_element(),
+            ]))
             .into_any_element()
     }
 
@@ -662,7 +348,7 @@ impl Workspace {
         } else { tr("在文件管理器中显示", "Show in File Manager") };
         div().w_full().flex().flex_col().gap(px(8.))
             .child(group(None, vec![
-                row(tr("文档库文件夹", "Documents folder"), Some(location.into()),
+                row(tr("文档库文件夹", "Vault folder"), Some(location.into()),
                     button("reveal-library", reveal).on_click(|_, _, cx| cx.reveal_path(&crate::store::Store::root_dir()))).into_any_element(),
                 row(tr("回收站", "Trash"), Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
                     button("open-trash", tr("打开", "Open")).on_click(cx.listener(|w, _, _, cx| w.show_view(View::Trash, cx)))).into_any_element(),
@@ -699,7 +385,6 @@ fn about_icon() -> ImageSource {
 
 pub fn label(text: impl AsRef<str>) -> String { localize(text.as_ref(), english()).to_string() }
 
-pub fn text(text: &str) -> &str { localize(text, english()) }
 
 pub(crate) fn localize(text: &str, _english: bool) -> &str {
     match text {
@@ -1148,7 +833,7 @@ macro_rules! localized_format {
 /// User titles are content, not translation keys.
 pub fn display_title(title: &str) -> String {
     let title = title.trim();
-    if title.is_empty() { text(crate::model::UNTITLED).to_string() } else { title.to_string() }
+    if title.is_empty() { crate::store::UNTITLED.to_string() } else { title.to_string() }
 }
 
 /// Core diagnostics stay independent of UI language. Only known message templates
@@ -1192,79 +877,4 @@ fn diagnostic_for(message: &str) -> String {
         }
     }
     localize(message, true).to_string()
-}
-
-#[cfg(test)]
-mod localization_tests {
-    use super::{localize, diagnostic_for, display_title};
-
-    #[test]
-    fn ui_keys_and_menu_tables_have_english_translations() {
-        fn check(key: &str) {
-            if key.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
-                assert_ne!(localize(key, true), key, "Missing English UI translation: {key}");
-                assert_eq!(localize(key, false), localize(key, true));
-            }
-        }
-        fn walk(dir: &std::path::Path, pattern: &regex::Regex) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() { walk(&path, pattern); }
-                else if path.extension().is_some_and(|ext| ext == "rs") {
-                    let source = std::fs::read_to_string(path).unwrap();
-                    for hit in pattern.captures_iter(source.split("#[cfg(test)]").next().unwrap()) { check(&hit[1]); }
-                }
-            }
-        }
-        let pattern = regex::Regex::new(r#"settings::(?:text|label)\("([^"\\]*)""#).unwrap();
-        walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &pattern);
-        for item in crate::editor::menus::SLASH_ITEMS { check(item.label); }
-        for item in crate::editor::menus::TURN_ITEMS { check(item.label); check(item.tip); if let Some(md) = item.md { check(md); } }
-        for group in crate::editor::menus::GROUPS { check(group.title); }
-    }
-
-    #[test]
-    fn diagnostics_preserve_paths_and_identifiers() {
-        let source = "无法清理过期回收站文档 我的笔记.xml：Permission denied";
-        assert_eq!(diagnostic_for(source), "Could not remove expired Trash document 我的笔记.xml: Permission denied");
-        assert_eq!(diagnostic_for("文档索引已损坏，已从备份恢复（原文件保留为 index.json.bad）"), "Document index was damaged and restored from backup (original retained as index.json.bad).");
-        assert_eq!(diagnostic_for("unknown OS error"), "unknown OS error");
-    }
-
-    #[test]
-    fn user_titles_are_never_translation_keys() {
-        for title in ["主页", "收藏", "未命名文档", "My notes", "我的中文笔记"] { assert_eq!(display_title(title), title); }
-    }
-}
-
-#[cfg(test)]
-mod preference_tests {
-    use super::{english, tr, Preferences};
-
-    #[test]
-    fn saved_language_is_preserved_but_does_not_change_ui_language() {
-        let saved: Preferences = serde_json::from_str(r#"{"english":false}"#).unwrap();
-        assert!(!saved.english);
-        assert!(!serde_json::from_str::<Preferences>(&serde_json::to_string(&saved).unwrap()).unwrap().english);
-        assert!(english());
-        assert_eq!(tr("中文", "English"), "English");
-    }
-
-    #[test]
-    fn new_preferences_use_feishu_without_overriding_saved_themes() {
-        assert_eq!(Preferences::default().theme_id(), "feishu");
-        for (json, expected) in [
-            (r#"{}"#, "feishu"),
-            (r#"{"feishu":false}"#, "craft"),
-            (r#"{"feishu":true}"#, "feishu"),
-            (r#"{"theme":"notion","feishu":false}"#, "notion"),
-            (r#"{"theme":"craft","feishu":true}"#, "craft"),
-            (r#"{"theme":"my-theme"}"#, "my-theme"),
-        ] {
-            let saved: Preferences = serde_json::from_str(json).unwrap();
-            assert_eq!(saved.theme_id(), expected);
-            let round_trip: Preferences = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
-            assert_eq!(round_trip.theme_id(), expected);
-        }
-    }
 }

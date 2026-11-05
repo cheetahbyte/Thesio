@@ -163,10 +163,7 @@ impl Workspace {
                             .pl(px(24.))
                             .flex()
                             .items_center()
-                            .child(match &t.icon {
-                                Some(e) => div().size(px(24.)).mr(px(10.)).flex_none().flex().items_center().justify_center().text_size(px(18.)).child(e.clone()),
-                                None => doc_icon(),
-                            })
+                            .child(doc_icon())
                             .child(div().min_w_0().text_size(px(15.)).line_height(px(22.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(title))),
                     )
                     .child(
@@ -239,7 +236,6 @@ impl Workspace {
         }
         self.entries = self.store.list();
         self.sort();
-        self.sync_sub_pages(cx);
         self.trash = self.store.list_trash();
         self.show_store_warnings(cx);
     }
@@ -284,23 +280,12 @@ impl Workspace {
             ),
             Confirm::Restore(_) => ("Restore this document?".to_string(), "The document will be restored to its original location.".to_string(), "Restore", false),
             Confirm::Purge(_) => ("Delete permanently?".to_string(), "This page and its child pages cannot be recovered after permanent deletion.".to_string(), "Delete", true),
-            Confirm::Refs { show: false, .. } => (
-                "Hide references?".to_string(),
-                "The reference list will be hidden. To show it again, open the document’s More menu and turn on Show references.".to_string(),
-                "Hide",
-                false,
-            ),
-            Confirm::Refs { show: true, .. } => ("Show references?".to_string(), "The document’s reference list will be visible again.".to_string(), "Show", false),
             Confirm::SaveFailed => (
                 "Could not save document".to_string(),
-                format!("{}. Retry, or cancel and export a copy using More → Download as. Discarding changes will lose your unsaved work.", self.save_error()),
+                format!("{}. Retry, or cancel and export a copy using More → Export as PDF. Discarding changes will lose your unsaved work.", self.save_error()),
                 "Retry",
                 false,
             ),
-        };
-        let no_ask = match c {
-            Confirm::Refs { show: false, no_ask } => Some(*no_ask),
-            _ => None,
         };
         let ok = primary_button("confirm-ok", action);
         let ok = if danger { ok.bg(Theme::danger()).hover(|s| s.bg(theme::c(craft::R600))).active(|s| s.bg(theme::c(craft::R700))) } else { ok };
@@ -318,23 +303,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .child(div().flex_1().children(no_ask.map(|on| {
-                        div()
-                            .id("confirm-no-ask")
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .cursor_pointer()
-                            .text_size(px(13.))
-                            .on_click(cx.listener(|w, _, _, cx| {
-                                if let Some(Confirm::Refs { no_ask, .. }) = &mut w.confirm {
-                                    *no_ask = !*no_ask;
-                                }
-                                cx.notify();
-                            }))
-                            .child(crate::ui::checkbox(on))
-                            .child(ui_text("Do not ask again"))
-                    })))
+                    .child(div().flex_1())
                     .child(secondary_button("confirm-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
                         w.confirm = None;
                         w.after_save = None;
@@ -357,14 +326,6 @@ impl Workspace {
                             }
                             Confirm::Restore(id) => w.restore_doc(&id, cx),
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
-                            Confirm::Refs { show, no_ask } => {
-                                if no_ask {
-                                    let mut s = w.store.settings();
-                                    s.refs_hide_no_ask = true;
-                                    let _ = w.store.save_settings(&s);
-                                }
-                                w.set_refs_hidden(!show, cx);
-                            }
                             Confirm::SaveFailed => w.resolve_save_failed(true, window, cx),
                         }
                         cx.notify();

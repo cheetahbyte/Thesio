@@ -4,7 +4,7 @@ Thesio is derived from [quiet.md](https://github.com/s1dashu/quiet-md) (MIT; see
 
 ## Rust dependencies
 
-The following table is generated from `cargo metadata` and contains 741 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
+The following table is generated from `cargo metadata` and contains 850 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
 
 To regenerate the table from all `cargo metadata` dependencies, run `scripts/licences.sh`.
 
@@ -17,6 +17,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | aligned | 0.4.3 | MIT OR Apache-2.0 |
 | aligned-vec | 0.6.4 | MIT |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 |
+| approx | 0.5.1 | Apache-2.0 |
 | ar_archive_writer | 0.5.3 | Apache-2.0 WITH LLVM-exception |
 | arbitrary | 1.5.0 | MIT OR Apache-2.0 |
 | arg_enum_proc_macro | 0.3.4 | MIT |
@@ -51,7 +52,11 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | av-scenechange | 0.14.1 | MIT |
 | av1-grain | 0.2.5 | BSD-2-Clause |
 | avif-serialize | 0.8.9 | BSD-3-Clause |
+| az | 1.3.0 | MIT/Apache-2.0 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 |
+| base64 | 0.23.1 | MIT OR Apache-2.0 |
+| biblatex | 0.12.0 | MIT OR Apache-2.0 |
+| bincode | 1.3.3 | MIT |
 | bindgen | 0.71.1 | BSD-3-Clause |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT |
@@ -68,11 +73,10 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | block-padding | 0.3.3 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
-| bon | 3.10.2 | MIT OR Apache-2.0 |
-| bon-macros | 3.10.2 | MIT OR Apache-2.0 |
 | bstr | 1.13.1 | MIT OR Apache-2.0 |
 | built | 0.8.1 | MIT |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 |
+| by_address | 1.2.1 | MIT OR Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | bytemuck_derive | 1.12.1 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
@@ -88,14 +92,25 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | cfg_aliases | 0.2.2 | MIT |
 | cgl | 0.3.2 | MIT / Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
+| chinese-number | 0.7.8 | MIT |
+| chinese-variant | 1.1.6 | MIT |
+| ciborium | 0.2.2 | Apache-2.0 |
+| ciborium-io | 0.2.2 | Apache-2.0 |
+| ciborium-ll | 0.2.2 | Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
+| citationberg | 0.7.0 | MIT OR Apache-2.0 |
 | clang-sys | 1.9.1 | Apache-2.0 |
+| cobs | 0.3.0 | MIT OR Apache-2.0 |
 | cocoa | 0.25.0 | MIT OR Apache-2.0 |
 | cocoa | 0.26.0 | MIT OR Apache-2.0 |
 | cocoa-foundation | 0.1.2 | MIT OR Apache-2.0 |
 | cocoa-foundation | 0.2.0 | MIT OR Apache-2.0 |
 | codespan-reporting | 0.12.0 | Apache-2.0 |
+| codex | 0.3.0 | Apache-2.0 |
+| color | 0.3.3 | Apache-2.0 OR MIT |
 | color_quant | 1.1.0 | MIT |
+| comemo | 0.5.1 | MIT OR Apache-2.0 |
+| comemo-macros | 0.5.1 | MIT OR Apache-2.0 |
 | command-fds | 0.3.3 | Apache-2.0 |
 | compression-codecs | 0.4.46 | MIT OR Apache-2.0 |
 | compression-core | 0.4.34 | MIT OR Apache-2.0 |
@@ -128,13 +143,13 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | crunchy | 0.2.4 | MIT |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
+| csv | 1.4.0 | Unlicense/MIT |
+| csv-core | 0.1.13 | Unlicense/MIT |
 | ctor | 0.4.3 | Apache-2.0 OR MIT |
 | ctor-proc-macro | 0.0.6 | Apache-2.0 OR MIT |
-| darling | 0.24.1 | MIT |
-| darling_core | 0.24.1 | MIT |
-| darling_macro | 0.24.1 | MIT |
 | data-url | 0.3.2 | MIT OR Apache-2.0 |
 | deflate64 | 0.1.12 | MIT |
+| deranged | 0.5.9 | MIT OR Apache-2.0 |
 | derive_more | 0.99.20 | MIT |
 | digest | 0.10.7 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
@@ -154,10 +169,13 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | dwrote | 0.11.5 | MPL-2.0 |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 |
+| ecow | 0.2.6 | MIT OR Apache-2.0 |
 | either | 1.19.0 | MIT OR Apache-2.0 |
 | embed-resource | 3.0.12 | MIT |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | endi | 1.1.1 | MIT |
+| enum-ordinalize | 4.4.2 | MIT |
+| enum-ordinalize-derive | 4.4.2 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
 | equator | 0.4.2 | MIT |
@@ -171,10 +189,13 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
 | exr | 1.74.2 | BSD-3-Clause |
+| fancy-regex | 0.16.2 | MIT |
 | fastrand | 1.9.0 | Apache-2.0 OR MIT |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | fax | 0.2.7 | MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
+| fearless_simd | 0.4.1 | Apache-2.0 OR MIT |
+| fearless_simd | 1.2.0 | Apache-2.0 OR MIT |
 | filedescriptor | 0.8.3 | MIT |
 | filetime | 0.2.29 | MIT/Apache-2.0 |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 |
@@ -186,6 +207,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | fnv | 1.0.7 | Apache-2.0 / MIT |
 | foldhash | 0.1.5 | Zlib |
 | foldhash | 0.2.0 | Zlib |
+| font-types | 0.11.3 | MIT OR Apache-2.0 |
 | font-types | 0.12.7 | MIT OR Apache-2.0 |
 | fontconfig-parser | 0.5.8 | MIT |
 | fontdb | 0.16.2 | MIT |
@@ -213,6 +235,8 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | getrandom | 0.3.4 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
 | gif | 0.14.2 | MIT OR Apache-2.0 |
+| glidesort | 0.1.2 | MIT OR Apache-2.0 |
+| glifo | 0.1.1 | Apache-2.0 OR MIT |
 | glob | 0.3.4 | MIT OR Apache-2.0 |
 | globset | 0.4.20 | Unlicense OR MIT |
 | gloo-timers | 0.3.0 | MIT OR Apache-2.0 |
@@ -233,11 +257,24 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | gpui_util | 0.2.2 | Apache-2.0 |
 | gpui_util_macros | 0.2.2 | Apache-2.0 |
 | grid | 0.18.0 | MIT |
+| guillotiere | 0.7.0 | MIT/Apache-2.0 |
 | h2 | 0.4.20 | MIT |
 | half | 2.7.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 |
 | hashbrown | 0.15.5 | MIT OR Apache-2.0 |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 |
+| hayagriva | 0.10.1 | MIT OR Apache-2.0 |
+| hayro | 0.7.1 | Apache-2.0 OR MIT |
+| hayro-ccitt | 0.3.0 | Apache-2.0 OR MIT |
+| hayro-ccitt | 0.4.0 | Apache-2.0 OR MIT |
+| hayro-cmap | 0.1.1 | Apache-2.0 OR MIT |
+| hayro-interpret | 0.7.0 | Apache-2.0 OR MIT |
+| hayro-jbig2 | 0.3.1 | Apache-2.0 OR MIT |
+| hayro-jpeg2000 | 0.3.5 | Apache-2.0 OR MIT |
+| hayro-postscript | 0.2.0 | Apache-2.0 OR MIT |
+| hayro-svg | 0.7.0 | Apache-2.0 OR MIT |
+| hayro-syntax | 0.7.2 | Apache-2.0 OR MIT |
+| hayro-write | 0.7.0 | Apache-2.0 OR MIT |
 | heck | 0.4.1 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 |
@@ -247,7 +284,6 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | hkdf | 0.12.4 | MIT OR Apache-2.0 |
 | hmac | 0.12.1 | MIT OR Apache-2.0 |
 | home | 0.5.12 | MIT OR Apache-2.0 |
-| html5ever | 0.27.0 | MIT OR Apache-2.0 |
 | http | 1.5.0 | MIT OR Apache-2.0 |
 | http-body | 1.1.0 | MIT |
 | http-body-util | 0.1.5 | MIT |
@@ -256,21 +292,32 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | hyper | 1.12.0 | MIT |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.21 | MIT |
+| hypher | 0.1.8 | MIT OR Apache-2.0 |
+| icu_collator | 2.3.1 | Unicode-3.0 |
+| icu_collator_data | 2.3.0 | Unicode-3.0 |
 | icu_collections | 2.3.0 | Unicode-3.0 |
+| icu_locale | 2.3.1 | Unicode-3.0 |
 | icu_locale_core | 2.3.0 | Unicode-3.0 |
+| icu_locale_data | 2.3.0 | Unicode-3.0 |
+| icu_locale_fallback | 2.3.0 | Unicode-3.0 |
+| icu_locale_fallback_data | 2.3.0 | Unicode-3.0 |
 | icu_normalizer | 2.3.0 | Unicode-3.0 |
 | icu_normalizer_data | 2.3.0 | Unicode-3.0 |
 | icu_properties | 2.3.0 | Unicode-3.0 |
 | icu_properties_data | 2.3.0 | Unicode-3.0 |
 | icu_provider | 2.3.1 | Unicode-3.0 |
-| ident_case | 1.0.1 | MIT/Apache-2.0 |
+| icu_provider_blob | 2.3.0 | Unicode-3.0 |
+| icu_segmenter | 2.3.0 | Unicode-3.0 |
+| icu_segmenter_data | 2.3.0 | Unicode-3.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
 | image | 0.25.10 | MIT OR Apache-2.0 |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 |
 | imagesize | 0.13.0 | MIT |
+| imagesize | 0.14.0 | MIT |
 | imgref | 1.12.3 | CC0-1.0 OR Apache-2.0 |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
+| infer | 0.19.0 | MIT |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
 | instant | 0.1.13 | BSD-3-Clause |
 | interpolate_name | 0.2.4 | MIT |
@@ -284,9 +331,12 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
 | jobserver | 0.1.35 | MIT OR Apache-2.0 |
 | js-sys | 0.3.106 | MIT OR Apache-2.0 |
-| katex-rs | 0.3.0 | MIT |
+| kamadak-exif | 0.6.1 | BSD-2-Clause |
 | khronos-egl | 6.0.0 | MIT/Apache-2.0 |
+| krilla | 0.8.2 | MIT OR Apache-2.0 |
+| krilla-svg | 0.8.1 | MIT OR Apache-2.0 |
 | kurbo | 0.11.3 | Apache-2.0 OR MIT |
+| kurbo | 0.13.1 | Apache-2.0 OR MIT |
 | kv-log-macro | 1.0.7 | MIT OR Apache-2.0 |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 |
 | leak | 0.1.2 | Apache-2.0 OR MIT |
@@ -297,8 +347,11 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | libloading | 0.8.9 | ISC |
 | libm | 0.2.16 | MIT |
 | libredox | 0.1.25 | MIT |
+| linebender_resource_handle | 0.1.1 | Apache-2.0 OR MIT |
+| linked-hash-map | 0.5.6 | MIT/Apache-2.0 |
 | linux-raw-sys | 0.4.15 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| lipsum | 0.9.1 | MIT |
 | litemap | 0.8.3 | Unicode-3.0 |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 |
 | log | 0.4.34 | MIT OR Apache-2.0 |
@@ -311,8 +364,6 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | lyon_tessellation | 1.0.22 | MIT OR Apache-2.0 |
 | mac | 0.1.1 | MIT/Apache-2.0 |
 | malloc_buf | 0.0.6 | MIT |
-| markup5ever | 0.12.1 | MIT OR Apache-2.0 |
-| markup5ever_rcdom | 0.3.0 | MIT OR Apache-2.0 |
 | maybe-rayon | 0.1.1 | MIT |
 | md-5 | 0.10.6 | MIT OR Apache-2.0 |
 | memchr | 2.8.3 | Unlicense OR MIT |
@@ -328,6 +379,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | mio | 1.2.4 | MIT |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
+| mutate_once | 0.1.2 | BSD-2-Clause |
 | naga | 25.0.1 | MIT OR Apache-2.0 |
 | nanorand | 0.7.0 | Zlib |
 | new_debug_unreachable | 1.0.6 | MIT |
@@ -342,6 +394,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 |
 | num-bigint-dig | 0.8.6 | MIT/Apache-2.0 |
 | num-complex | 0.4.6 | MIT OR Apache-2.0 |
+| num-conv | 0.2.2 | MIT OR Apache-2.0 |
 | num-derive | 0.4.2 | MIT OR Apache-2.0 |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 |
 | num-iter | 0.1.46 | MIT OR Apache-2.0 |
@@ -367,6 +420,9 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 |
 | option-ext | 0.2.0 | MPL-2.0 |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 |
+| palette | 0.7.7 | MIT OR Apache-2.0 |
+| palette_derive | 0.7.7 | MIT OR Apache-2.0 |
+| palette_math | 0.7.7 | MIT OR Apache-2.0 |
 | parking | 2.2.1 | Apache-2.0 OR MIT |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
@@ -375,36 +431,39 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | pathfinder_geometry | 0.5.1 | MIT/Apache-2.0 |
 | pathfinder_simd | 0.5.6 | MIT OR Apache-2.0 |
 | pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
+| pdf-writer | 0.15.0 | MIT OR Apache-2.0 |
+| peniko | 0.6.1 | Apache-2.0 OR MIT |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
-| phf | 0.11.3 | MIT |
-| phf | 0.14.0 | MIT |
-| phf_codegen | 0.11.3 | MIT |
-| phf_codegen | 0.14.0 | MIT |
-| phf_generator | 0.11.3 | MIT |
-| phf_generator | 0.14.0 | MIT |
-| phf_macros | 0.14.0 | MIT |
-| phf_shared | 0.11.3 | MIT |
-| phf_shared | 0.14.0 | MIT |
+| phf | 0.13.1 | MIT |
+| phf_generator | 0.13.1 | MIT |
+| phf_macros | 0.13.1 | MIT |
+| phf_shared | 0.13.1 | MIT |
+| pic-scale | 0.7.12 | BSD-3-Clause OR Apache-2.0 |
 | pico-args | 0.5.0 | MIT |
 | pin-project | 1.1.13 | Apache-2.0 OR MIT |
 | pin-project-internal | 1.1.13 | Apache-2.0 OR MIT |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
 | pin-utils | 0.1.1 | MIT OR Apache-2.0 |
 | piper | 0.2.5 | MIT OR Apache-2.0 |
+| pixglyph | 0.6.1 | Apache-2.0 |
 | pkg-config | 0.3.34 | MIT OR Apache-2.0 |
+| plist | 1.10.3 | MIT |
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
 | pollster | 0.2.5 | Apache-2.0/MIT |
+| polycool | 0.4.0 | MIT OR Apache-2.0 |
+| portable-atomic | 1.15.0 | Apache-2.0 OR MIT |
 | postage | 0.5.0 | MIT |
+| postcard | 1.1.3 | MIT OR Apache-2.0 |
 | potential_utf | 0.1.6 | Unicode-3.0 |
+| powerfmt | 0.2.1 | MIT OR Apache-2.0 |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
-| precomputed-hash | 0.1.1 | MIT |
 | prettyplease | 0.2.37 | MIT OR Apache-2.0 |
-| prettyplease | 0.3.0 | MIT OR Apache-2.0 |
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 |
 | proc-macro-error-attr2 | 2.0.0 | MIT OR Apache-2.0 |
 | proc-macro-error2 | 2.0.1 | MIT OR Apache-2.0 |
+| proc-macro-hack | 0.5.20+deprecated | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
 | profiling | 1.0.18 | MIT OR Apache-2.0 |
 | profiling-procmacros | 1.0.18 | MIT OR Apache-2.0 |
@@ -414,8 +473,9 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 |
 | qoi | 0.4.1 | MIT/Apache-2.0 |
 | quick-error | 2.0.1 | MIT/Apache-2.0 |
-| quick-xml | 0.37.5 | MIT |
+| quick-xml | 0.38.4 | MIT |
 | quick-xml | 0.41.0 | MIT |
+| quick-xml | 0.42.0 | MIT |
 | quinn | 0.11.12 | MIT OR Apache-2.0 |
 | quinn-proto | 0.11.19 | MIT OR Apache-2.0 |
 | quinn-udp | 0.5.16 | MIT OR Apache-2.0 |
@@ -432,7 +492,6 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
 | rand_pcg | 0.10.2 | MIT OR Apache-2.0 |
 | rangemap | 1.8.0 | MIT/Apache-2.0 |
-| rapidhash | 4.5.1 | MIT OR Apache-2.0 |
 | rav1e | 0.8.1 | BSD-2-Clause |
 | ravif | 0.13.0 | BSD-3-Clause |
 | raw-cpuid | 11.6.0 | MIT |
@@ -440,6 +499,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | raw-window-metal | 0.4.0 | MIT OR Apache-2.0 |
 | rayon | 1.12.0 | MIT OR Apache-2.0 |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 |
+| read-fonts | 0.39.2 | MIT OR Apache-2.0 |
 | read-fonts | 0.41.0 | MIT OR Apache-2.0 |
 | reborrow | 0.5.5 | MIT |
 | redox_syscall | 0.2.16 | MIT |
@@ -452,12 +512,16 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
 | resvg | 0.45.1 | Apache-2.0 OR MIT |
+| resvg | 0.47.0 | Apache-2.0 OR MIT |
 | rgb | 0.8.53 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
+| roman-numerals-rs | 3.1.0 | 0BSD OR CC0-1.0 |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 |
+| roxmltree | 0.21.2 | MIT OR Apache-2.0 |
 | rust-embed | 8.13.0 | MIT |
 | rust-embed-impl | 8.13.0 | MIT |
 | rust-embed-utils | 8.13.0 | MIT |
+| rust_decimal | 1.43.0 | MIT |
 | rustc-hash | 1.1.0 | Apache-2.0/MIT |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |
@@ -492,10 +556,12 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | serde_fmt | 1.1.0 | Apache-2.0 OR MIT |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 |
 | serde_json_lenient | 0.2.4 | MIT/Apache-2.0 |
+| serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 |
 | serde_spanned | 1.1.2 | MIT OR Apache-2.0 |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 |
+| serde_yaml | 0.9.34+deprecated | MIT OR Apache-2.0 |
 | sha1_smol | 1.0.1 | BSD-3-Clause |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
@@ -507,6 +573,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | simplecss | 0.2.2 | Apache-2.0 OR MIT |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
+| skrifa | 0.42.1 | MIT OR Apache-2.0 |
 | skrifa | 0.44.0 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
 | slotmap | 1.1.1 | Zlib |
@@ -522,15 +589,11 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | stacksafe-macro | 0.1.4 | Apache-2.0 |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 |
 | strict-num | 0.1.1 | MIT |
-| string_cache | 0.8.9 | MIT OR Apache-2.0 |
-| string_cache_codegen | 0.5.4 | MIT OR Apache-2.0 |
-| strsim | 0.11.1 | MIT |
 | strum | 0.26.3 | MIT |
 | strum | 0.27.2 | MIT |
-| strum | 0.28.0 | MIT |
 | strum_macros | 0.26.4 | MIT |
 | strum_macros | 0.27.2 | MIT |
-| strum_macros | 0.28.0 | MIT |
+| subsetter | 0.2.6 | MIT OR Apache-2.0 |
 | subtle | 2.6.1 | BSD-3-Clause |
 | sval | 2.22.0 | Apache-2.0 OR MIT |
 | sval_buffer | 2.22.0 | Apache-2.0 OR MIT |
@@ -542,12 +605,14 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | sval_serde | 2.22.0 | Apache-2.0 OR MIT |
 | svg_fmt | 0.4.5 | MIT/Apache-2.0 |
 | svgtypes | 0.15.3 | Apache-2.0 OR MIT |
+| svgtypes | 0.16.2 | Apache-2.0 OR MIT |
 | swash | 0.2.10 | Apache-2.0 OR MIT |
 | syn | 1.0.109 | MIT OR Apache-2.0 |
 | syn | 2.0.119 | MIT OR Apache-2.0 |
 | syn | 3.0.9 | MIT OR Apache-2.0 |
 | sync_wrapper | 1.0.2 | Apache-2.0 |
 | synstructure | 0.14.0 | MIT |
+| syntect | 5.3.0 | MIT |
 | sys-locale | 0.3.2 | MIT OR Apache-2.0 |
 | sysinfo | 0.31.4 | MIT |
 | system-configuration | 0.6.1 | MIT OR Apache-2.0 |
@@ -558,14 +623,20 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.4.3 | MIT/Apache-2.0 |
 | termcolor | 1.4.1 | Unlicense OR MIT |
+| thin-vec | 0.2.21 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 |
 | tiff | 0.11.3 | MIT |
+| time | 0.3.55 | MIT OR Apache-2.0 |
+| time-core | 0.1.9 | MIT OR Apache-2.0 |
+| time-macros | 0.2.32 | MIT OR Apache-2.0 |
 | tiny-keccak | 2.0.2 | CC0-1.0 |
 | tiny-skia | 0.11.4 | BSD-3-Clause |
+| tiny-skia | 0.12.0 | BSD-3-Clause |
 | tiny-skia-path | 0.11.4 | BSD-3-Clause |
+| tiny-skia-path | 0.12.0 | BSD-3-Clause |
 | tinystr | 0.8.4 | Unicode-3.0 |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tokio | 1.53.3 | MIT |
@@ -591,9 +662,30 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | ttf-parser | 0.20.0 | MIT OR Apache-2.0 |
 | ttf-parser | 0.21.1 | MIT OR Apache-2.0 |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
+| two-face | 0.4.5 | MIT OR Apache-2.0 |
+| typed-arena | 2.0.2 | MIT |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
+| typst | 0.15.1 | Apache-2.0 |
+| typst-assets | 0.15.1 | Apache-2.0 |
+| typst-eval | 0.15.1 | Apache-2.0 |
+| typst-html | 0.15.1 | Apache-2.0 |
+| typst-kit | 0.15.1 | Apache-2.0 |
+| typst-layout | 0.15.1 | Apache-2.0 |
+| typst-library | 0.15.1 | Apache-2.0 |
+| typst-macros | 0.15.1 | Apache-2.0 |
+| typst-pdf | 0.15.1 | Apache-2.0 |
+| typst-realize | 0.15.1 | Apache-2.0 |
+| typst-render | 0.15.1 | Apache-2.0 |
+| typst-svg | 0.15.1 | Apache-2.0 |
+| typst-syntax | 0.15.1 | Apache-2.0 |
+| typst-timing | 0.15.1 | Apache-2.0 |
+| typst-utils | 0.15.1 | Apache-2.0 |
 | uds_windows | 1.2.1 | MIT |
+| unic-langid | 0.9.6 | MIT OR Apache-2.0 |
+| unic-langid-impl | 0.9.6 | MIT OR Apache-2.0 |
+| unic-langid-macros | 0.9.6 | MIT OR Apache-2.0 |
+| unic-langid-macros-impl | 0.9.6 | MIT OR Apache-2.0 |
 | unicase | 2.10.0 | MIT OR Apache-2.0 |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 |
 | unicode-bidi-mirroring | 0.2.0 | MIT/Apache-2.0 |
@@ -602,22 +694,31 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | unicode-ccc | 0.4.0 | MIT/Apache-2.0 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-linebreak | 0.1.5 | Apache-2.0 |
+| unicode-math-class | 0.1.0 | MIT OR Apache-2.0 |
 | unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-properties | 0.1.4 | MIT/Apache-2.0 |
 | unicode-script | 0.5.8 | MIT OR Apache-2.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
 | unicode-vo | 0.1.0 | MIT/Apache-2.0 |
 | unicode-width | 0.2.2 | MIT OR Apache-2.0 |
+| unsafe-libyaml | 0.2.11 | MIT |
+| unscanny | 0.1.0 | MIT OR Apache-2.0 |
 | untrusted | 0.9.0 | ISC |
 | url | 2.5.8 | MIT OR Apache-2.0 |
 | usvg | 0.45.1 | Apache-2.0 OR MIT |
+| usvg | 0.47.0 | Apache-2.0 OR MIT |
 | utf-8 | 0.7.6 | MIT OR Apache-2.0 |
+| utf16_iter | 1.1.0 | Apache-2.0 OR MIT |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
+| utf_types | 1.0.0 | Apache-2.0 OR MIT |
 | uuid | 1.28.0 | Apache-2.0 OR MIT |
 | v_frame | 0.3.9 | BSD-2-Clause |
 | value-bag | 1.14.1 | Apache-2.0 OR MIT |
 | value-bag-serde1 | 1.14.1 | Apache-2.0 OR MIT |
 | value-bag-sval2 | 1.14.1 | Apache-2.0 OR MIT |
+| vello_common | 0.0.8 | Apache-2.0 OR MIT |
+| vello_common | 0.0.9 | Apache-2.0 OR MIT |
+| vello_cpu | 0.0.8 | Apache-2.0 OR MIT |
 | version_check | 0.9.5 | MIT/Apache-2.0 |
 | vswhom | 0.1.0 | MIT |
 | vswhom-sys | 0.1.3 | MIT |
@@ -632,6 +733,11 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | wasm-bindgen-macro-support | 0.2.129 | MIT OR Apache-2.0 |
 | wasm-bindgen-shared | 0.2.129 | MIT OR Apache-2.0 |
 | wasm-streams | 0.4.2 | MIT OR Apache-2.0 |
+| wasmi | 1.1.0 | MIT/Apache-2.0 |
+| wasmi_collections | 1.1.0 | MIT/Apache-2.0 |
+| wasmi_core | 1.1.0 | MIT/Apache-2.0 |
+| wasmi_ir | 1.1.0 | MIT/Apache-2.0 |
+| wasmparser | 0.239.0 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | wayland-backend | 0.3.17 | MIT |
 | wayland-client | 0.31.15 | MIT |
 | wayland-cursor | 0.31.14 | MIT |
@@ -705,6 +811,8 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | winsafe | 0.0.19 | MIT |
 | wio | 0.2.2 | MIT/Apache-2.0 |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| write-fonts | 0.48.1 | MIT OR Apache-2.0 |
+| write16 | 1.0.0 | Apache-2.0 OR MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
 | x11 | 2.21.0 | MIT |
 | x11-clipboard | 0.9.3 | MIT |
@@ -717,9 +825,10 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | xim-parser | 0.2.2 | MIT |
 | xkbcommon | 0.8.0 | MIT |
 | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib |
-| xml5ever | 0.18.1 | MIT OR Apache-2.0 |
 | xmlwriter | 0.1.0 | MIT |
+| xmp-writer | 0.3.3 | MIT OR Apache-2.0 |
 | y4m | 0.8.0 | MIT |
+| yaml-rust | 0.4.5 | MIT/Apache-2.0 |
 | yazi | 0.2.1 | Apache-2.0 OR MIT |
 | yeslogic-fontconfig-sys | 6.0.1 | MIT |
 | yoke | 0.8.3 | Unicode-3.0 |
@@ -754,24 +863,15 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 
 ## Fonts
 
-| Asset | License |
-|---|---|
-| `assets/fonts/katex/` (20 KaTeX fonts) | KaTeX fonts, SIL Open Font License / MIT. See `LICENSE` in the same directory. |
+Thesio embeds the fonts bundled with Typst through `typst-assets`: Libertinus Serif, New Computer Modern, New Computer Modern Math, and DejaVu Sans Mono. See the `typst-assets` crate for their licenses.
 
 ## Icons
 
 | Asset | License |
 |---|---|
-| `assets/editor-icons/` (195 icons in the editor and documents) | 49 are taken directly from Lucide (ISC; see `LICENSE-lucide` in the same directory). The rest use the same 24px size and 2px stroke specification. |
 | `assets/icons/` (68 application shell icons) | Taken from Lucide 1.68.0 (ISC; see `LICENSE-lucide` in the same directory). `home-filled`, `pin-filled`, `circle-filled`, `tree-triangle`, and `info-mark` adapt Lucide shapes by filling them or removing the ring. |
 | `assets/branding/app-icon.png` | Inherited from quiet.md, to be replaced. |
 
-## Covers and illustrations
+## Illustrations
 
-`assets/covers/` (52 covers) and `assets/illus/` (3 empty-state illustrations) are distributed with this project under MIT.
-
-## Built-in theme style values
-
-`assets/themes/` contains four built-in themes (Craft, Feishu, Notion, and Obsidian). Each CSS file specifies the current value of every property.
-Values such as colors, font sizes, and spacing are not themselves protected by copyright. The theme files are distributed under MIT; their names identify styles and do not imply affiliation with the respective companies.
-
+`assets/illus/` (empty-state illustrations) is inherited from quiet.md and distributed under MIT.

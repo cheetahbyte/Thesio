@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Add a Typst compiler for vaults, with PDF export and page rendering.
+- Replace the block editor and DocxXML documents with a Typst source editor and live preview.
+- Store documents as plain `.typ` files in a vault folder. Libraries from earlier builds are not read.
+- Add PDF export through Typst, and a New Folder command.
+- Remove document themes, covers, emoji icons, reminders, and Markdown export.
 - Remove quick notes and their system-wide keyboard shortcuts.
-
 - Replace the Nucleo interface icons with Lucide icons.
 - Make the interface English-only and remove the language selector.
 - Translate project documentation and bundled theme descriptions into English.

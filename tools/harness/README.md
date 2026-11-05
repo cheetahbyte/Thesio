@@ -4,27 +4,27 @@ Use `THESIO_SCRIPT` to replay a line-by-line script that operates a window and c
 
 ```sh
 cargo build --release
-python3 tools/harness/run.py tools/harness/examples/scroll.txt            # Defaults to lib_clean; output is in /tmp/thesio-run
+python3 tools/harness/run.py tools/harness/examples/edit.txt            # Defaults to lib_clean; output is in /tmp/thesio-run
 python3 tools/harness/run.py my.txt /path/to/lib /tmp/my-run              # Custom library and output directory
 THESIO_BIN=/other/thesio python3 tools/harness/run.py my.txt
 ```
 
 - Screenshots: `<work_dir>/<name>.png`.
 - Log: `<work_dir>/log`. Use `grep -a bench log` to view performance numbers.
-- `lib_clean/` is a review library with an all-block styles review document and sample images.
+- `lib_clean/` is a small sample vault with a thesis, an included chapter, and a bibliography.
 - `winid.swift` lists the window IDs of Thesio windows on screen. Run `swift winid.swift` to use these IDs with system screenshots.
 
 ## Screenshot regression
 
 ```sh
-python3 tools/harness/compare.py tools/harness/examples/menus.txt OLD_BINARY target/release/thesio
+python3 tools/harness/compare.py tools/harness/examples/edit.txt OLD_BINARY target/release/thesio
 ```
 
 Replace `OLD_BINARY` with the path to the old binary.
 
 - The comparison runs the same script against both versions and compares each screenshot pixel by pixel. For differences, it reports the number and bounds of differing pixels and writes a diff image to `/tmp/thesio-compare/diff-<name>.png`.
 - For refactors that move code without changing appearance, such as splitting modules, changing tokens, or sharing components, every screenshot must be `identical`.
-- `examples/menus.txt` opens the ellipsis menu and page width submenu, edit mode menu, slash menu, block menu, sidebar context menu, and help menu in sequence.
+- `examples/edit.txt` opens the sample thesis in `lib_clean`, types into it, and captures an error state.
 - The cursor doesn't blink during comparisons (`THESIO_NOBLINK`). Move the pointer to a blank area at the start of the script, or its actual position can appear as a hover state in screenshots.
 - To build the old binary, run `git worktree add /tmp/old COMMIT`, replacing `COMMIT` with the desired commit. In that worktree, run `CARGO_TARGET_DIR=REPOSITORY/target cargo build --release`, replacing `REPOSITORY` with this repository's path. Then copy the binary elsewhere.
 

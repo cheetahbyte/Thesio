@@ -4,7 +4,6 @@
 
 use crate::app::Workspace;
 use crate::settings::display_title;
-use crate::editor::view::SubPage;
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
@@ -127,30 +126,21 @@ impl Workspace {
         self.expanded.extend(ids);
     }
 
-    /// Hand the open document its child pages (for 子页面列表 blocks).
-    pub(crate) fn sync_sub_pages(&mut self, cx: &mut Context<Self>) {
-        let (Some(id), Some(ed)) = (self.current.clone(), self.editor.clone()) else { return };
-        let pages = Tree::new(&self.entries)
-            .children(Some(&id))
-            .iter()
-            .map(|e| SubPage { id: e.id.clone(), title: e.title.clone(), icon: e.icon.clone() })
-            .collect();
-        ed.update(cx, |e, cx| e.set_sub_pages(pages, cx));
-        self.sync_links(cx);
-    }
 
     /// The row "+" → 文档: a new page under `parent`, opened.
     pub fn new_child(&mut self, parent: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let p = parent.to_string();
-        if !self.save_before(cx, move |w, window, cx| w.new_child(&p, window, cx)) {
+        // Only folders hold files: a file's "+" adds a sibling.
+        let parent = self.entries.iter().find(|e| e.id == parent).and_then(|e| if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() });
+        let parent = parent.as_deref();
+        let p = parent.map(str::to_string);
+        if !self.save_before(cx, move |w, window, cx| match &p { Some(p) => w.new_child(p, window, cx), None => w.new_doc(window, cx) }) {
             return;
         }
-        let made = self.store.create().and_then(|(id, _)| self.store.set_parent(&id, Some(parent)).map(|_| id));
-        match made {
+        match self.store.create(parent) {
             Ok(id) => {
                 self.entries = self.store.list();
                 self.sort();
-                self.expanded.insert(parent.to_string());
+                if let Some(parent) = parent { self.expanded.insert(parent.to_string()); }
                 self.open(&id, window, cx);
             }
             Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not create document: {}", crate::settings::diagnostic(&e.to_string()))),
@@ -192,12 +182,9 @@ impl Workspace {
             if inside {
                 continue;
             }
+            self.flush(cx);
             match self.store.set_parent(id, target.as_deref()) {
-                Ok(meta) => {
-                    if let Some(e) = self.entries.iter_mut().find(|e| &e.id == id) {
-                        e.meta = meta;
-                    }
-                }
+                Ok(new) => self.path_changed(id, &new, cx),
                 Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move document: {}", crate::settings::diagnostic(&e.to_string()))),
             }
         }
@@ -205,7 +192,6 @@ impl Workspace {
             self.expanded.insert(t.clone());
             self.reveal_in_tree(&t.clone());
         }
-        self.sync_sub_pages(cx);
         self.show_toast("Moved successfully", cx);
         cx.notify();
     }
@@ -273,10 +259,7 @@ impl Workspace {
                 .when(!selected, |d| d.hover(|s| s.bg(Theme::fill_hover())))
         };
         let title = |t: String| div().ml(px(9.)).flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(t));
-        let page_icon = |e: &Entry| match &e.icon {
-            Some(em) => div().size(px(16.)).flex_none().flex().items_center().justify_center().text_size(px(14.)).child(em.clone()).into_any_element(),
-            None => icon("doc", 16., Theme::text_caption()).into_any_element(),
-        };
+        let page_icon = |_: &Entry| icon("folder", 16., Theme::text_caption()).into_any_element();
         let mut list = div().id("move-tree").flex_1().min_w_0().px(px(8.)).py(px(12.)).overflow_y_scroll().track_scroll(&dlg.scroll);
         if q.is_empty() {
             list = list.child(
@@ -291,7 +274,7 @@ impl Workspace {
                         cx.notify();
                     })),
             );
-            for (e, depth) in tree.rows(|id| dlg.expanded.contains(id)) {
+            for (e, depth) in tree.rows(|id| dlg.expanded.contains(id)).into_iter().filter(|(e, _)| e.folder) {
                 if hidden.contains(&e.id) {
                     continue;
                 }

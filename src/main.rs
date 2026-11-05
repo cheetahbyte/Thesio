@@ -7,38 +7,26 @@ mod window_size;
 mod assets;
 mod clipboard;
 mod devtools;
-mod docinfo;
 mod docmenu;
-mod editor;
-mod highlight;
 mod home;
-mod html;
 mod input;
-mod modes;
 #[cfg(target_os = "macos")]
 mod native_header;
 #[cfg(not(target_os = "macos"))]
 #[path = "native_header_fallback.rs"]
 mod native_header;
-mod printing;
+mod preview;
 mod search;
 mod sidebar;
+mod source;
 mod settings;
-mod themes;
 mod shortcuts;
-#[allow(dead_code, unused_imports)]
-mod feishu_theme;
-#[allow(dead_code, unused_imports)]
-mod editor_theme;
-#[allow(dead_code, unused_imports)]
-mod editor_ui;
 mod theme;
-mod transfer;
 mod trash;
 mod tree;
 mod ui;
 
-use thesio_core::{docxml, lang, markdown, model, palette, paste, store, time};
+use thesio_core::{store, time};
 
 use gpui::*;
 
@@ -96,15 +84,12 @@ fn main() {
     app.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         set_app_icon();
-        editor::math::load_fonts(cx);
         input::bind_keys(cx);
-        editor::keymap::bind_keys(cx);
-        editor::image::bind_keys(cx);
+        source::bind_keys(cx);
         app::bind_keys(cx);
         settings::load();
         settings::apply_appearance(&settings::prefs().appearance);
         settings::sync_dark(cx);
-        themes::load(&settings::prefs().theme_id(), false, || cx.text_system().all_font_names());
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));
         app::set_menus(cx);

@@ -9,9 +9,6 @@ pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
-        if path.starts_with(crate::editor::math::SVG_PREFIX) {
-            return Ok(crate::editor::math::svg_asset(path).map(Cow::Owned));
-        }
         Ok(FILES.iter().find(|(p, _)| *p == path).map(|(_, b)| Cow::Borrowed(*b)))
     }
 

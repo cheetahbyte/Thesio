@@ -1,9 +1,8 @@
 //! Single-line text field used for search, link URLs and the code language
 //! picker. Rendering reuses the editor's rich text element.
 
-use crate::editor::text::{LayoutCache, RichTextElement, TextSpec};
-use crate::model::{Align, BlockId, RichText};
-use crate::theme::Theme;
+use crate::theme::{MONO_FONT, Theme, UI_FONT};
+use std::{cell::RefCell, rc::Rc};
 use gpui::*;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,7 +63,10 @@ pub enum TextFieldEvent {
     ShiftTab,
 }
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(u64::MAX - 1_000_000);
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The last painted text: where it landed and how it wrapped.
+type Painted = Rc<RefCell<Option<(Bounds<Pixels>, Option<WrappedLine>)>>>;
 
 pub struct TextField {
     focus: FocusHandle,
@@ -73,13 +75,12 @@ pub struct TextField {
     reversed: bool,
     marked: Option<Range<usize>>,
     placeholder: SharedString,
-    cache: LayoutCache,
-    id: BlockId,
+    painted: Painted,
+    id: u64,
     pub size: f32,
     pub line_height: f32,
     pub placeholder_color: Hsla,
     pub color: Hsla,
-    pub align: Align,
     /// Wrap long text onto more lines instead of scrolling it.
     pub wrap: bool,
     /// Enter and pasted newlines insert line breaks; Up/Down move by line.
@@ -116,14 +117,13 @@ impl TextField {
             reversed: false,
             marked: None,
             placeholder: placeholder.into(),
-            cache: Default::default(),
-            id: BlockId(NEXT_ID.fetch_add(1, Ordering::Relaxed)),
+            painted: Default::default(),
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             // macOS's control text: 13pt.
             size: 13.,
             line_height: 20.,
             placeholder_color: Theme::text_placeholder(),
             color: Theme::text(),
-            align: Align::Left,
             wrap: false,
             multiline: false,
             mono: false,
@@ -321,23 +321,18 @@ impl TextField {
         }
     }
 
-    /// Move the caret a line up (`-1`) or down; past the first/last line it
-    /// goes to the start/end.
+    /// Move the caret a line up (`-1`) or down; past the first or last line
+    /// it goes to the start or end.
     fn move_line(&mut self, dir: f32, cx: &mut Context<Self>) {
         let target = {
-            let cache = self.cache.borrow();
-            let Some(l) = cache.get(&self.id) else { return };
-            let at = l.position_for(self.cursor());
-            let y = at.y + l.line_height * (0.5 + dir);
-            let first = l.position_for(0).y;
-            let last = l.position_for(self.text.len()).y;
-            if y < first {
-                0
-            } else if y > last + l.line_height {
-                self.text.len()
-            } else {
-                l.index_for(point(at.x, y)).min(self.text.len())
-            }
+            let painted = self.painted.borrow();
+            let Some((_, Some(layout))) = painted.as_ref() else { return };
+            let height = px(self.line_height);
+            let at = layout.position_for_index(self.cursor(), height).unwrap_or_default();
+            let y = at.y + height * (0.5 + dir);
+            if y < px(0.) { 0 }
+            else if y >= layout.size(height).height { self.text.len() }
+            else { layout.closest_index_for_position(point(at.x, y), height).unwrap_or_else(|i| i).min(self.text.len()) }
         };
         self.move_to(target, cx);
     }
@@ -361,7 +356,10 @@ impl TextField {
     }
 
     fn index_for(&self, p: Point<Pixels>) -> usize {
-        self.cache.borrow().get(&self.id).map(|l| l.index_for(p)).unwrap_or(0).min(self.text.len())
+        let painted = self.painted.borrow();
+        let Some((bounds, Some(layout))) = painted.as_ref() else { return 0 };
+        let local = point(p.x - bounds.left(), (p.y - bounds.top()).max(px(0.)));
+        layout.closest_index_for_position(local, px(self.line_height)).unwrap_or_else(|i| i).min(self.text.len())
     }
 
     fn on_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -475,11 +473,13 @@ impl EntityInputHandler for TextField {
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let r = self.range8(&range);
-        let cache = self.cache.borrow();
-        let l = cache.get(&self.id)?;
-        let a = l.position_for(r.start);
-        let b = l.position_for(r.end);
-        Some(Bounds::from_corners(a, point(b.x, b.y + l.line_height)))
+        let painted = self.painted.borrow();
+        let (bounds, layout) = painted.as_ref()?;
+        let layout = layout.as_ref()?;
+        let height = px(self.line_height);
+        let a = layout.position_for_index(r.start, height)?;
+        let b = layout.position_for_index(r.end, height)?;
+        Some(Bounds::from_corners(bounds.origin + a, bounds.origin + point(b.x, b.y + height)))
     }
 
     fn character_index_for_point(&mut self, p: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
@@ -490,36 +490,23 @@ impl EntityInputHandler for TextField {
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
-        let mut spec = TextSpec::body();
-        spec.doc_font = false;
-        spec.size = self.size;
-        spec.line_height = self.line_height;
-        spec.color = self.color;
-        spec.wrap = self.wrap;
-        spec.mono = self.mono;
-        let el = RichTextElement {
-            id: self.id,
-            text: RichText::plain(self.text.clone()),
-            spec,
-            align: self.align,
-            placeholder: Some(crate::settings::label(self.placeholder.clone()).into()),
-            placeholder_color: Some(self.placeholder_color),
-            placeholder_dx: 0.,
+        let el = FieldText {
+            text: if self.text.is_empty() { crate::settings::label(self.placeholder.clone()).into() } else { self.text.clone().into() },
+            color: if self.text.is_empty() { self.placeholder_color } else { self.color },
+            family: if self.mono { MONO_FONT } else { UI_FONT },
+            size: self.size,
+            line_height: self.line_height,
+            wrap: self.wrap,
             selection: (focused && !self.sel.is_empty()).then(|| self.sel.clone()),
-            caret: Some(self.cursor()),
+            caret: (focused && !self.hide_caret && self.sel.is_empty()).then(|| self.cursor()),
             marked: self.marked.clone(),
-            cache: self.cache.clone(),
-            show_caret: focused && !self.hide_caret && self.sel.is_empty(),
-            highlight: None,
-            found: vec![],
-            eq_counter: 0,
-            button_edit: None,
+            painted: self.painted.clone(),
         };
         let entity = cx.entity();
         let focus = self.focus.clone();
         let pointer_hidden = self.pointer_hidden;
         div()
-            .id(("text-field", self.id.0))
+            .id(("text-field", self.id))
             .track_focus(&self.focus)
             .key_context("TextField")
             .cursor(CursorStyle::IBeam)
@@ -575,5 +562,78 @@ impl Render for TextField {
                 .absolute()
                 .size_full(),
             )
+    }
+}
+
+struct FieldText {
+    text: SharedString,
+    color: Hsla,
+    family: &'static str,
+    size: f32,
+    line_height: f32,
+    wrap: bool,
+    selection: Option<Range<usize>>,
+    caret: Option<usize>,
+    marked: Option<Range<usize>>,
+    painted: Painted,
+}
+
+impl IntoElement for FieldText {
+    type Element = Self;
+    fn into_element(self) -> Self { self }
+}
+
+impl Element for FieldText {
+    type RequestLayoutState = Rc<RefCell<Option<WrappedLine>>>;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> { None }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+
+    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, _: &mut App) -> (LayoutId, Self::RequestLayoutState) {
+        let state: Self::RequestLayoutState = Default::default();
+        let (slot, text, height, wrap, size_px) = (state.clone(), self.text.clone(), px(self.line_height), self.wrap, px(self.size));
+        let mut run = TextRun { len: text.len(), font: font(self.family), color: self.color, background_color: None, underline: None, strikethrough: None };
+        if let Some(marked) = &self.marked && !marked.is_empty() {
+            run.underline = Some(UnderlineStyle { thickness: px(1.), color: None, wavy: false });
+        }
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        let id = window.request_measured_layout(style, move |known, available, window, _| {
+            let width = known.width.or(match available.width { AvailableSpace::Definite(w) => Some(w), _ => None });
+            if text.is_empty() { return gpui::size(width.unwrap_or(px(0.)), height); }
+            let wrap_at = if wrap { width } else { None };
+            let line = window.text_system().shape_text(text.clone(), size_px, std::slice::from_ref(&run), wrap_at, None).unwrap_or_default().into_iter().next();
+            let measured = line.as_ref().map_or(height, |l| l.size(height).height);
+            *slot.borrow_mut() = line;
+            gpui::size(width.unwrap_or(px(0.)), measured)
+        });
+        (id, state)
+    }
+
+    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut Self::RequestLayoutState, _: &mut Window, _: &mut App) {}
+
+    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, state: &mut Self::RequestLayoutState, _: &mut (), window: &mut Window, cx: &mut App) {
+        let layout = state.borrow().clone();
+        let height = px(self.line_height);
+        let position = |index: usize| layout.as_ref().and_then(|l| l.position_for_index(index, height)).unwrap_or_default();
+        if let Some(selection) = &self.selection {
+            let (a, b) = (position(selection.start), position(selection.end));
+            let mut y = a.y;
+            while y <= b.y {
+                let left = if y == a.y { a.x } else { px(0.) };
+                let right = if y == b.y { b.x } else { bounds.size.width };
+                window.paint_quad(fill(Bounds::from_corners(bounds.origin + point(left, y), bounds.origin + point(right, y + height)), Theme::selection()));
+                y += height;
+            }
+        }
+        if let Some(line) = &layout {
+            let _ = line.paint(bounds.origin, height, TextAlign::Left, None, window, cx);
+        }
+        if let Some(caret) = self.caret {
+            let at = bounds.origin + position(caret);
+            window.paint_quad(fill(Bounds::new(at, gpui::size(px(1.5), height)), Theme::primary()));
+        }
+        *self.painted.borrow_mut() = Some((bounds, layout));
     }
 }

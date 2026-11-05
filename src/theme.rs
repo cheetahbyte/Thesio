@@ -25,13 +25,6 @@ thread_local! {
 pub fn dark() -> bool { DARK.load(Ordering::Relaxed) && !FORCE_LIGHT.with(|f| f.get()) }
 /// Switch the look; true when it changed.
 pub fn set_dark(on: bool) -> bool { DARK.swap(on, Ordering::Relaxed) != on }
-/// Run `f` with the light colours (HTML export, printing, copy as rich text).
-pub fn light<R>(f: impl FnOnce() -> R) -> R {
-    let was = FORCE_LIGHT.with(|l| l.replace(true));
-    let r = f();
-    FORCE_LIGHT.with(|l| l.set(was));
-    r
-}
 
 /// The colour to draw for light-look colour `c`: itself, or in dark mode its dark counterpart.
 pub fn adapt(c: Hsla) -> Hsla {
@@ -56,41 +49,6 @@ fn to_dark(c: Hsla) -> Hsla {
     let t = t * t * (3. - 2. * t);
     let l2 = mirror + (ll.clamp(0.62, 0.86) - mirror) * t;
     srgb(l2, oa, ob, a)
-}
-
-/// The text highlight to draw for light-look highlight `c`: in dark mode
-/// the same colour the light page shows (`c` over white, made opaque). Kept
-/// translucent it lets the dark page through and turns muddy. Text on it
-/// takes the light page's ink, see `on_mark`.
-pub fn mark(c: Hsla) -> Hsla {
-    if !dark() { return c }
-    let Rgba { r, g, b, a } = Rgba::from(c);
-    let w = |v: f32| v * a + 1. - a;
-    Rgba { r: w(r), g: w(g), b: w(b), a: 1. }.into()
-}
-
-/// Text drawn on a highlight (`color`, already adapted). In dark mode it
-/// gets back its light-page ink: the mirror undone (the near-white text →
-/// L 0.25), at most L 0.55 so coloured text (red on light red) reads as it
-/// does on the light page.
-pub fn on_mark(c: Hsla) -> Hsla {
-    if !dark() { return c }
-    let Rgba { r, g, b, a } = Rgba::from(c);
-    let [l, oa, ob] = oklab(r, g, b);
-    let l2 = ((1.137 - l) / 0.907).clamp(0., 0.55);
-    let chroma = (oa * oa + ob * ob).sqrt();
-    let (sin, cos) = if chroma > 1e-4 { (ob / chroma, oa / chroma) } else { (0., 1.) };
-    let k = in_gamut(l2, chroma, cos, sin);
-    srgb(l2, k * cos, k * sin, a)
-}
-
-/// The largest chroma ≤ `max` at lightness `l` and hue (`cos`, `sin`) inside sRGB.
-fn in_gamut(l: f32, max: f32, cos: f32, sin: f32) -> f32 {
-    let fits = |k: f32| lrgb(l, k * cos, k * sin).iter().all(|v| (-1e-4..=1. + 1e-4).contains(v));
-    if fits(max) { return max }
-    let (mut lo, mut hi) = (0., max);
-    for _ in 0..16 { let m = (lo + hi) / 2.; if fits(m) { lo = m } else { hi = m } }
-    lo
 }
 
 // sRGB ⇄ OKLab with Björn Ottosson's matrices, kept digit for digit.
@@ -284,19 +242,14 @@ impl Theme {
     /// Secondary text: dates, meta, captions of controls.
     pub fn text_caption() -> Hsla { c(craft::N600) }
     pub fn text_placeholder() -> Hsla { c(craft::N500) }
-    /// Empty-block hints: placeholders are text at ~25%.
-    pub fn block_placeholder() -> Hsla { ca(craft::N900, 0.25) }
     pub fn text_disabled() -> Hsla { ca(craft::N900, 0.3) }
     /// Toolbar glyphs.
     pub fn text_code() -> Hsla { c(craft::N800) }
     /// The link colour: the content accent (#0087FF) blended half-way to the
     /// text colour, #0F5492 measured.
     pub fn link() -> Hsla { mix(0x0087ff, craft::N900, 0.5) }
-    /// A hovered link or document chip: a step closer to the text colour.
-    pub fn link_hover() -> Hsla { mix(0x0087ff, craft::N900, 0.65) }
     pub fn primary() -> Hsla { c(craft::B500) }
     pub fn primary_500() -> Hsla { c(craft::B500) }
-    pub fn primary_fill_1() -> Hsla { c(craft::B50) }
     /// The note: white page.
     pub fn bg_body() -> Hsla { c(craft::N00) }
     /// Light fills inside the note (code blocks, quiet cards).
@@ -306,41 +259,10 @@ impl Theme {
     pub fn fill_hover() -> Hsla { ca(craft::N1000, 0.045) }
     pub fn fill_hover_strong() -> Hsla { ca(craft::N1000, 0.06) }
     pub fn fill_pressed() -> Hsla { ca(craft::N1000, 0.09) }
-    pub fn fill_turninto_active() -> Hsla { c(craft::B100) }
     /// Text selection: the accent, light.
     pub fn selection() -> Hsla { ca(craft::B500, 0.24) }
-    /// A block whose handle menu is open.
-    pub fn block_hover() -> Hsla { ca(craft::B500, 0.08) }
-    /// Selected blocks.
-    pub fn block_selected() -> Hsla { ca(craft::B500, 0.14) }
-    pub fn handle_active() -> Hsla { ca(craft::N1000, 0.06) }
-    pub fn size_cell() -> Hsla { c(craft::N100) }
-    pub fn size_cell_border() -> Hsla { c(craft::N300) }
-    pub fn size_cell_active() -> Hsla { c(craft::B300) }
-    pub fn size_cell_disabled() -> Hsla { c(craft::B100) }
-    /// Hairline drawn inside colour swatches (and the "none" swatch).
-    pub fn swatch_border() -> Hsla { ca(craft::N1000, 0.08) }
-    /// Hovered / focused to-do row.
-    pub fn block_bg_area() -> Hsla { ca(craft::N1000, 0.03) }
-    /// Done to-do text: faded to alpha 0.5.
-    pub fn todo_done() -> Hsla { ca(craft::N900, 0.5) }
     pub fn scrollbar_thumb() -> Hsla { ca(craft::N1000, 0.22) }
-    pub fn shadow() -> Hsla { ca(craft::N1000, 0.08) }
-    /// Ring of a code block / callout whose handle menu is open.
-    pub fn code_hover_ring() -> Hsla { ca(craft::B500, 0.35) }
-    /// The focus decoration: a rounded bar in the text colour.
-    pub fn quote_bar() -> Hsla { ca(craft::N900, 0.82) }
-    /// The caret is the accent, 2pt wide.
-    pub fn caret() -> Hsla { c(craft::B500) }
     pub fn pinned() -> Hsla { c(craft::B500) }
-    /// Table header row / column fill.
-    pub fn table_header() -> Hsla { c(0xf8f8f8) }
-    /// Table grid lines.
-    pub fn table_line() -> Hsla { ca(craft::N1000, 0.09) }
-    pub fn table_bar_hover() -> Hsla { c(craft::N350) }
-    pub fn table_bar_selected() -> Hsla { c(craft::B200) }
-    pub fn danger_bar() -> Hsla { c(craft::R350) }
-    pub fn danger_cell() -> Hsla { c(craft::R50) }
     pub fn danger() -> Hsla { c(craft::R500) }
 
     // ---- Thesio shell
@@ -363,15 +285,6 @@ impl Theme {
     /// Line under the page title.
     /// White pill buttons on the note (back / + / share): hairline.
     pub fn button_border() -> Hsla { ca(craft::N1000, 0.075) }
-    /// Inline code chip: #F8F8F8 in a #E2E3E3 rim (measured).
-    pub fn code_chip() -> Hsla { c(0xf8f8f8) }
-    pub fn code_chip_border() -> Hsla { c(0xe2e3e3) }
-    /// Code block surfaces.
-    pub fn code_bg() -> Hsla { c(0xfbfbfb) }
-    pub fn code_gutter() -> Hsla { c(0xf8f8f8) }
-    pub fn code_gutter_line() -> Hsla { c(0xe8e8e8) }
-    pub fn code_border() -> Hsla { c(0xeaebeb) }
-    pub fn code_line_number() -> Hsla { c(0xc2c2c3) }
     /// Captions under media and code (weight 300).
     #[allow(dead_code)]
     pub fn caption() -> Hsla { c(0x7e8287) }
@@ -379,96 +292,6 @@ impl Theme {
     pub fn menu_highlight() -> Hsla { c(craft::B500) }
     /// Menus / popovers body (quick-entry & native menus).
     pub fn popover_bg() -> Hsla { c(0xfafafa) }
-    /// Dotted separator: dots at half the text colour.
-    pub fn separator_dots() -> Hsla { ca(craft::N900, 0.5) }
-    /// Open task box rim.
-    pub fn todo_box() -> Hsla { ca(craft::N1000, 0.22) }
-    /// Code text: plain tokens and punctuation in code blocks.
-    pub fn code_text() -> Hsla { c(0x4c4d50) }
-}
-
-#[allow(unused_imports)]
-pub use crate::palette::{HUES, FONT_COLORS, BG_COLORS, CALLOUT_BG_COLORS, CELL_BG_COLORS, bg_canon};
-
-/// Display colours for the DocxXML colour names. The names and the values
-/// `palette` matches pasted DocxXML HTML against stay as they are; the page
-/// shows its own text colours, marker highlights and block-decoration
-/// tints (Tailwind v4 ramps).
-mod hue {
-    /// (text, marker highlight, block fill light, block fill medium, border, swatch)
-    pub const fn of(h: &str) -> Option<(u32, u32, u32, u32, u32, u32)> {
-        Some(match h.as_bytes() {
-            // Text: the block colours (gray #9EA4AA, red #EF052A, orange
-            // #FF9200, yellow #F9BD00, green #009E68, blue #004ABD, violet
-            // #5700FF) darkened 15%, as coloured text is darkened (#004ABD
-            // blocks set #0445AA / #093E8F text, measured).
-            b"gray" => (0x868b90, 0xb8c0c5, 0xf5f5f5, 0xebebeb, 0xe0e0e0, 0x9ea4aa),
-            b"red" => (0xcb0424, 0xff9898, 0xfef2f2, 0xffe2e2, 0xffc9c9, 0xef052a),
-            b"orange" => (0xd97c00, 0xffb86a, 0xfff7ed, 0xffedd4, 0xffd6a8, 0xff9200),
-            b"yellow" => (0xd4a100, 0xfff100, 0xfefce8, 0xfef9c2, 0xfff085, 0xf9bd00),
-            b"green" => (0x008658, 0x39ff91, 0xecfdf5, 0xd0fae5, 0xa4f4cf, 0x009e68),
-            b"blue" => (0x003fa1, 0x72c2ff, 0xeff6ff, 0xdbeafe, 0xbedbff, 0x004abd),
-            b"purple" => (0x4a00d9, 0xc49bff, 0xf5f3ff, 0xede9fe, 0xddd6ff, 0x5700ff),
-            _ => return None,
-        })
-    }
-}
-
-/// `light-red` → ("red", false), `medium-red` / `red` → ("red", true).
-fn split(name: &str) -> Option<(&str, bool)> {
-    if let Some(h) = name.strip_prefix("light-") {
-        return Some((h, false));
-    }
-    if let Some(h) = name.strip_prefix("medium-") {
-        return Some((h, true));
-    }
-    hue::of(name).map(|_| (name, true))
-}
-
-/// Font colour swatches as the colour panel shows them (first = default).
-pub fn text_color(name: &str) -> Option<Hsla> {
-    hue::of(name).map(|h| c(h.0))
-}
-
-/// Text highlight: the marker colours at 35% (yellow #FFF100 → #FFFAA6
-/// measured), 65% for the strong row.
-pub fn bg_color(name: &str) -> Option<Hsla> {
-    let (h, strong) = split(name)?;
-    let m = hue::of(h)?;
-    let (r, g, b) = ((m.1 >> 16) as u8, (m.1 >> 8) as u8, m.1 as u8);
-    Some(mark(rgbaf(r, g, b, if strong { 0.65 } else { 0.35 })))
-}
-
-/// Block background (blocks, table cells): the block decoration, the
-/// block colour at 7.5% (#004ABD → #ECF1FA measured); the strong row at 15%.
-pub fn block_bg(name: &str) -> Option<Hsla> {
-    let (h, strong) = split(name)?;
-    let m = hue::of(h)?;
-    Some(if strong { mix(m.5, craft::N00, 0.85) } else { mix(m.5, craft::N00, 0.925) })
-}
-
-/// Block palette swatch (what the picker shows for a block colour).
-pub fn bg_swatch(name: &str) -> Option<Hsla> {
-    let (h, strong) = split(name)?;
-    let m = hue::of(h)?;
-    Some(if strong { c(m.4) } else { c(m.3) })
-}
-
-/// Callout fill: the block decoration tint.
-pub fn callout_bg(name: &str) -> Option<Hsla> {
-    block_bg(name)
-}
-
-/// Callout border: one step deeper than its fill.
-pub fn callout_border(name: &str) -> Option<Hsla> {
-    let h = name.strip_prefix("light-").or_else(|| name.strip_prefix("medium-")).unwrap_or(name);
-    let h = if h == "neutral" { "gray" } else { h };
-    hue::of(h).map(|m| c(m.4))
-}
-
-/// Border picker swatches.
-pub fn callout_border_swatch(name: &str) -> Option<Hsla> {
-    hue::of(name).map(|m| c(m.5))
 }
 
 // ---- layout metrics (pt)
@@ -482,43 +305,3 @@ pub const SIDEBAR_MAX: f32 = 800.0;
 pub const SIDEBAR_MIN_CONTENT: f32 = 540.0;
 /// Left inset of the header controls that sit beside the macOS traffic lights.
 pub const TRAFFIC_LIGHTS_W: f32 = if cfg!(target_os = "macos") { 92.0 } else { 16.0 };
-
-/// (font size, line height, margin top, margin bottom) per block.
-pub struct BlockMetrics {
-    pub size: f32,
-    pub line_height: f32,
-    pub mt: f32,
-    pub mb: f32,
-}
-
-/// The text styles on Mac (iOS px × 0.882353): Title 21 / 700,
-/// Subtitle 19 / 700, Heading 18 / 600, Strong 16 / 600; H5+ are body size
-/// at 600. Line heights are multipliers on the font's natural line
-/// height (1.19em); margins are padding-top / -bottom.
-pub fn heading_metrics(level: u8) -> BlockMetrics {
-    // Paddings are px as pt: measured gaps match them unscaled.
-    let (size, lh, mt, mb) = match level {
-        1 => (21.0, 27.0, 48.0, 16.0),
-        2 => (19.0, 25.0, 36.0, 16.0),
-        3 => (18.0, 24.0, 28.0, 12.0),
-        4 => (16.0, 25.0, 16.0, 16.0),
-        _ => (15.0, 22.0, 13.0, 13.0),
-    };
-    BlockMetrics { size, line_height: lh, mt, mb }
-}
-
-/// Body text: 15pt, 1.25 × natural line height ≈ 22pt; single-line
-/// paragraphs repeat every 35pt, so 13pt between blocks.
-pub const BODY_SIZE: f32 = 15.0;
-pub const BODY_LINE: f32 = 22.0;
-pub const BLOCK_GAP: f32 = 13.0;
-
-/// Heading weight per level (Title / Subtitle 700, Heading / Strong 600).
-pub fn heading_weight(level: u8) -> gpui::FontWeight {
-    if level <= 2 { gpui::FontWeight::BOLD } else { gpui::FontWeight::SEMIBOLD }
-}
-
-/// Page title: Thesio uses 34 / 55.25 Bold, larger than the 21pt
-/// reference `.pageTitle`, to match preview typography; the larger title is
-/// an intentional deviation, not a measurement.
-pub const TITLE: BlockMetrics = BlockMetrics { size: 34.0, line_height: 55.25, mt: 0.0, mb: 0.0 };

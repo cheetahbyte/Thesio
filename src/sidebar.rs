@@ -608,7 +608,6 @@ impl Workspace {
                 .into_any_element(),
         };
         let renaming = self.rename.as_ref().is_some_and(|r| r.id == e.id);
-        let folder = kids || self.entries.iter().any(|child| child.meta.parent.as_deref() == Some(e.id.as_str()));
         // 批量操作: 我的文档 rows get a checkbox and lose "…"; checked rows are tinted.
         let batch = self.batch.as_ref().filter(|_| key == "doc");
         let checked = batch.is_some_and(|b| b.contains(&e.id));
@@ -638,12 +637,8 @@ impl Workspace {
                 // The icon shares 搜索/主页's column, so there is no arrow column:
                 // on pages with children, hovering the row swaps the icon for
                 // a 10px expand triangle.
-                let glyph = div().size(px(20.)).flex().items_center().justify_center().map(|d| match &e.icon {
-                    _ if folder => d.child(icon("folder", ROW_ICON, if selected { Theme::text() } else { Theme::text_caption() })),
-                    // 文档图标 replaces the page glyph.
-                    Some(em) => d.text_size(px(13.)).line_height(px(20.)).child(em.clone()),
-                    None => d.child(icon("doc", ROW_ICON, if selected { Theme::text() } else { Theme::text_caption() })),
-                });
+                let glyph = div().size(px(20.)).flex().items_center().justify_center()
+                    .child(icon(if e.folder { "folder" } else { "doc" }, ROW_ICON, if selected { Theme::text() } else { Theme::text_caption() }));
                 let slot = div().id(SharedString::from(format!("arrow-{key}-{}", e.id))).relative().size(px(20.)).flex_none().rounded(px(5.));
                 if kids {
                     let open = self.expanded.contains(&e.id);
@@ -728,7 +723,6 @@ impl Workspace {
             })
         };
         let (dup, mv, pin, star, dl, ren, del) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
-        let pdf = m.id.clone();
         let new_window = m.id.clone();
         let sub_bounds = self.row_sub_bounds.clone();
         // The row menu leaves out the cloud entries 在新标签页打开, 分享,
@@ -836,8 +830,7 @@ impl Workspace {
                             .px(px(5.))
                             .py(px(crate::ui::MENU_PAD_Y))
                             .child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
-                            .when(crate::printing::SUPPORTED, |d| d.child(crate::docmenu::sub_item("rm-pdf", "PDF").on_click(cx.listener(move |w, _, window, cx| w.export_pdf(&pdf, window, cx)))))
-                            .child(crate::docmenu::sub_item("rm-md", "Markdown").on_click(cx.listener(move |w, _, _, cx| w.open_export_md(&dl, cx)))),
+                            .child(crate::ui::menu_row("rm-pdf", "rm-pdf".into()).mx(px(0.)).child(crate::ui::menu_label("PDF", "rm-pdf".into(), gpui::white())).on_click(cx.listener(move |w, _, _, cx| { w.row_menu = None; w.export_pdf(&dl, cx); }))),
                     ),
                 )
                 .with_priority(2)
