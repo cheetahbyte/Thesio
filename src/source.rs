@@ -452,13 +452,14 @@ impl SourceEditor {
         if self.completion.as_ref().is_none_or(|open| index >= open.items.len()) { return; }
         let Some(mut open) = self.completion.take() else { return };
         let item = open.items.swap_remove(index);
+        let kind = item.kind;
         self.settled = Some(open.range.start);
         let at = item.from.unwrap_or(open.range.start);
         let sel = item.selection.map_or(at + item.insert.len()..at + item.insert.len(), |sel| at + sel.start..at + sel.end);
         let change = self.buffer.replace_selecting(at..open.range.end, &item.insert, sel, EditKind::Other);
         self.changed(change, Trigger::Moved, cx);
         self.stops = item.stops.iter().map(|stop| at + stop.start..at + stop.end).collect();
-        cx.emit(SourceEvent::Completed(open.kind));
+        cx.emit(SourceEvent::Completed(kind));
     }
 
     fn completion_step(&mut self, down: bool, cx: &mut Context<Self>) {

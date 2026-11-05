@@ -133,9 +133,10 @@ impl Workspace {
     /// Follows a key change through every document that cites it.
     pub(crate) fn rename_citations(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
         let mut changed = 0;
+        let documents = self.documents(cx);
         for id in self.entries.iter().filter(|e| e.typst).map(|e| e.id.clone()).collect::<Vec<_>>() {
             let Some(text) = self.read_document(&id, cx) else { continue };
-            let Some(updated) = rename_citation(&text, old, new) else { continue };
+            let Some(updated) = rename_citation(&text, old, new, documents.has_label(&id, old)) else { continue };
             if let Err(e) = self.write_document(&id, &updated, Edit::Undoable, cx) {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the citation in {id}: {e}"), cx);
                 continue;

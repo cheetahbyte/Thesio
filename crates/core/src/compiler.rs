@@ -17,9 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use typst::diag::{FileError, FileResult, PackageError, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration};
-use typst::introspection::PagedPosition;
+use typst::introspection::{Introspector, PagedPosition};
 use typst::layout::{Abs, Frame, FrameItem, Point};
-use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
+use typst::model::{FigureElem, Refable};
+use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot, is_valid_label_literal_id};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
@@ -48,6 +49,19 @@ pub struct Diagnostic {
     pub line: Option<usize>,
 }
 
+/// A label in the compiled document, whichever file wrote it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentLabel {
+    pub key: String,
+    /// A caption, a heading's text, or the key when the element has no text.
+    pub title: String,
+    /// What the document calls it, such as "Figure"; "Label" for anything a
+    /// reference gives no number.
+    pub kind: String,
+    /// One-based, counting the document's pages rather than its page numbers.
+    pub page: Option<usize>,
+}
+
 /// The outcome of one compile, whole: it holds the files it read, so it needs
 /// no compiler to answer questions and any thread can keep it. A later edit
 /// does not change what it says. `ide.rs` asks `typst_ide` through `world`.
@@ -60,6 +74,8 @@ pub struct Compilation {
     /// appear. Text with no file, such as a bibliography or page numbers, does
     /// not count.
     pub words: Vec<(String, usize)>,
+    /// Labels `@` can reach, in document order. The first of a repeated label.
+    pub labels: Vec<DocumentLabel>,
     /// Packages this compile stopped at, to `fetch` and compile again.
     pub missing: Vec<PackageSpec>,
     pub(crate) world: Snapshot,
@@ -194,9 +210,10 @@ impl Compiler {
         let diagnostics = errors.iter().chain(&result.warnings).map(|d| world.diagnostic(d)).collect();
         comemo::evict(CACHE_AGE);
         let words = document.as_ref().map_or(vec![], count_words);
+        let labels = document.as_ref().map_or(vec![], document_labels);
         let files = world.read.into_inner().unwrap_or_default();
         let missing = world.missing.into_inner().unwrap_or_default();
-        Compilation { main: main.to_string(), document, diagnostics, words, missing, world: Snapshot { resources: self.resources.clone(), root: self.root.clone(), main: id, files } }
+        Compilation { main: main.to_string(), document, diagnostics, words, labels, missing, world: Snapshot { resources: self.resources.clone(), root: self.root.clone(), main: id, files } }
     }
 }
 
@@ -236,6 +253,30 @@ fn count_words(document: &PagedDocument) -> Vec<(String, usize)> {
         });
     }
     found.into_iter().filter_map(|(id, words)| Some((vault_path(id)?, words))).collect()
+}
+
+/// `@` cannot spell a label made with `label("a b")`, and leaves a trailing
+/// `.` or `:` to the sentence.
+fn reachable_by_at(key: &str) -> bool { is_valid_label_literal_id(key) && !key.ends_with(['.', ':']) }
+
+fn document_labels(document: &PagedDocument) -> Vec<DocumentLabel> {
+    let introspector = document.introspector();
+    let labelled = introspector.query_labelled();
+    let mut elements = FxHashMap::default();
+    for element in &labelled {
+        if let Some(label) = element.label() { elements.entry(label).or_insert(element); }
+    }
+    let (labels, bibliography_keys) = typst_ide::analyze_labels(document);
+    labels.into_iter().take(bibliography_keys).filter_map(|(label, title)| {
+        let element = elements.get(&label)?;
+        let key = label.resolve().to_string();
+        if !reachable_by_at(&key) { return None; }
+        let title = title.map_or(String::new(), |title| title.split_whitespace().collect::<Vec<_>>().join(" "));
+        let supplement = element.to_packed::<FigureElem>().map(|figure| figure.supplement().plain_text().to_string()).filter(|name| !name.is_empty());
+        let kind = supplement.unwrap_or_else(|| if element.can::<dyn Refable>() { element.elem().title() } else { "Label" }.to_string());
+        let page = element.location().and_then(|location| introspector.page(location)).map(NonZeroUsize::get);
+        Some(DocumentLabel { title: if title.is_empty() { key.clone() } else { title }, key, kind, page })
+    }).collect()
 }
 
 /// Runs `work` on a thread with room for deep documents and embedded PDFs,

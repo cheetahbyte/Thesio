@@ -376,6 +376,41 @@ mod tests {
     }
 
     #[test]
+    fn labels_cover_every_included_file_with_their_kind_and_page() {
+        let compilation = compiled("document-labels", &[
+            ("main.typ", "= Intro <intro>\n#include \"chapters/one.typ\"\n"),
+            ("chapters/one.typ", concat!(
+                "#pagebreak()\n",
+                "#figure(rect(), caption: [A\n  plot]) <fig:plot>\n",
+                "#figure(table(), caption: [Results]) <tab:results>\n",
+                "#figure(rect(), supplement: none) <bare>\n",
+                "#figure(rect(), supplement: [Plate], kind: \"plate\") <plate>\n",
+                "$ a + b $ <eq>\n",
+                "Some words <plain>\n",
+                "#metadata(1) <meta>\n",
+            )),
+        ]);
+        let summary: Vec<(&str, &str, &str, Option<usize>)> = compilation.labels.iter().map(|label| (label.key.as_str(), label.title.as_str(), label.kind.as_str(), label.page)).collect();
+        assert_eq!(summary[..3], [("intro", "Intro", "Heading", Some(1)), ("fig:plot", "A plot", "Figure", Some(2)), ("tab:results", "Results", "Table", Some(2))]);
+        let find = |key: &str| compilation.labels.iter().find(|label| label.key == key).unwrap();
+        assert_eq!((find("bare").title.as_str(), find("bare").kind.as_str()), ("bare", "Figure"));
+        assert_eq!(find("plate").kind, "Plate");
+        assert_eq!(find("eq").kind, "Equation");
+        assert_eq!(find("plain").kind, "Label");
+        assert_eq!((find("meta").title.as_str(), find("meta").kind.as_str()), ("meta", "Label"));
+    }
+
+    #[test]
+    fn sources_and_labels_that_at_cannot_write_stay_out_of_the_labels() {
+        let compilation = compiled("label-limits", &[
+            ("main.typ", "#set page(numbering: none)\n= One <first>\n= Two <first>\n#figure(rect()) #label(\"has space\")\n#metadata(1) <end.>\n@key\n#bibliography(\"refs.yaml\")\n"),
+            ("refs.yaml", "key:\n  type: book\n  title: A Book\n"),
+        ]);
+        let keys: Vec<(&str, &str)> = compilation.labels.iter().map(|label| (label.key.as_str(), label.title.as_str())).collect();
+        assert_eq!(keys, [("first", "One")]);
+    }
+
+    #[test]
     fn a_hover_describes_a_function_in_a_sentence() {
         let text = "#heading[One]\n";
         let hover = compiled("hover-func", &[("main.typ", text)]).hover("main.typ", text, 2).unwrap();

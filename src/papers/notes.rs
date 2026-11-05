@@ -70,7 +70,7 @@ impl Workspace {
         let root = self.store.borrow().root().to_path_buf();
         let session = cx.new(|_| DocumentSession::without_pages(root, note.clone(), note.clone()));
         let workspace = cx.weak_entity();
-        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace)), Rc::new(TypstCode::new(session.downgrade()))];
+        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys::new(workspace, Some(session.downgrade()))), Rc::new(TypstCode::new(session.downgrade()))];
         let editor = cx.new(|cx| {
             let mut editor = SourceEditor::new(text.clone(), true, providers, cx);
             // Inside the panel: the viewer would hide what crosses onto it.

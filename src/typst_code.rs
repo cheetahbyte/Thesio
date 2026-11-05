@@ -18,6 +18,7 @@ impl TypstCode {
 fn item(suggestion: Suggestion) -> Item {
     let mut fields = suggestion.insert.fields.into_iter();
     Item {
+        kind: CompletionKind::Typst,
         title: suggestion.title,
         detail: suggestion.kind,
         info: suggestion.detail,

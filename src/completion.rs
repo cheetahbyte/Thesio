@@ -10,11 +10,15 @@ use std::rc::Rc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionKind {
     Citation,
+    /// `@` pointing at a label in the document, which needs no bibliography.
+    Reference,
     NoteLink,
     Typst,
 }
 
 pub struct Item {
+    /// What accepting it adds to the document.
+    pub kind: CompletionKind,
     pub title: String,
     pub detail: String,
     /// Longer text shown under the list while this item is selected.

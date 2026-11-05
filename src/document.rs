@@ -105,7 +105,7 @@ impl Workspace {
         let main = self.top_document(id, cx);
         let session = typst.then(|| cx.new(|_| DocumentSession::with_pages(root, id.to_string(), main)));
         let workspace = cx.weak_entity();
-        let mut providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace.clone())), Rc::new(NoteLinks(workspace))];
+        let mut providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys::new(workspace.clone(), session.as_ref().map(Entity::downgrade))), Rc::new(NoteLinks(workspace))];
         // Last: `@` and `[[` belong to the two above.
         if let Some(session) = &session { providers.push(Rc::new(TypstCode::new(session.downgrade()))); }
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
@@ -165,7 +165,7 @@ impl Workspace {
         let Some(file) = self.current() else { return vec![] };
         let mut notes: Vec<&Entry> = self.entries.iter().filter(|e| e.typst && e.id != file && (e.title.to_lowercase().contains(query) || e.id.to_lowercase().contains(query))).collect();
         notes.sort_by_key(|e| !e.title.to_lowercase().starts_with(query));
-        notes.into_iter().map(|e| Item { title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None, stops: vec![], from: None }).collect()
+        notes.into_iter().map(|e| Item { kind: CompletionKind::NoteLink, title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None, stops: vec![], from: None }).collect()
     }
 
     /// What `id` holds now: the open editor's copy, or the file.

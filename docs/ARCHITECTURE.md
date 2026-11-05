@@ -39,7 +39,7 @@ main.rs: window
 | Module | Responsibility |
 |---|---|
 | `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
-| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
+| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, labels, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
 | `ide.rs` | Asks `typst-ide` what can follow the caret and what is under the pointer. See [Completion](#completion). |
 | `packages.rs` | Finds Typst packages on disk and fetches missing ones. See [Packages](#packages). |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
@@ -92,7 +92,9 @@ Rows also paint `Decoration`s: an underline over a precise byte range, in a colo
 
 ## Completion
 
-`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, the other placeholders that Tab selects in order, and optional `info` shown under the list. Citations and note links ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
+`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, the other placeholders that Tab selects in order, and optional `info` shown under the list. Citations and note links ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host the accepted `Item`'s kind. The popup keeps six rows on screen and scrolls the rest.
+
+`CitationKeys` offers sources and labels in one list. Labels come from `Compilation::labels`, read from the introspector of the session's last good compile through `typst_ide::analyze_labels`, so a chapter sees the labels of its whole document, and a label reads as its caption or text, what the document calls it (a figure's supplement), and its page, counted from the first page. What starts with the query comes first, then what matches further in, with sources ahead of labels in both; a source keeps its place from before labels joined. An accepted label is a `CompletionKind::Reference`, which leaves the bibliography alone.
 
 `TypstCode` in `typst_code.rs` is the provider of Typst code, and it comes last in the list, so `@` and `[[` stay with the other two. Typing opens it after a `#` or the dot of a field access, which `CodeStart` tells from a dot in prose. It keeps the parsed text, so that keystroke costs an edit and not a parse. ⌃Space opens it anywhere, and `Reach` says which of these `find` is answering. `typst_ide` knows the replaced range only once it answers, so an `Item` can override where `find` said it starts.
 
@@ -140,7 +142,7 @@ A note link is plain Typst, `#link("../notes/idea.typ")[Idea]`, so a document st
 
 BibLaTeX goes through Hayagriva, except keywords and language, which it drops and `import_biblatex` reads with the `biblatex` crate. Import then refines `@misc` entries: an arXiv ID makes a Preprint, a version a Software entry, and an access date a Web Page. A test exports the fields of every imported type and reads them back.
 
-The citation style is the `style` argument of the document's `#bibliography`, so it lives in the file and survives block updates. Picking one edits that argument and nothing else, including in a `#bibliography` the user wrote. Changing a citation key rewrites `@key` and `#cite(<key>)` in every document, and leaves plain labels, raw text, and comments alone.
+The citation style is the `style` argument of the document's `#bibliography`, so it lives in the file and survives block updates. Picking one edits that argument and nothing else, including in a `#bibliography` the user wrote. Changing a citation key rewrites `@key` and `#cite(<key>)` in every document, and leaves plain labels, raw text, and comments alone. A document that writes a label of the same name, in any of its files, keeps its `@key`, which means the label there (`Documents::has_label`); its `#cite(<key>)` still changes.
 
 Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 
@@ -165,6 +167,9 @@ The first citation in a document embeds a block unless one already covers it. A 
 - Fonts are the set bundled with Typst.
 - `@preview` package names are not offered in `#import`: that needs the package index, which no question may fetch.
 - Fields after a dot come from evaluating the document, so an error earlier in the file leaves `typst_ide` no value to list. Names in the standard library are still offered.
+- `@` offers labels as of the last good compile, so a label just typed joins after the next one. With nothing typed, sources come first, so a large library puts labels out of reach until a letter narrows the list.
+- A label is offered even where `@` cannot use it: Typst refuses a heading or equation with no numbering, and any element that has no number.
+- A label made by a script is not seen when a citation key changes, so `@key` to it is rewritten. Cited In and delete warnings still count an `@key` that means a label.
 - Paper notes compile on their own, so they see what they import but not a document that includes them.
 - A failed package download is tried again only by a compile, so a document left untouched keeps showing the error.
 - An editor with no `Preview`, such as paper notes, downloads packages without showing it.

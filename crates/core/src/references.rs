@@ -140,8 +140,14 @@ pub fn citations_of(text: &str, key: &str) -> Vec<usize> {
 }
 
 /// `text` with every citation of `old` changed to `new`, or `None` without any.
-pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
-    let starts = citations_of(text, old);
+/// In a document with a label `old`, `@old` means the label, so `labelled`
+/// leaves it and changes only `#cite(<old>)`.
+pub fn rename_citation(text: &str, old: &str, new: &str, labelled: bool) -> Option<String> {
+    let source = Source::detached(text);
+    let mut starts = vec![];
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        if cited_key(node).as_deref() == Some(old) && !(labelled && node.kind() == SyntaxKind::Ref) { starts.push(node.offset() + 1); }
+    });
     if starts.is_empty() { return None; }
     let mut out = text.to_string();
     for start in starts.into_iter().rev() { out.replace_range(start..start + old.len(), new); }
@@ -212,8 +218,15 @@ mod tests {
     #[test]
     fn renaming_a_key_changes_only_its_citations() {
         let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
-        assert_eq!(rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");
-        assert_eq!(rename_citation("nothing here", "old", "new"), None);
+        assert_eq!(rename_citation(text, "old", "new", false).unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");
+        assert_eq!(rename_citation("nothing here", "old", "new", false), None);
         assert_eq!(citations_of(text, "old"), [5, 25, 46]);
+    }
+
+    #[test]
+    fn in_a_labelled_document_at_means_the_label() {
+        let text = "See @old and #cite(<old>).\n= One <old>\n";
+        assert_eq!(rename_citation(text, "old", "new", true).unwrap(), "See @old and #cite(<new>).\n= One <old>\n");
+        assert_eq!(rename_citation("See @old.\n", "old", "new", true), None);
     }
 }

@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 use typst::syntax::ast::{self, AstNode};
-use typst::syntax::{LinkedNode, SyntaxKind};
+use typst::syntax::{LinkedNode, Source, SyntaxKind};
 
 /// Visits `node` and everything under it, each node given what its parent's
 /// visit returned.
@@ -33,6 +33,17 @@ pub(crate) fn string(node: &LinkedNode) -> Option<String> {
 /// `node`'s value when it is the path of an `#include`.
 pub(crate) fn include_literal(node: &LinkedNode) -> Option<String> {
     string(node).filter(|_| node.parent_kind() == Some(SyntaxKind::ModuleInclude))
+}
+
+/// Whether `text` puts the label `key` on something. A label anywhere else, as
+/// in `#ref(<key>)` or `#show <key>: ...`, only names one.
+pub(crate) fn defines_label(text: &str, key: &str) -> bool {
+    let source = Source::detached(text);
+    let mut found = false;
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        found = found || node.kind() == SyntaxKind::Label && node.parent_kind() == Some(SyntaxKind::Markup) && ast::Label::from_untyped(node.get()).is_some_and(|label| label.get() == key);
+    });
+    found
 }
 
 /// The key `node` cites: `@key` or the label in `#cite(<key>)`.

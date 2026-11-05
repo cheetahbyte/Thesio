@@ -2,7 +2,7 @@
 //! them, and which document opens at launch.
 
 use crate::paths::{dir_parts, parent_of, visit_vault};
-use crate::typst_source::{include_literal, vault_path, walk};
+use crate::typst_source::{defines_label, include_literal, vault_path, walk};
 use std::collections::HashMap;
 use std::path::Path;
 use typst::syntax::ast::{self, AstNode};
@@ -130,6 +130,12 @@ impl Documents {
     pub fn top_document(&self, id: &str) -> String {
         self.includers(id).into_iter().find(|top| self.includers(top).is_empty()).unwrap_or(id).to_string()
     }
+
+    /// Whether a document `id` is part of writes the label `key`, so that
+    /// `@key` there means the label. A label a script makes is not seen.
+    pub fn has_label(&self, id: &str, key: &str) -> bool {
+        self.projects.iter().filter(|(_, project)| project.contains(id)).any(|(_, project)| project.files().any(|(_, text)| defines_label(text, key)))
+    }
 }
 
 /// The document to open when nothing asks for another: the newest of these
@@ -199,6 +205,21 @@ mod tests {
         let headings = Project::open("main.typ", &mut reader(&files)).outline();
         let summary: Vec<(&str, usize, &str)> = headings.iter().map(|h| (h.path.as_str(), h.level, h.title.as_str())).collect();
         assert_eq!(summary, [("main.typ", 1, "One"), ("ch/a.typ", 1, "In A"), ("main.typ", 2, "Two"), ("ch/b.typ", 3, "In *B*")]);
+    }
+
+    #[test]
+    fn a_label_in_any_file_of_a_document_counts_for_all_of_them() {
+        let files = [
+            ("main.typ", "#include \"a.typ\"\n#include \"b.typ\"\n"),
+            ("a.typ", "= One <here>\n"),
+            ("b.typ", "See @here and #ref(<named>). `<raw>`\n#show <shown>: strong\n// <comment>\n"),
+            ("other.typ", "See @here.\n"),
+        ];
+        let documents = Documents::load(files.map(|(id, _)| id), &mut reader(&files));
+        assert!(documents.has_label("b.typ", "here"), "from a sibling chapter");
+        assert!(documents.has_label("main.typ", "here"));
+        assert!(!documents.has_label("other.typ", "here"), "another document");
+        for name in ["named", "raw", "shown", "comment"] { assert!(!documents.has_label("b.typ", name), "{name}"); }
     }
 
     #[test]
