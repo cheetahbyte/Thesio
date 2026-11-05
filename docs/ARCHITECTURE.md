@@ -7,7 +7,7 @@ The repository is a Cargo workspace with two crates:
 - **`crates/core` (`thesio_core`)** is the engine. It has no GPUI dependency and can be built and tested alone.
 - **The root crate (`thesio`)** is the GPUI application: window, views, and menus.
 
-Dependencies point only from the application to core.
+Dependencies point only from the application to core. Inside the application, `ui.rs`, `theme.rs`, `completion.rs`, `source.rs`, and `preview.rs` do not know `Workspace`, so a view can be read without it. Workspace state lives in structs owned by the feature that uses it: `OpenDocument`, `Sidebar`, `Outline`, `Search`, `Citations`, `Papers`.
 
 ```
 main.rs: window
@@ -15,15 +15,16 @@ main.rs: window
     actions.rs: every action's name, menu entry, default keys, and handler
     system.rs: file dialogs, other apps, the clipboard; scripted runs stop here
     store.rs: the vault on disk [core]
-    document.rs: the open document's saves, and every write to a document
+    document.rs: OpenDocument, its saves, and every write to a document
     overlay.rs: the one menu or dialog over the window
+    chrome.rs: the page header and header buttons the views share
     sidebar, tree, home, search, trash, confirm, docmenu
     citations/: the Library table, inspector, tags, picker, lookup, bibliographies
     papers/: Sources, the viewer, notes, quotes
     settings, preferences, appearance
     source.rs: SourceEditor, the open file's text
       text.rs: shaping and painting a line, shared with TextField
-      completion.rs: providers of what the popup offers
+      completion.rs: what a provider of the popup's items answers
       buffer.rs: text, selection, undo [core]
       syntax.rs: highlighting from Typst's parser [core]
     preview.rs: Preview, the view of the pages and diagnostics
@@ -40,7 +41,7 @@ main.rs: window
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
 | `library.rs` | The citation library. |
-| `biblatex.rs` | BibLaTeX import and export, by the names in the field table. |
+| `biblatex.rs` | BibLaTeX import and export. Hayagriva parses, and export takes every name from the field table. |
 | `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
 | `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
 | `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
@@ -50,8 +51,9 @@ main.rs: window
 | `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
 | `history.rs` | `Versions`: a file's earlier versions and how often they are kept. |
 | `diff.rs` | What changed between two texts, by line. |
+| `quote.rs` | A PDF highlight as Typst: cleaned text, page numbers, and the quotation's markup. |
 | `paths.rs` | Vault path helpers, file naming, natural order, atomic writes. |
-| `time.rs` | Local dates without a time zone database. |
+| `time.rs` | Local dates without a time zone database, in UTC when the offset is unknown. |
 
 ## Editing flow
 
@@ -76,11 +78,11 @@ Rows also paint `Decoration`s: an underline over a precise byte range, in a colo
 
 ## Completion
 
-`completion.rs` has the `Provider` trait and the two providers. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, and optional `info` shown under the list. `Citations` and `NoteLinks` ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
+`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, and optional `info` shown under the list. Both ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
 
 ## Overlays
 
-`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
+`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, the modal and menu shells that close it, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
 
 ## Actions
 
@@ -88,15 +90,15 @@ Rows also paint `Decoration`s: an underline over a precise byte range, in a colo
 
 ## Vault ids
 
-A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates the open document, so its editor and undo history survive. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
+A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates `OpenDocument`, so its editor and undo history survive. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
 
 ## Search
 
-The search dialog lists documents, then sources, then PDF highlights. Highlights live inside each PDF, so `search.rs` reads them with PDFKit when the dialog opens, off the main thread, and keeps them by file time and size. Results fill in once that finishes. Text in a PDF that is not highlighted is not searched.
+The search dialog lists documents, then sources, then PDF highlights, from any PDF in the vault. Highlights live inside each PDF, so `search.rs` reads them with PDFKit when the dialog opens, off the main thread, and keeps them by file time and size. Results fill in once that finishes. Text in a PDF that is not highlighted is not searched.
 
 ## Version history
 
-`history.rs` keeps versions as plain files in `.thesio/history/<id>/`: one when a file opens, then at most one every five minutes as it saves, and none if nothing changed. Every version stays for a day, then one a day for 90 days, and a file's newest version always stays. `Store::relocate` moves a file's versions with it. Restoring keeps the current text as a version first and goes through the editor, so it can be undone. `Library::commit` keeps `library.yaml` the same way before it writes, so a run of quick edits leaves the state before the first, and a version that no longer parses cannot be restored.
+`history.rs` keeps versions as plain files in `.thesio/history/<id>/`: one when a file opens, then at most one every five minutes as it saves, and none if nothing changed. A paper's notes count as a file that opens with the paper, and save the same way, 500 ms after typing stops. Every version stays for a day, then one a day for 90 days, and a file's newest version always stays. `Store::relocate` moves a file's versions with it. Restoring keeps the current text as a version first and goes through the editor, so it can be undone. `Library::commit` keeps `library.yaml` the same way before it writes, so a run of quick edits leaves the state before the first, and a version that no longer parses cannot be restored. A file that cannot be read cannot be kept, so the write stops.
 
 ## Sidebar
 
@@ -122,7 +124,7 @@ The citation style is the `style` argument of the document's `#bibliography`, so
 
 Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 
-Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Keys are generated as surname and year.
+Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Other numbers, such as an ISSN or a version, are shared by many works and do not count. Keys are generated as surname and year.
 
 Adding a source also looks for its paper: arXiv first, then the locations Unpaywall lists, when an email is set in Settings. Only PDFs are kept, as `sources/<key>.pdf`, and the Sources page lists that folder. A paper follows its entry when the key changes, and stays when the entry is deleted. A paper can also be added by hand. A PDF in `sources/` whose name matches no key shows as unlinked until it is linked to a source.
 
@@ -147,6 +149,5 @@ The first citation in a document embeds a block unless one already covers it. A 
 - Changes made to the open file by other programs are not picked up, and the next save overwrites them.
 - Two windows on the same file are not kept in sync.
 - The editor has no find and replace yet.
-- Changing a citation key does not update `@key` citations that use it.
 - BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
 - Zotero import and sync are not implemented, and ADS Bibcodes are not supported because ADS requires a personal API key.
