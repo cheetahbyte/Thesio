@@ -7,9 +7,10 @@ use crate::library::{self, Mode, NOTES_DIR, note_file, paper_file};
 use crate::native_pdf::Highlight;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::theme::Theme;
-use crate::trash::page_header;
+use crate::trash::{dialog, page_header, primary_button, scrim, secondary_button};
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
+use thesio_core::quote::{clean_quote, page_offset, printed_page, quote_markup};
 
 const PANEL_W: f32 = 340.;
 const TAB_X: f32 = 16.;
@@ -24,10 +25,26 @@ pub struct PaperPanel {
     notes: Option<(Entity<SourceEditor>, Subscription)>,
     /// The highlight whose comment is being written.
     comment: Option<(Highlight, Entity<TextField>, Subscription)>,
+    quote: Option<QuoteDialog>,
+}
+
+/// The review step before a highlight enters a document: PDF text can be wrong.
+struct QuoteDialog {
+    highlight: Highlight,
+    key: String,
+    /// The page as first shown, to tell a correction from a confirmation.
+    page: String,
+    text_field: Entity<TextField>,
+    page_field: Entity<TextField>,
+    _subs: Vec<Subscription>,
+}
+
+impl PaperPanel {
+    pub(crate) fn quoting(&self) -> bool { self.quote.is_some() }
 }
 
 impl Default for PaperPanel {
-    fn default() -> Self { Self { hidden: false, tab: PaperTab::Notes, notes: None, comment: None } }
+    fn default() -> Self { Self { hidden: false, tab: PaperTab::Notes, notes: None, comment: None, quote: None } }
 }
 
 impl Workspace {
@@ -133,16 +150,121 @@ impl Workspace {
         cx.notify();
     }
 
+    fn highlight_page(&self, highlight: &Highlight) -> String {
+        let offset = self.paper.as_ref().and_then(|id| self.entries.iter().find(|e| e.id == *id)).and_then(|e| e.meta.page_offset);
+        printed_page(&highlight.label, highlight.page, offset.unwrap_or(0))
+    }
+
+    /// The document a quote goes to: the open one, else this paper's notes.
+    fn quote_target(&self) -> Option<(String, Entity<SourceEditor>)> {
+        let note = self.paper.as_deref().map(note_file);
+        match (&self.current, &self.editor) {
+            (Some(id), Some(editor)) if id.ends_with(".typ") && Some(id) != note.as_ref() => Some((id.clone(), editor.clone())),
+            _ => Some((note?, self.paper_panel.notes.as_ref()?.0.clone())),
+        }
+    }
+
+    fn open_quote(&mut self, highlight: Highlight, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.paper.clone() else { return };
+        let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
+        let Some(key) = row.map(|row| row.key) else {
+            return self.show_toast_kind(ToastKind::Error, "Link this paper to a source to quote it", cx);
+        };
+        self.pdf.release_keys();
+        let page = self.highlight_page(&highlight);
+        let text = clean_quote(&highlight.quote);
+        let text_field = cx.new(|cx| {
+            let mut f = TextField::new("Quotation", cx);
+            f.wrap = true;
+            f.multiline = true;
+            f.set_text(&text, cx);
+            f
+        });
+        let page_field = cx.new(|cx| {
+            let mut f = TextField::new("None", cx);
+            f.set_text(&page, cx);
+            f
+        });
+        let on_event = |w: &mut Self, _: &Entity<TextField>, ev: &TextFieldEvent, window: &mut Window, cx: &mut Context<Self>| match ev {
+            TextFieldEvent::Submit => w.insert_quote(window, cx),
+            TextFieldEvent::Cancel => {
+                w.paper_panel.quote = None;
+                cx.notify();
+            }
+            _ => {}
+        };
+        let subs = vec![cx.subscribe_in(&text_field, window, on_event), cx.subscribe_in(&page_field, window, on_event)];
+        window.focus(&text_field.focus_handle(cx));
+        self.paper_panel.quote = Some(QuoteDialog { highlight, key, page, text_field, page_field, _subs: subs });
+        cx.notify();
+    }
+
+    fn insert_quote(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(dialog) = &self.paper_panel.quote else { return };
+        let text = dialog.text_field.read(cx).text.clone();
+        if text.trim().is_empty() { return; }
+        let entered = dialog.page_field.read(cx).text.trim().to_string();
+        let offset = (entered != dialog.page).then(|| page_offset(&dialog.highlight.label, dialog.highlight.page, &entered)).flatten();
+        let (markup, block) = quote_markup(&text, &dialog.key, &entered);
+        let Some((target, editor)) = self.quote_target() else { return };
+        self.paper_panel.quote = None;
+        if let (Some(offset), Some(id)) = (offset, self.paper.clone()) {
+            if let Err(e) = self.store.set_page_offset(&id, offset) {
+                self.show_toast_kind(ToastKind::Error, &format!("Could not save the page numbering: {e}"), cx);
+            }
+            self.entries = self.store.list();
+            self.sort();
+        }
+        editor.update(cx, |e, cx| e.insert_quote(&markup, block, cx));
+        if self.paper.as_deref().map(note_file).as_ref() == Some(&target) {
+            self.link_note_library(&target, &editor, cx);
+        } else {
+            self.citation_added(&target, cx);
+        }
+        let name = self.entries.iter().find(|e| e.id == target).map_or(target.clone(), |e| e.title.clone());
+        self.show_toast(&format!("Added the quote to {name}"), cx);
+        cx.notify();
+    }
+
+    pub(crate) fn render_quote_dialog(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let quote = self.paper_panel.quote.as_ref()?;
+        let target = self.quote_target().map(|(id, _)| id).and_then(|id| self.entries.iter().find(|e| e.id == id).map(|e| e.title.clone())).unwrap_or_else(|| "the notes".to_string());
+        let panel = dialog("quote-dialog").w(px(480.)).p(px(20.)).flex().flex_col().gap(px(10.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Insert Quote"))
+            .child(div().text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(format!("Text read from a PDF can contain errors, so check it against the paper. It goes into {target}, cited as @{}.", quote.key)))
+            .child(field_well(&quote.text_field, window, cx).id("quote-text").h(px(160.)).py(px(3.)).items_start().overflow_y_scroll())
+            .child(div().flex().items_center().gap(px(10.))
+                .child(div().text_size(px(13.)).child("Page"))
+                .child(field_well(&quote.page_field, window, cx).w(px(96.)))
+                .child(div().flex_1().text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption()).child("Correct a number once and the rest of this paper follows.")))
+            .child(div().mt(px(8.)).flex().justify_end().gap(px(8.))
+                .child(secondary_button("quote-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
+                    w.paper_panel.quote = None;
+                    cx.notify();
+                })))
+                .child(primary_button("quote-insert", "Insert").on_click(cx.listener(|w, _, window, cx| w.insert_quote(window, cx)))));
+        Some(deferred(div().id("quote-scrim").absolute().inset_0().bg(scrim()).flex().items_start().justify_center().pt(px(96.)).occlude().child(panel)).with_priority(3).into_any_element())
+    }
+
     fn render_highlight(&self, index: usize, highlight: Highlight, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.paper_panel.comment.as_ref().filter(|(target, _, _)| *target == highlight).map(|(_, field, _)| field.clone());
-        let (open, edit, delete) = (highlight.clone(), highlight.clone(), highlight.clone());
-        let page = format!("Page {}", highlight.page + 1);
+        let (open, edit, delete, quote) = (highlight.clone(), highlight.clone(), highlight.clone(), highlight.clone());
+        let page = match self.highlight_page(&highlight) {
+            page if page.is_empty() => "Before the first page".to_string(),
+            page => format!("Page {page}"),
+        };
         let group = SharedString::from(format!("highlight-{index}"));
         div().id(("highlight", index)).group(group.clone()).px(px(10.)).py(px(8.)).flex().flex_col().gap(px(4.)).rounded(px(8.)).cursor_pointer()
             .bg(Theme::fill_group())
             .on_click(cx.listener(move |w, _, _, _| w.pdf.go_to(&open)))
             .child(div().flex().items_center().text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption())
                 .child(div().flex_1().child(page))
+                .child(div().id(("highlight-quote", index)).px(px(4.)).text_color(Theme::text_code()).child("Insert as Quote")
+                    .on_click(cx.listener(move |w, _, window, cx| {
+                        cx.stop_propagation();
+                        w.open_quote(quote.clone(), window, cx);
+                    })))
                 .child(div().id(("highlight-delete", index)).size(px(20.)).flex().items_center().justify_center().rounded(px(5.))
                     .opacity(0.).group_hover(group, |s| s.opacity(1.))
                     .child(icon(Icon::Delete, 13., Theme::icon()))

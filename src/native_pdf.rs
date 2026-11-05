@@ -29,6 +29,8 @@ pub struct Highlight {
     /// Page and position among the page's annotations.
     pub page: usize,
     pub index: usize,
+    /// The page's own label; empty when it only repeats the position.
+    pub label: String,
     pub quote: String,
     pub comment: String,
 }
@@ -193,6 +195,8 @@ impl Pane {
             let pages: usize = msg_send![document, pageCount];
             for number in 0..pages {
                 let page: *mut Object = msg_send![document, pageAtIndex: number];
+                let label: *mut Object = msg_send![page, label];
+                let label = Some(text_of(label)).filter(|label| *label != (number + 1).to_string()).unwrap_or_default();
                 let annotations: *mut Object = msg_send![page, annotations];
                 let count: usize = msg_send![annotations, count];
                 for index in 0..count {
@@ -200,7 +204,7 @@ impl Pane {
                     let kind: *mut Object = msg_send![annotation, type];
                     if text_of(kind) != "Highlight" { continue; }
                     let contents: *mut Object = msg_send![annotation, contents];
-                    out.push(Highlight { page: number, index, quote: quote_of(annotation, page), comment: text_of(contents) });
+                    out.push(Highlight { page: number, index, label: label.clone(), quote: quote_of(annotation, page), comment: text_of(contents) });
                 }
             }
         }

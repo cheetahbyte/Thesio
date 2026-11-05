@@ -1128,6 +1128,7 @@ impl Render for Workspace {
         let entry_form = self.render_entry_form(cx);
         let cite_picker = self.render_cite_picker(window, cx);
         let lookup = self.render_lookup(window, cx);
+        let quote_dialog = self.render_quote_dialog(window, cx);
         let library_menu = self.render_library_menu(window, cx);
         let library_row_menu = self.render_library_row_menu(cx);
         // Only the note stands out: a white plane flush with the window's top,
@@ -1217,6 +1218,7 @@ impl Render for Workspace {
             .children(entry_form)
             .children(cite_picker)
             .children(lookup)
+            .children(quote_dialog)
             .children(library_menu)
             .children(library_row_menu)
             .children(search)

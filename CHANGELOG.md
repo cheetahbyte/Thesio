@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Draw indent lines under open folders in the sidebar.
+- Insert a highlight as a quotation with its page citation. Correcting a page number once fixes the numbering for that paper.
 - Remove hover highlights outside menus, and let controls show their pressed state only.
 - Use the macOS accent color for controls and sidebar icons, updated when you return to the app. Other platforms keep the blue accent.
 - Move the controls to a flat look of their own: hairline outlines, quiet menu highlights, and a new accent.

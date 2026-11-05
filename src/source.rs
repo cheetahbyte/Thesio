@@ -221,6 +221,22 @@ impl SourceEditor {
         self.insert(&format!("{glue}@{key}"), EditKind::Other, cx);
     }
 
+    /// Inserts a quotation at the caret: inline like a citation, or a block in
+    /// a paragraph of its own.
+    pub fn insert_quote(&mut self, markup: &str, block: bool, cx: &mut Context<Self>) {
+        let before = &self.buffer.text()[..self.buffer.sel.start];
+        let text = if !block {
+            let glue = if before.chars().next_back().is_some_and(|c| !c.is_whitespace() && !"([{".contains(c)) { " " } else { "" };
+            let after = self.buffer.text()[self.buffer.sel.end..].chars().next();
+            let tail = if after.is_some_and(char::is_alphanumeric) { " " } else { "" };
+            format!("{glue}{markup}{tail}")
+        } else {
+            let glue = if before.is_empty() || before.ends_with("\n\n") { "" } else if before.ends_with('\n') { "\n" } else { "\n\n" };
+            format!("{glue}{markup}\n\n")
+        };
+        self.insert(&text, EditKind::Other, cx);
+    }
+
     fn changed(&mut self, cx: &mut Context<Self>) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();

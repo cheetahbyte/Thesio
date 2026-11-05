@@ -8,6 +8,7 @@ pub const fn supported() -> bool { false }
 pub struct Highlight {
     pub page: usize,
     pub index: usize,
+    pub label: String,
     pub quote: String,
     pub comment: String,
 }

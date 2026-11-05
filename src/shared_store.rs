@@ -28,5 +28,6 @@ impl SharedStore {
     pub fn touch(&mut self, id: &str) -> Result<()> { self.0.borrow_mut().touch(id) }
     pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> { self.0.borrow_mut().set_parent(id, parent) }
     pub fn set_starred(&mut self, id: &str, on: bool) -> Result<u64> { self.0.borrow_mut().set_starred(id, on) }
+    pub fn set_page_offset(&mut self, id: &str, offset: i32) -> Result<()> { self.0.borrow_mut().set_page_offset(id, offset) }
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<()> { self.0.borrow_mut().set_pinned(id, pinned) }
 }

@@ -29,6 +29,7 @@ Meta holds only what a file cannot. Titles come from file names, parents from fo
 | `pinned` | Pinned in the sidebar | false |
 | `opened` | Last opened, in Unix seconds | 0 |
 | `starred` | Time starred, 0 when not starred | 0 |
+| `page_offset` | Added to a PDF's page numbers to match the printed ones | none |
 
 New fields use `#[serde(default)]`, and default values are not written.
 

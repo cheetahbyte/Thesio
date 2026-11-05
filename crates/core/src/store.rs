@@ -36,6 +36,9 @@ pub struct Meta {
     /// Star time (0: not starred).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub starred: u64,
+    /// A PDF's printed page numbers minus the ones it reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_offset: Option<i32>,
 }
 
 fn is_zero(v: &u64) -> bool { *v == 0 }
@@ -524,6 +527,10 @@ impl Store {
         let time = if on { now() } else { 0 };
         self.update_meta(id, |m| m.starred = time)?;
         Ok(time)
+    }
+
+    pub fn set_page_offset(&mut self, id: &str, offset: i32) -> Result<()> {
+        self.update_meta(id, |m| m.page_offset = (offset != 0).then_some(offset))
     }
 
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<()> {

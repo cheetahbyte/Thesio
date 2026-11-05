@@ -762,7 +762,7 @@ impl Workspace {
         let c = &self.citations;
         // Most row menus stay over the sidebar, clear of the pane.
         let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
-        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.form.is_some() || c.lookup.is_some()
+        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.paper_panel.quoting() || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.form.is_some() || c.lookup.is_some()
     }
 
     fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
