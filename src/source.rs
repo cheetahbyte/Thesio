@@ -14,6 +14,11 @@ use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
 const LINE_HEIGHT: f32 = 22.;
+const TYPING_MARGIN: f32 = LINE_HEIGHT * 2.;
+/// Room after the last line, so the document's end can have that margin too.
+const END_PADDING: f32 = LINE_HEIGHT * 4.;
+/// A caret off screen needs a jump and then a look at where it landed.
+const REVEAL_TRIES: u8 = 4;
 const PAD_X: f32 = 24.;
 
 actions!(
@@ -104,6 +109,12 @@ pub struct SourceEditor {
     typst: bool,
     focus: FocusHandle,
     list: ListState,
+    /// The text `list` has rows for.
+    listed: String,
+    /// Frames left to bring the caret into view, once its row is painted.
+    reveal_tries: u8,
+    /// Room to keep below the caret, so typing never runs along the edge.
+    reveal_margin: f32,
     painted: Painted,
     spans: Vec<(Range<usize>, SyntaxTag)>,
     marked: Option<Range<usize>>,
@@ -134,7 +145,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
+        let mut editor = Self { listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
         editor.refold();
         editor
     }
@@ -152,8 +163,9 @@ impl SourceEditor {
 
     pub fn toggle_block(&mut self, cx: &mut Context<Self>) {
         self.block_shown = !self.block_shown;
+        let folded = self.folded.clone();
         self.refold();
-        self.list.reset(self.buffer.line_count());
+        if let Some((_, lines)) = folded.or(self.folded.clone()) { self.splice_rows(lines.clone(), lines.len()); }
         self.completion = None;
         cx.notify();
     }
@@ -210,7 +222,7 @@ impl SourceEditor {
         self.buffer.replace_silently(range, &text[start..new_end], caret);
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();
-        self.list.reset(self.buffer.line_count());
+        self.relist();
         cx.notify();
     }
 
@@ -237,12 +249,33 @@ impl SourceEditor {
         self.insert(&text, EditKind::Other, cx);
     }
 
+    /// Updates only the edited rows: a reset would lose the scroll position
+    /// and every measured height, and with them the way back to the caret.
+    fn relist(&mut self) {
+        let (old, new) = changed_lines(&self.listed, self.buffer.text());
+        self.splice_rows(old, new);
+        self.listed = self.buffer.text().to_string();
+    }
+
+    /// Replaces rows, keeping the view: `splice` sends a list whose top row is
+    /// replaced to that row's start, and paragraphs are often taller than the view.
+    fn splice_rows(&mut self, old: Range<usize>, new: usize) {
+        let top = self.list.logical_scroll_top();
+        self.list.splice(old.clone(), new);
+        if old.contains(&top.item_ix) {
+            let item_ix = old.start + (top.item_ix - old.start).min(new.saturating_sub(1));
+            self.list.scroll_to(ListOffset { item_ix, offset_in_item: top.offset_in_item });
+        }
+    }
+
     fn changed(&mut self, cx: &mut Context<Self>) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();
-        self.list.reset(self.buffer.line_count());
+        self.relist();
         self.goal_x = None;
-        self.reveal(cx);
+        self.reveal_tries = REVEAL_TRIES;
+        self.reveal_margin = TYPING_MARGIN;
+        cx.notify();
         self.refresh_completion(false, cx);
         cx.emit(SourceEvent::Changed);
     }
@@ -351,8 +384,30 @@ impl SourceEditor {
     }
 
     fn reveal(&mut self, cx: &mut Context<Self>) {
-        self.list.scroll_to_reveal_item(self.buffer.line_of(self.buffer.caret()));
+        let line = self.buffer.line_of(self.buffer.caret());
+        if !self.painted.borrow().contains_key(&line) { self.list.scroll_to_reveal_item(line); }
+        self.reveal_tries = REVEAL_TRIES;
+        self.reveal_margin = 0.;
         cx.notify();
+    }
+
+    /// After a frame: scrolls by what the caret itself needs. A row's height
+    /// is unknown right after an edit, and a row can be taller than the view.
+    fn settle_reveal(&mut self, cx: &mut Context<Self>) {
+        if self.reveal_tries == 0 { return; }
+        let Some(at) = self.painted_at(self.buffer.caret()) else {
+            self.reveal_tries -= 1;
+            if self.reveal_tries < REVEAL_TRIES - 1 { self.list.scroll_to_reveal_item(self.buffer.line_of(self.buffer.caret())); }
+            return cx.notify();
+        };
+        self.reveal_tries = 0;
+        let view = self.list.viewport_bounds();
+        let (top, bottom) = (view.top(), view.bottom() - px(LINE_HEIGHT + self.reveal_margin));
+        let distance = if at.y > bottom { at.y - bottom } else if at.y < top { at.y - top } else { px(0.) };
+        if distance != px(0.) {
+            self.list.scroll_by(distance);
+            cx.notify();
+        }
     }
 
     fn go(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
@@ -695,8 +750,20 @@ impl EntityInputHandler for SourceEditor {
     }
 }
 
+/// The rows an edit replaced, and how many rows replace them.
+fn changed_lines(old: &str, new: &str) -> (Range<usize>, usize) {
+    let (old, new) = (old.as_bytes(), new.as_bytes());
+    let lines = |bytes: &[u8]| bytes.iter().filter(|b| **b == b'\n').count();
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = old.iter().rev().zip(new.iter().rev()).take(room).take_while(|(a, b)| a == b).count();
+    let first = lines(&old[..prefix]);
+    (first..lines(&old[..old.len() - suffix]) + 1, lines(&new[prefix..new.len() - suffix]) + 1)
+}
+
 impl Render for SourceEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.reveal_tries > 0 { cx.on_next_frame(window, |editor, _, cx| editor.settle_reveal(cx)); }
         // Before `painted` is cleared: the popup sits on last frame's layout.
         let completion = self.render_completion(window, cx);
         let mut context = KeyContext::new_with_defaults();
@@ -751,7 +818,7 @@ impl Render for SourceEditor {
             .on_mouse_move(cx.listener(Self::on_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_up))
-            .child(div().size_full().pl(px(PAD_X)).pr(px(PAD_X)).pt(px(16.)).child(list(self.list.clone(), cx.processor(Self::render_line)).size_full()))
+            .child(div().size_full().pl(px(PAD_X)).pr(px(PAD_X)).pt(px(16.)).child(list(self.list.clone(), cx.processor(Self::render_line)).size_full().pb(px(END_PADDING))))
             .child(canvas(|_, _, _| (), move |bounds, _, window, cx| {
                 window.handle_input(&focus, ElementInputHandler::new(bounds, entity.clone()), cx);
             }).absolute().size_full())
@@ -823,5 +890,20 @@ impl Element for LineElement {
             window.paint_quad(fill(Bounds::new(at + point(px(0.), px(2.)), size(px(2.), height - px(4.))), Theme::primary()));
         }
         self.painted.borrow_mut().insert(self.line, PaintedLine { bounds, layout });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::changed_lines;
+
+    #[test]
+    fn an_edit_replaces_only_its_own_rows() {
+        assert_eq!(changed_lines("a\nb\nc", "a\nbX\nc"), (1..2, 1));
+        assert_eq!(changed_lines("a\nb\nc", "a\nb\n\nc"), (2..3, 2));
+        assert_eq!(changed_lines("a\nb\nc", "a\nc"), (1..3, 1));
+        assert_eq!(changed_lines("a", "a"), (0..1, 1));
+        assert_eq!(changed_lines("", "x\ny"), (0..1, 2));
+        assert_eq!(changed_lines("x\nx\nx", "x\nx"), (1..3, 1));
     }
 }
