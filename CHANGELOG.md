@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Save paper notes after typing stops rather than on every keystroke, and keep their earlier versions like a document's.
+- Leave Trash with Esc, as the sidebar offered.
+- Say so when a file dialog fails, and when a document cannot be reloaded after a move changed its paths.
+- Keep Version History open with the error when a restore cannot be written. It used to say Restored.
+- Show a highlight's page in search as the viewer numbers it.
+- Keep the citation picker and `@` completion in their own order when the Library table is sorted.
+- Treat only a DOI, arXiv ID, PMID, or ISBN as a duplicate. A shared ISSN or version number blocked new entries, and a bare arXiv ID went unnoticed.
+- Stop before changing a `library.yaml` that cannot be read back, instead of replacing it with no earlier version kept.
+- Keep a file's versions when a rename changes its extension.
+- Undo past a generated edit instead of stopping there.
+- Leave a `#bibliography` with several sources or a URL alone: it was mistaken for one linking the library.
+- Treat a pasted lone carriage return as a new line in the editor.
+- Name Control, not Command, in Windows tooltips.
+- Use UTC, not UTC+8, for dates when the local offset is unknown.
 - Ask before losing paper notes that could not be saved. Opening another paper, closing the window, or ⌘Q now shows the Save failed dialog; opening another paper used to drop them, and ⌘Q quit without asking.
 - Keep compiling a chapter and showing its Outline when its main file is renamed or moved. If the main file goes to the Trash, the chapter compiles on its own. Both used to end in "file not found".
 - Update a `/` path after a move by the file the compiler finds, nearest the main file. It used to assume the vault root, so a project's own `/lib/a.typ` broke when `a.typ` moved, and an unrelated file at the root could change it.
