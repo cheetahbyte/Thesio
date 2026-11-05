@@ -5,6 +5,7 @@
 
 use crate::lookup::{Identifier, PaperIds};
 use crate::references::{self, BibliographyCall};
+use crate::source_type::{self, Field, Slot, SourceType};
 use crate::store::{natural_cmp, write_atomic};
 use anyhow::{Context, Result};
 use hayagriva::types::EntryType;
@@ -46,24 +47,6 @@ pub struct Row {
     pub authors: String,
     pub year: String,
     pub tags: Vec<String>,
-}
-
-/// The fields the entry form edits, as plain text.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Fields {
-    pub key: String,
-    pub kind: String,
-    pub title: String,
-    /// `Family, Given; Family, Given`
-    pub authors: String,
-    pub year: String,
-    /// The journal, book, or other work this was published in.
-    pub container: String,
-    pub publisher: String,
-    pub volume: String,
-    pub pages: String,
-    pub doi: String,
-    pub url: String,
 }
 
 /// How a document gets its bibliography.
@@ -118,11 +101,6 @@ fn tags_of(entry: &Value) -> Vec<String> {
     }
 }
 
-fn text_value(text: &str) -> Option<Value> {
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.into())
-}
-
 impl Library {
     /// Reads the vault's library. A file that does not parse is an error, so
     /// that nothing overwrites it.
@@ -160,19 +138,19 @@ impl Library {
 
     /// What the paper of `key` can be found by.
     pub fn paper_ids(&self, key: &str) -> PaperIds {
-        let Some(fields) = self.fields(key) else { return PaperIds::default() };
-        let serial = |kind: &str| self.entries.get(key)?.get("serial-number")?.get(kind)?.as_str().map(str::to_string);
-        let from_url = match crate::lookup::identify(&fields.url) {
+        let Some(entry) = self.entries.get(key) else { return PaperIds::default() };
+        let from_url = match crate::lookup::identify(&source_type::read(entry, Slot::Url)) {
             Some(Identifier::Arxiv(id)) => Some(id),
             _ => None,
         };
-        PaperIds { doi: Some(fields.doi).filter(|doi| !doi.is_empty()), arxiv: serial("arxiv").or(from_url) }
+        let present = |id: String| Some(id).filter(|id| !id.is_empty());
+        PaperIds { doi: present(source_type::read(entry, Slot::Serial("doi"))), arxiv: present(source_type::read(entry, Slot::Serial("arxiv"))).or(from_url) }
     }
 
     pub fn rows(&self) -> Vec<Row> {
         self.parsed.iter().map(|entry| Row {
             key: entry.key().to_string(),
-            kind: format!("{:?}", entry.entry_type()),
+            kind: self.source_type(entry.key()).map_or("", |kind| kind.label).to_string(),
             title: entry.title().map(|t| t.to_string()).unwrap_or_default(),
             authors: entry.authors().unwrap_or_default().iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "),
             year: entry.date_any().map(|d| d.year.to_string()).unwrap_or_default(),
@@ -208,90 +186,58 @@ impl Library {
         self.commit(entries)
     }
 
-    /// The form's view of an entry.
-    pub fn fields(&self, key: &str) -> Option<Fields> {
-        let entry = self.parsed.get(key)?;
-        let raw = self.entries.get(key)?;
-        let text = |name: &str| raw.get(name).map(|v| match v {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            _ => String::new(),
-        }).unwrap_or_default();
-        // Imported articles keep their volume on the journal.
-        let parent_text = |name: &str| {
-            let own = text(name);
-            if !own.is_empty() { return own; }
-            match raw.get("parent").and_then(|p| p.get(name)) {
-                Some(Value::String(s)) => s.clone(),
-                Some(Value::Number(n)) => n.to_string(),
-                _ => String::new(),
-            }
-        };
-        let persons = entry.authors().unwrap_or_default().iter().map(|p| match &p.given_name {
-            Some(given) => format!("{}, {given}", p.name),
-            None => p.name.clone(),
-        }).collect::<Vec<_>>().join("; ");
-        Some(Fields {
-            key: key.to_string(),
-            kind: format!("{:?}", entry.entry_type()),
-            title: entry.title().map(|t| t.to_string()).unwrap_or_default(),
-            authors: persons,
-            year: entry.date_any().map(|d| d.year.to_string()).unwrap_or_default(),
-            container: entry.parents().first().and_then(|p| p.title()).map(|t| t.to_string()).unwrap_or_default(),
-            publisher: entry.publisher().and_then(|p| p.name()).map(|n| n.to_string()).unwrap_or_default(),
-            volume: parent_text("volume"),
-            pages: text("page-range"),
-            doi: entry.doi().unwrap_or_default().to_string(),
-            url: entry.url_any().map(|u| u.value.to_string()).unwrap_or_default(),
-        })
+    pub fn source_type(&self, key: &str) -> Option<&'static SourceType> {
+        self.entries.get(key).map(SourceType::of)
     }
 
-    /// Adds an entry, or updates `original` and keeps the fields the form
-    /// does not show. Entries that would not parse are rejected unwritten.
-    pub fn save_entry(&mut self, original: Option<&str>, fields: &Fields) -> Result<()> {
-        let key = fields.key.trim();
-        anyhow::ensure!(!key.is_empty(), "Enter a citation key");
-        anyhow::ensure!(!key.contains(char::is_whitespace), "Citation keys cannot contain spaces");
-        anyhow::ensure!(original == Some(key) || !self.contains(key), "{key} is already in the library");
-        let mut map = original.and_then(|k| self.entries.get(k)).and_then(Value::as_mapping).cloned().unwrap_or_default();
-        let kind = if fields.kind.trim().is_empty() { "Misc" } else { fields.kind.trim() };
-        set(&mut map, "type", Some(kind.into()));
-        set(&mut map, "title", text_value(&fields.title));
-        let authors: Vec<Value> = fields.authors.split(';').filter_map(text_value).collect();
-        set(&mut map, "author", (!authors.is_empty()).then(|| Value::Sequence(authors)));
-        // Dates carry more than the form's year: keep one that already matches.
-        let same_year = self.parsed.get(original.unwrap_or_default()).and_then(|e| e.date_any()).is_some_and(|d| d.year.to_string() == fields.year.trim());
-        if !same_year { set(&mut map, "date", text_value(&fields.year).map(|y| y.as_str().and_then(|y| y.parse::<i64>().ok()).map_or(y.clone(), Value::from))); }
-        set(&mut map, "publisher", text_value(&fields.publisher));
-        set(&mut map, "page-range", text_value(&fields.pages));
-        set(&mut map, "url", text_value(&fields.url));
-        let parent = map.get("parent").and_then(Value::as_mapping).cloned();
-        let default_parent = if kind.eq_ignore_ascii_case("article") { "Periodical" } else { "Book" };
-        set(&mut map, "parent", text_value(&fields.container).map(|title| {
-            let mut parent = parent.unwrap_or_else(|| { let mut m = Mapping::new(); m.insert("type".into(), default_parent.into()); m });
-            parent.insert("title".into(), title);
-            Value::Mapping(parent)
-        }));
-        let volume_on_parent = map.get("parent").and_then(|p| p.get("volume")).is_some();
-        match map.get_mut("parent").and_then(Value::as_mapping_mut).filter(|_| volume_on_parent) {
-            Some(parent) => set(parent, "volume", text_value(&fields.volume)),
-            None => set(&mut map, "volume", text_value(&fields.volume)),
-        }
-        let mut serial = map.get("serial-number").and_then(Value::as_mapping).cloned().unwrap_or_default();
-        set(&mut serial, "doi", text_value(&fields.doi));
-        set(&mut map, "serial-number", (!serial.is_empty()).then(|| Value::Mapping(serial)));
-        let mut entries = Mapping::new();
-        let mut placed = false;
-        for (k, v) in &self.entries {
-            if Some(k.as_str().unwrap_or_default()) == original {
-                entries.insert(key.into(), Value::Mapping(map.clone()));
-                placed = true;
-            } else {
-                entries.insert(k.clone(), v.clone());
-            }
-        }
-        if !placed { entries.insert(key.into(), Value::Mapping(map)); }
+    /// What the editor shows for a field of `key`.
+    pub fn field_text(&self, key: &str, field: &Field) -> String {
+        self.entries.get(key).map(|entry| source_type::read(entry, field.slot)).unwrap_or_default()
+    }
+
+    /// Adds an empty entry of `kind` for the editor to fill in.
+    pub fn add_blank(&mut self, kind: &SourceType) -> Result<String> {
+        let mut entry = Mapping::new();
+        kind.apply(&mut entry);
+        let key = self.fresh_key(&entry);
+        let mut entries = self.entries.clone();
+        entries.insert(key.as_str().into(), Value::Mapping(entry));
+        self.commit(entries)?;
+        Ok(key)
+    }
+
+    /// Whether changing `key` to `kind` would lose the work it was published in.
+    pub fn type_change_drops_parent(&self, key: &str, kind: &SourceType) -> bool {
+        self.entries.get(key).is_some_and(|entry| kind.drops_parent(entry))
+    }
+
+    /// Changes `key` to `kind`, keeping every field the types share.
+    pub fn set_source_type(&mut self, key: &str, kind: &SourceType) -> Result<()> {
+        let mut entries = self.entries.clone();
+        let Some(entry) = entries.get_mut(key).and_then(Value::as_mapping_mut) else { return Ok(()) };
+        kind.apply(entry);
         self.commit(entries)
+    }
+
+    /// Writes the fields that changed and renames the entry to `new_key`.
+    /// Fields left alone keep their exact form, such as a person's `prefix`.
+    /// An entry that would not parse is rejected unwritten. True if anything changed.
+    pub fn save_fields(&mut self, key: &str, new_key: &str, fields: &[(Field, String)]) -> Result<bool> {
+        let new_key = new_key.trim();
+        anyhow::ensure!(!new_key.is_empty(), "Enter a citation key");
+        anyhow::ensure!(!new_key.contains(char::is_whitespace), "Citation keys cannot contain spaces");
+        anyhow::ensure!(key == new_key || !self.contains(new_key), "{new_key} is already in the library");
+        let Some(original) = self.entries.get(key) else { return Ok(false) };
+        let mut entry = original.as_mapping().cloned().unwrap_or_default();
+        for (field, text) in fields {
+            if source_type::read(original, field.slot) != text.trim() { source_type::write(&mut entry, field.slot, text); }
+        }
+        if key == new_key && entry == *original.as_mapping().unwrap_or(&Mapping::new()) { return Ok(false); }
+        let entries = self.entries.iter().map(|(k, v)| {
+            if k.as_str() == Some(key) { (new_key.into(), Value::Mapping(entry.clone())) } else { (k.clone(), v.clone()) }
+        }).collect();
+        self.commit(entries)?;
+        Ok(true)
     }
 
     pub fn delete_entries(&mut self, keys: &[String]) -> Result<()> {

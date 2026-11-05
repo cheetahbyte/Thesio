@@ -30,6 +30,7 @@ main.rs: window
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
 | `library.rs` | The citation library, BibLaTeX import and export, and the generated bibliography block. |
+| `source_type.rs` | The Library's source types, their fields, and where each field lives in an entry. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
 | `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
 | `time.rs` | Local dates without a time zone database. |
@@ -60,7 +61,9 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 
 ## Citations
 
-`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting entries asks first and says how many documents cite them.
+`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the editor writes only the fields you change, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting entries asks first and says how many documents cite them.
+
+`source_type.rs` lists the source types and each type's fields. A source type is a Hayagriva type plus its parent's type, so it is read from any entry without a new field, and a Hayagriva type outside the table shows as Other and keeps its `type` until changed. The table is our own: Zotero's schema has no licence file, so it is not copied. The inspector beside the table edits the selected entry and saves when a field loses focus.
 
 Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 

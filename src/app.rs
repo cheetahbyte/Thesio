@@ -177,6 +177,8 @@ pub enum Confirm {
     Purge(String),
     /// Library → delete these entries.
     DeleteEntries(Vec<String>),
+    /// Library → change the inspected entry to a type without a parent.
+    ChangeSourceType(&'static thesio_core::source_type::SourceType),
     /// The open document could not be written before it was to be replaced
     /// (another document, New, Quit): Retry / Discard changes, then carry on.
     SaveFailed,
@@ -1104,13 +1106,13 @@ impl Render for Workspace {
             View::Settings => self.render_settings(window, cx),
         };
         let move_dlg = self.render_move_dialog(cx);
-        let entry_form = self.render_entry_form(cx);
         let cite_picker = self.render_cite_picker(window, cx);
         let lookup = self.render_lookup(window, cx);
         let quote_dialog = self.render_quote_dialog(window, cx);
         let library_menu = self.render_library_menu(window, cx);
         let library_row_menu = self.render_library_row_menu(cx);
         let tag_editor = self.render_tag_editor(window, cx);
+        let type_menu = self.render_inspector_type_menu(cx);
         let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
@@ -1194,13 +1196,13 @@ impl Render for Workspace {
             .children(trash_menu)
             .children(confirm)
             .children(move_dlg)
-            .children(entry_form)
             .children(cite_picker)
             .children(lookup)
             .children(quote_dialog)
             .children(library_menu)
             .children(library_row_menu)
             .children(tag_editor)
+            .children(type_menu)
             .children(column_drag)
             .children(search)
             .children(resize_overlay)

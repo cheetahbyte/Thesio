@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+- Choose from 19 source types in the Library, such as Journal Article, Book, Thesis, and Web Page. Each shows the fields that type has.
+- Edit sources in a panel beside the table instead of a dialog. Changes save when you leave a field.
 - Tag sources in the Library: right-click for Tags…, filter by tag above the table, and search by tag. Tags are saved in `library.yaml` and exported to BibLaTeX as `keywords`.
-- Select several Library rows with shift, ⌘, or the arrow keys, then tag or delete them together. A click now selects a row; double-click or Return opens it.
+- Select several Library rows with shift, ⌘, or the arrow keys, then tag or delete them together. A click now selects a row and shows it in the panel; double-click or Return moves the caret there.
 - Resize the Library's columns by dragging their edges.
 - Preview an included file in place: the whole document still compiles, but pages from other files blur and the preview opens at the file's first page.
 - Launch about twice as fast: the first document compiles while the app starts, and the first frame shows it finished.

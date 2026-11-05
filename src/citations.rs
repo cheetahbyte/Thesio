@@ -4,9 +4,10 @@
 use crate::app::{Confirm, View, Workspace};
 use crate::input::{TextField, TextFieldEvent};
 use crate::app::RowMenu;
-use crate::library::{self, Added, Fields, Library, Mode, PAPERS_DIR, Row, note_file, paper_file};
+use crate::library::{self, Added, Library, Mode, PAPERS_DIR, Row, note_file, paper_file};
 use crate::source::SourceEditor;
 use thesio_core::lookup::{self, Identifier};
+use thesio_core::source_type::{Field, SOURCE_TYPES, SourceType};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
@@ -22,11 +23,12 @@ const ROW_H: f32 = 32.;
 const TABLE_X: f32 = 14.;
 const CELL_X: f32 = 12.;
 const CITE_W: f32 = 56.;
+const INSPECTOR_W: f32 = 320.;
+/// Narrower than this and the title gives up the columns it can spare.
+const MIN_TITLE_W: f32 = 220.;
 const MIN_COLUMN_W: f32 = 56.;
 const MAX_COLUMN_W: f32 = 480.;
 const ADD_W: f32 = 68.;
-/// Rows of the entry form, grouped; the numbers count `EntryForm::fields`.
-const FORM_GROUPS: [usize; 4] = [2, 3, 4, 2];
 const PICKER_ROWS: usize = 8;
 /// Fixed columns, widest to narrowest; the title takes what is left.
 const COLS: [(Col, &str, Option<f32>); 6] = [
@@ -62,11 +64,14 @@ pub(crate) fn matches(row: &Row, query: &str) -> bool {
     [&row.title, &row.authors, &row.year, &row.key].into_iter().chain(&row.tags).any(|text| text.to_lowercase().contains(query))
 }
 
-/// The add and edit dialog.
-pub struct EntryForm {
-    original: Option<String>,
-    fields: Vec<(&'static str, &'static str, Entity<TextField>)>,
+/// The panel beside the table that edits the selected entry.
+pub struct Inspector {
+    key: String,
+    key_field: Entity<TextField>,
+    fields: Vec<(Field, Entity<TextField>)>,
     error: Option<String>,
+    /// The type menu, and where it opened.
+    type_menu: Option<Point<Pixels>>,
     _subs: Vec<Subscription>,
 }
 
@@ -118,7 +123,7 @@ pub struct Citations {
     pub error: Option<String>,
     search: Entity<TextField>,
     sort: (Col, bool),
-    form: Option<EntryForm>,
+    inspector: Option<Inspector>,
     picker: Option<CitePicker>,
     lookup: Option<Lookup>,
     /// The toolbar's Import and Export menu.
@@ -170,7 +175,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), form: None, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), inspector: None, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
     }
 }
 
@@ -534,73 +539,135 @@ impl Workspace {
             .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))).with_priority(3).into_any_element())
     }
 
+    /// Shows `key` in the inspector and puts the caret in its first field, or
+    /// without a key, adds a blank entry to fill in.
     fn open_entry(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let values = key.as_deref().and_then(|k| self.citations.library.as_ref()?.fields(k)).unwrap_or(Fields { kind: "Article".into(), ..Default::default() });
-        let spec: [(&'static str, &'static str, String); 11] = [
-            ("Key", "knuth1984", values.key),
-            ("Type", "Article, Book, Thesis, Web, Report…", values.kind),
-            ("Title", "", values.title),
-            ("Authors", "Family, Given; Family, Given", values.authors),
-            ("Year", "", values.year),
-            ("Published in", "Journal, book, or conference", values.container),
-            ("Publisher", "", values.publisher),
-            ("Volume", "", values.volume),
-            ("Pages", "891-921", values.pages),
-            ("DOI", "", values.doi),
-            ("URL", "", values.url),
-        ];
-        let mut fields = vec![];
-        let mut subs = vec![];
-        for (label, hint, text) in spec {
-            let field = cx.new(|cx| {
-                let mut f = TextField::new(hint, cx);
-                f.placeholder_color = Theme::text_disabled();
-                f.tab_events = true;
-                f.set_text(&text, cx);
-                f
-            });
-            subs.push(cx.subscribe_in(&field, window, |w, field, ev: &TextFieldEvent, window, cx| {
-                let step = match ev {
-                    TextFieldEvent::Submit => return w.save_entry(window, cx),
-                    TextFieldEvent::Cancel => {
-                        w.citations.form = None;
-                        return cx.notify();
-                    }
-                    TextFieldEvent::Tab => 1,
-                    TextFieldEvent::ShiftTab => -1,
-                    _ => return,
+        let key = match key {
+            Some(key) => key,
+            None => {
+                let Some(library) = &mut self.citations.library else { return };
+                let key = match library.add_blank(&SOURCE_TYPES[0]) {
+                    Ok(key) => key,
+                    Err(e) => return self.show_toast_kind(ToastKind::Error, &format!("Could not add an entry: {e}"), cx),
                 };
-                let Some(form) = &w.citations.form else { return };
-                let Some(at) = form.fields.iter().position(|(_, _, f)| f == field) else { return };
-                let next = (at as i32 + step).rem_euclid(form.fields.len() as i32) as usize;
-                window.focus(&form.fields[next].2.focus_handle(cx));
-            }));
-            fields.push((label, hint, field));
-        }
-        window.focus(&fields[if key.is_some() { 2 } else { 0 }].2.focus_handle(cx));
-        self.citations.form = Some(EntryForm { original: key, fields, error: None, _subs: subs });
+                self.citations.tag_filter = None;
+                self.citations.search.update(cx, |search, cx| search.set_text("", cx));
+                self.refresh_after_library_change(cx);
+                key
+            }
+        };
+        if self.view != View::Library { self.show_view(View::Library, cx); }
+        self.select_only(&key);
+        self.sync_inspector(window, cx);
+        if let Some((_, field)) = self.citations.inspector.as_ref().and_then(|inspector| inspector.fields.first()) { window.focus(&field.focus_handle(cx)); }
         cx.notify();
     }
 
-    fn save_entry(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = &self.citations.form else { return };
-        let value = |i: usize| form.fields[i].2.read(cx).text.clone();
-        let fields = Fields {
-            key: value(0), kind: value(1), title: value(2), authors: value(3), year: value(4), container: value(5),
-            publisher: value(6), volume: value(7), pages: value(8), doi: value(9), url: value(10),
+    /// Matches the inspector to the selection: one visible entry, or none.
+    fn sync_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.selected_in(&self.library_rows(cx));
+        let wanted = match selected.as_slice() {
+            [key] => Some(key.clone()),
+            _ => None,
         };
-        let original = form.original.clone();
+        if self.citations.inspector.as_ref().map(|inspector| &inspector.key) == wanted.as_ref() { return; }
+        // A field's blur arrives after this frame, once the field is gone.
+        self.save_inspector(cx);
+        self.citations.inspector = wanted.and_then(|key| self.build_inspector(key, window, cx));
+    }
+
+    fn inspector_field(&mut self, hint: &'static str, text: &str, wrap: bool, subs: &mut Vec<Subscription>, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextField> {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new(hint, cx);
+            f.placeholder_color = Theme::text_disabled();
+            f.tab_events = true;
+            f.wrap = wrap;
+            f.set_text(text, cx);
+            f
+        });
+        subs.push(cx.subscribe_in(&field, window, |w, field, ev: &TextFieldEvent, window, cx| {
+            let step = match ev {
+                TextFieldEvent::Submit => return w.save_inspector(cx),
+                TextFieldEvent::Cancel => return w.revert_inspector(window, cx),
+                TextFieldEvent::Tab => 1,
+                TextFieldEvent::ShiftTab => -1,
+                _ => return,
+            };
+            w.save_inspector(cx);
+            let Some(inspector) = &w.citations.inspector else { return };
+            let order: Vec<&Entity<TextField>> = std::iter::once(&inspector.key_field).chain(inspector.fields.iter().map(|(_, field)| field)).collect();
+            let Some(at) = order.iter().position(|f| *f == field) else { return };
+            let next = (at as i32 + step).rem_euclid(order.len() as i32) as usize;
+            window.focus(&order[next].focus_handle(cx));
+        }));
+        let handle = field.focus_handle(cx);
+        subs.push(cx.on_blur(&handle, window, |w, _, cx| w.save_inspector(cx)));
+        field
+    }
+
+    fn build_inspector(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) -> Option<Inspector> {
+        let library = self.citations.library.as_ref()?;
+        let kind = library.source_type(&key)?;
+        let values: Vec<(Field, String)> = kind.fields.iter().map(|field| (*field, library.field_text(&key, field))).collect();
+        let mut subs = vec![];
+        let key_field = self.inspector_field("knuth1984", &key, false, &mut subs, window, cx);
+        let fields = values.into_iter().map(|(field, text)| (field, self.inspector_field(field.hint, &text, field.long, &mut subs, window, cx))).collect();
+        Some(Inspector { key, key_field, fields, error: None, type_menu: None, _subs: subs })
+    }
+
+    /// Esc: back to what the file holds.
+    fn revert_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self.citations.inspector.take().map(|inspector| inspector.key) else { return };
+        self.citations.inspector = self.build_inspector(key, window, cx);
+        window.focus(&self.citations.focus);
+        cx.notify();
+    }
+
+    /// Writes what the inspector holds. The fields stay as typed when the
+    /// library refuses them, with the reason beside them.
+    fn save_inspector(&mut self, cx: &mut Context<Self>) {
+        let Some(inspector) = &self.citations.inspector else { return };
+        let key = inspector.key.clone();
+        let new_key = inspector.key_field.read(cx).text.trim().to_string();
+        let fields: Vec<(Field, String)> = inspector.fields.iter().map(|(field, entity)| (*field, entity.read(cx).text.clone())).collect();
         let Some(library) = &mut self.citations.library else { return };
-        match library.save_entry(original.as_deref(), &fields) {
-            Ok(()) => {
-                self.citations.form = None;
-                self.refresh_after_library_change(cx);
-                let key = fields.key.trim().to_string();
-                if let Some(old) = original.filter(|old| *old != key) { self.rename_paper(&old, &key, cx); }
-                self.fetch_papers(vec![key], cx);
+        let before = library.paper_ids(&key);
+        let result = library.save_fields(&key, &new_key, &fields);
+        let found_by_new_id = library.paper_ids(&new_key) != before;
+        // Beside the field, the file's path only gets in the way.
+        let error = result.as_ref().err().map(|e| { let e = e.to_string(); e.split_once(" is not a valid library: ").map_or(e.clone(), |(_, why)| why.to_string()) });
+        if let Some(inspector) = &mut self.citations.inspector { inspector.error = error; }
+        if matches!(result, Ok(true)) {
+            self.refresh_after_library_change(cx);
+            if new_key != key {
+                self.select_only(&new_key);
+                if let Some(inspector) = &mut self.citations.inspector { inspector.key = new_key.clone(); }
+                self.rename_paper(&key, &new_key, cx);
             }
-            Err(e) => if let Some(form) = &mut self.citations.form { form.error = Some(e.to_string()); },
+            if found_by_new_id { self.fetch_papers(vec![new_key], cx); }
         }
+        cx.notify();
+    }
+
+    /// Changes the type, asking first if that would lose data.
+    fn choose_source_type(&mut self, kind: &'static SourceType, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(inspector) = &mut self.citations.inspector else { return };
+        inspector.type_menu = None;
+        let key = inspector.key.clone();
+        if self.citations.library.as_ref().is_some_and(|library| library.type_change_drops_parent(&key, kind)) {
+            self.confirm = Some(Confirm::ChangeSourceType(kind));
+            return cx.notify();
+        }
+        self.set_source_type(kind, window, cx);
+    }
+
+    pub(crate) fn set_source_type(&mut self, kind: &'static SourceType, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_inspector(cx);
+        let Some(key) = self.citations.inspector.take().map(|inspector| inspector.key) else { return };
+        let Some(library) = &mut self.citations.library else { return };
+        if let Err(e) = library.set_source_type(&key, kind) { self.show_toast_kind(ToastKind::Error, &format!("Could not change the type: {e}"), cx); }
+        self.citations.inspector = self.build_inspector(key, window, cx);
+        self.refresh_after_library_change(cx);
         cx.notify();
     }
 
@@ -608,7 +675,6 @@ impl Workspace {
         let Some(library) = &mut self.citations.library else { return };
         match library.delete_entries(keys) {
             Ok(()) => {
-                self.citations.form = None;
                 for key in keys { self.citations.selected.remove(key); }
                 self.refresh_after_library_change(cx);
             }
@@ -791,7 +857,8 @@ impl Workspace {
         }).detach();
     }
 
-    pub(crate) fn render_library(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_library(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_inspector(window, cx);
         let tags = self.citations.library.as_ref().map(Library::tags).unwrap_or_default();
         if !tags.iter().any(|(tag, _)| self.citations.tag_filter.as_ref() == Some(tag)) { self.citations.tag_filter = None; }
         let rows = self.library_rows(cx);
@@ -803,7 +870,28 @@ impl Workspace {
                 .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("Import and export", None)
                     .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
-        let mut page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
+        let table = self.render_library_table(&tags, rows, total, window, cx);
+        let inspector = self.render_inspector(cx);
+        div().flex_1().min_w_0().h_full().flex().flex_col().child(header)
+            .child(div().flex_1().min_h_0().flex().child(table).children(inspector))
+            .into_any_element()
+    }
+
+    /// The fixed columns that fit beside a usable title, at their current widths.
+    fn visible_columns(&self, window: &Window) -> Vec<(Col, &'static str, Option<f32>)> {
+        let panel = if self.citations.inspector.is_some() { INSPECTOR_W } else { 0. };
+        let sidebar = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        let room = f32::from(window.viewport_size().width) - sidebar - panel - 2. * (TABLE_X + CELL_X) - CITE_W - MIN_TITLE_W;
+        let mut columns: Vec<_> = COLS.iter().map(|(col, label, width)| (*col, *label, width.map(|w| self.column_width(label, w)))).collect();
+        for col in [Col::Key, Col::Kind, Col::Tags, Col::Year, Col::Authors] {
+            if columns.iter().filter_map(|(.., width)| *width).sum::<f32>() <= room { break; }
+            columns.retain(|(c, ..)| *c != col);
+        }
+        columns
+    }
+
+    fn render_library_table(&mut self, tags: &[(String, usize)], rows: Vec<Row>, total: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut page = div().flex_1().min_w_0().min_h_0().flex().flex_col();
         if let Some(error) = &self.citations.error {
             return page.child(div().p(px(26.)).text_size(px(13.)).text_color(Theme::danger())
                 .child(format!("{error}. Fix the file to use the Library; Thesio won't change it until it can be read."))).into_any_element();
@@ -830,7 +918,7 @@ impl Workspace {
                 .children(tags.iter().enumerate().map(|(i, (tag, count))| chip(("tag", i).into(), tag.clone(), *count, Some(tag.clone()), filter.as_ref() == Some(tag)))));
         }
         let (sort_col, ascending) = self.citations.sort;
-        let columns: [(Col, &'static str, Option<f32>); 6] = COLS.map(|(col, label, width)| (col, label, width.map(|w| self.column_width(label, w))));
+        let columns = self.visible_columns(window);
         let dragged = self.citations.column_drag.map(|drag| drag.name);
         let headers = columns.iter().enumerate().map(|(i, (col, label, width))| {
             let (col, name) = (*col, *label);
@@ -951,7 +1039,7 @@ impl Workspace {
         let c = &self.citations;
         // Most row menus stay over the sidebar, clear of the pane.
         let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
-        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.paper_panel.quoting() || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.form.is_some() || c.lookup.is_some()
+        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.paper_panel.quoting() || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.lookup.is_some()
     }
 
     fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
@@ -1249,37 +1337,48 @@ impl Workspace {
         Some(deferred(anchored().anchor(Corner::TopRight).position(point(right, px(crate::app::HEADER_H - 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
     }
 
-    pub(crate) fn render_entry_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let form = self.citations.form.as_ref()?;
-        let mut fields = form.fields.iter();
-        let groups = FORM_GROUPS.iter().map(|n| {
-            let rows = fields.by_ref().take(*n).map(|(label, _, field)| {
-                div().w_full().h(px(32.)).px(px(12.)).flex().items_center().gap(px(12.))
-                    .child(div().w(px(88.)).flex_none().text_size(px(13.)).text_color(Theme::text_caption()).child(*label))
-                    .child(div().flex_1().min_w_0().text_size(px(13.)).child(field.clone()))
-                    .into_any_element()
-            }).collect();
-            crate::settings::group(None, rows)
-        }).collect::<Vec<_>>();
-        let original = form.original.clone();
-        let close = |w: &mut Workspace, cx: &mut Context<Workspace>| {
-            w.citations.form = None;
-            cx.notify();
+    fn render_inspector(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let inspector = self.citations.inspector.as_ref()?;
+        let kind = self.citations.library.as_ref()?.source_type(&inspector.key)?;
+        let row = |label: SharedString, value: AnyElement| {
+            div().w_full().flex().items_start().gap(px(10.)).py(px(4.))
+                .child(div().w(px(92.)).flex_none().text_right().text_size(px(12.)).line_height(px(20.)).text_color(Theme::text_caption()).child(label))
+                .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).child(value))
+                .into_any_element()
         };
-        let panel = dialog("entry-form").w(px(520.)).p(px(20.)).flex().flex_col().gap(px(10.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().mb(px(2.)).text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(if original.is_some() { "Edit entry" } else { "New entry" }))
-            .children(groups)
-            .when_some(form.error.clone(), |d, error| d.child(div().text_size(px(13.)).text_color(theme::c(craft::R400)).child(error)))
-            .child(div().mt(px(8.)).flex().items_center().gap(px(8.))
-                .when_some(original, |d, key| d.child(plain_button("entry-delete", "Delete").text_color(Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
-                    w.citations.form = None;
-                    w.confirm = Some(Confirm::DeleteEntries(vec![key.clone()]));
-                    cx.notify();
-                }))))
-                .child(div().flex_1())
-                .child(secondary_button("entry-cancel", "Cancel").on_click(cx.listener(move |w, _, _, cx| close(w, cx))))
-                .child(primary_button("entry-save", "Save").on_click(cx.listener(|w, _, window, cx| w.save_entry(window, cx)))));
-        Some(deferred(div().id("entry-scrim").absolute().inset_0().bg(scrim()).flex().items_center().justify_center().occlude().child(panel)).with_priority(3).into_any_element())
+        let type_button = div().id("inspector-type").flex().items_center().gap(px(4.)).cursor_pointer().rounded(px(4.))
+            .active(|s| s.bg(Theme::fill_pressed()))
+            .child(kind.label)
+            .child(icon(Icon::ChevronDown, 10., Theme::text_caption()))
+            .on_click(cx.listener(|w, ev: &ClickEvent, _, cx| {
+                if let Some(inspector) = &mut w.citations.inspector { inspector.type_menu = Some(ev.position()); }
+                cx.notify();
+            }));
+        Some(div().id("inspector").w(px(INSPECTOR_W)).flex_none().h_full().border_l_1().border_color(list_line()).px(px(12.)).pb(px(16.)).overflow_y_scroll().flex().flex_col()
+            .child(row("Type".into(), type_button.into_any_element()))
+            .children(inspector.fields.iter().map(|(field, entity)| row(field.label.into(), entity.clone().into_any_element())))
+            .child(row("Citation Key".into(), inspector.key_field.clone().into_any_element()))
+            .when_some(inspector.error.clone(), |d, error| d.child(div().mt(px(8.)).text_size(px(12.)).line_height(px(16.)).text_color(theme::c(craft::R400)).child(error)))
+            .into_any_element())
+    }
+
+    pub(crate) fn render_inspector_type_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.view != View::Library { return None; }
+        let inspector = self.citations.inspector.as_ref()?;
+        let position = inspector.type_menu?;
+        let current = self.citations.library.as_ref()?.source_type(&inspector.key)?;
+        let rows = SOURCE_TYPES.iter().enumerate().map(|(i, kind)| {
+            menu_row(("inspector-type-row", i))
+                .child(div().w(px(16.)).flex_none().when(std::ptr::eq(kind, current), |d| d.child(menu_glyph(Icon::Check, 14.))))
+                .child(menu_label(kind.label))
+                .on_click(cx.listener(move |w, _, window, cx| w.choose_source_type(kind, window, cx)))
+        }).collect::<Vec<_>>();
+        let menu = popover().id("inspector-type-menu").occlude().w(px(220.)).max_h(px(420.)).overflow_y_scroll().py(px(crate::ui::MENU_PAD_Y))
+            .on_mouse_down_out(cx.listener(|w, _, _, cx| {
+                if let Some(inspector) = &mut w.citations.inspector { inspector.type_menu = None; }
+                cx.notify();
+            }))
+            .children(rows);
+        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
     }
 }

@@ -7,6 +7,7 @@ pub mod library;
 pub mod lookup;
 pub mod quote;
 pub mod references;
+pub mod source_type;
 pub mod store;
 pub mod syntax;
 pub mod time;
