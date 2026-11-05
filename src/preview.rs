@@ -3,15 +3,54 @@
 
 use crate::theme::Theme;
 use gpui::{prelude::FluentBuilder, *};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thesio_core::compiler::{Compiler, Diagnostic, render_changed};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
+const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
 /// Pixels per typographic point: sharp on a 2x screen at full page width.
 const RENDER_SCALE: f32 = 2.;
 const PAGE_GAP: f32 = 16.;
 const PAD: f32 = 24.;
+
+type CompileResult = anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32)>)>, Vec<Diagnostic>, Duration)>;
+
+/// Compiles `text` as `path` within `main`, rendering pages not in `known`.
+fn run(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
+    let started = Instant::now();
+    compiler.set_buffer(path, text)?;
+    let compilation = compiler.compile(main)?;
+    crate::startup::mark("typst-done");
+    let pages = compilation.document.as_ref().map(|document| {
+        let sizes: Vec<(f32, f32)> = document.pages().iter().map(|p| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32)).collect();
+        let rendered = render_changed(document, RENDER_SCALE, known).into_iter().map(|(hash, image)| {
+            (hash, image.map(|image| {
+                let mut buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba).expect("page size matches its pixels");
+                for pixel in buffer.pixels_mut() { pixel.0.swap(0, 2); }
+                Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
+            }))
+        }).collect::<Vec<_>>();
+        (rendered, sizes)
+    });
+    anyhow::Ok((pages, compilation.diagnostics, started.elapsed()))
+}
+
+/// A launch compile: (path, main, text), its compiler, and its result.
+type Prepared = ((String, String, String), Compiler, CompileResult);
+static PREPARED: Mutex<Option<std::thread::JoinHandle<Option<Prepared>>>> = Mutex::new(None);
+
+/// Starts compiling what launch will open, before the UI exists to ask for it.
+pub fn prepare() {
+    *PREPARED.lock().unwrap() = Some(std::thread::spawn(|| {
+        let root = crate::store::Store::root_dir();
+        let (path, main, text) = thesio_core::store::launch_target(&root)?;
+        let mut compiler = Compiler::new(root);
+        let result = run(&mut compiler, &path, text.clone(), &main, &[]);
+        Some(((path, main, text), compiler, result))
+    }));
+}
 
 struct Page {
     hash: u128,
@@ -31,6 +70,8 @@ pub struct Preview {
     pages: Vec<Page>,
     diagnostics: Vec<Diagnostic>,
     generation: u64,
+    /// `generation` for the compile thread, which skips superseded work.
+    latest: Arc<AtomicU64>,
     scroll: ScrollHandle,
     width: Arc<Mutex<f32>>,
     open_path: String,
@@ -38,6 +79,9 @@ pub struct Preview {
     main: String,
     /// How long the last good compile took, rendering included.
     took: Option<Duration>,
+    /// Waiting for the first compile to reach the screen.
+    unsettled: bool,
+    first_compile: Option<Task<Option<CompileResult>>>,
 }
 
 impl EventEmitter<PreviewEvent> for Preview {}
@@ -49,11 +93,14 @@ impl Preview {
             pages: vec![],
             diagnostics: vec![],
             generation: 0,
+            latest: Default::default(),
             scroll: ScrollHandle::new(),
             width: Arc::new(Mutex::new(0.)),
             open_path: path,
             main,
             took: None,
+            unsettled: false,
+            first_compile: None,
         }
     }
 
@@ -67,41 +114,60 @@ impl Preview {
     pub fn update(&mut self, text: String, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
+        let first = generation == 1;
         let known: Vec<u128> = self.pages.iter().map(|p| p.hash).collect();
         let (compiler, path, main) = (self.compiler.clone(), self.open_path.clone(), self.main.clone());
+        let latest = self.latest.clone();
+        latest.store(generation, Ordering::Relaxed);
+        let executor = cx.background_executor().clone();
+        let prepared = if first { PREPARED.lock().unwrap().take() } else { None };
+        // Off the main thread at once: at launch it would otherwise wait for the first frame.
+        let work = cx.background_spawn(async move {
+            // The first compile has no typing to wait out.
+            if !first { executor.timer(DEBOUNCE).await; }
+            if latest.load(Ordering::Relaxed) != generation { return None; }
+            if let Some(handle) = prepared
+                && let Ok(Some((target, ready, result))) = handle.join()
+                && target == (path.clone(), main.clone(), text.clone()) {
+                    *compiler.lock().unwrap() = ready;
+                    return Some(result);
+                }
+            Some(run(&mut compiler.lock().unwrap(), &path, text, &main, &known))
+        });
+        if first {
+            self.first_compile = Some(work);
+        } else {
+            self.first_compile = None;
+            self.deliver(work, generation, cx);
+        }
+    }
+
+    fn deliver(&mut self, work: impl Future<Output = Option<CompileResult>> + 'static, generation: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
-            let stale = this.read_with(cx, |this, _| this.generation != generation).unwrap_or(true);
-            if stale { return; }
-            let result = cx.background_spawn(async move {
-                let mut compiler = compiler.lock().unwrap();
-                let started = Instant::now();
-                compiler.set_buffer(&path, text)?;
-                let compilation = compiler.compile(&main)?;
-                let pages = compilation.document.as_ref().map(|document| {
-                    let sizes: Vec<(f32, f32)> = document.pages().iter().map(|p| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32)).collect();
-                    let rendered = render_changed(document, RENDER_SCALE, &known).into_iter().map(|(hash, image)| {
-                        (hash, image.map(|image| {
-                            let mut buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba).expect("page size matches its pixels");
-                            for pixel in buffer.pixels_mut() { pixel.0.swap(0, 2); }
-                            Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
-                        }))
-                    }).collect::<Vec<_>>();
-                    (rendered, sizes)
-                });
-                anyhow::Ok((pages, compilation.diagnostics, started.elapsed()))
-            }).await;
+            let Some(result) = work.await else { return };
             let _ = this.update(cx, |this, cx| {
                 if this.generation == generation { this.finish(result, cx); }
             });
         }).detach();
     }
 
-    fn finish(&mut self, result: anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32)>)>, Vec<Diagnostic>, Duration)>, cx: &mut Context<Self>) {
+    /// The first frame holds a moment for the first compile: a blank preview
+    /// that fills in one frame later looks slower than a slightly later frame.
+    fn await_first_compile(&mut self, cx: &mut Context<Self>) {
+        let Some(work) = self.first_compile.take() else { return };
+        match cx.background_executor().block_with_timeout(FIRST_FRAME_WAIT, work) {
+            Ok(Some(result)) => self.finish(result, cx),
+            Ok(None) => {}
+            Err(rest) => self.deliver(rest, self.generation, cx),
+        }
+    }
+
+    fn finish(&mut self, result: CompileResult, cx: &mut Context<Self>) {
         let (pages, diagnostics, took) = match result {
             Ok(result) => result,
             Err(error) => (None, vec![Diagnostic { error: true, message: format!("{error:#}"), hints: vec![], path: None, range: None, line: None }], Duration::ZERO),
         };
+        self.unsettled = true;
         self.diagnostics = diagnostics;
         self.took = pages.is_some().then_some(took);
         // A failed compile keeps the last good pages on screen.
@@ -123,7 +189,9 @@ fn format_took(took: Duration) -> String {
 }
 
 impl Render for Preview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.await_first_compile(cx);
+        if std::mem::take(&mut self.unsettled) { window.on_next_frame(|_, _| crate::startup::settled()); }
         let measured = *self.width.lock().unwrap();
         let pages = self.pages.iter().map(|page| {
             let zoom = if measured > 0. { ((measured - 2. * PAD) / page.width).max(0.2) } else { 1. };

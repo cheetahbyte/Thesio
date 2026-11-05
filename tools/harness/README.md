@@ -14,6 +14,15 @@ THESIO_BIN=/other/thesio python3 tools/harness/run.py my.txt
 - `lib_clean/` is a small sample vault with a thesis, an included chapter, and a bibliography.
 - `winid.swift` lists the window IDs of Thesio windows on screen. Run `swift winid.swift` to use these IDs with system screenshots.
 
+## Launch time
+
+```sh
+python3 tools/harness/bounce.py [vault] [runs]
+THESIO_BIN=dist-preview/Thesio.app/Contents/MacOS/thesio python3 tools/harness/bounce.py
+```
+
+The script reports milliseconds from process spawn to the first frame with the preview finished. It works on a copy of the vault. Measure the bundled app: an unbundled binary decodes its icon, which adds about 60 ms.
+
 ## Screenshot regression
 
 ```sh

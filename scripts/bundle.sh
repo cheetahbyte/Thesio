@@ -19,12 +19,16 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/app-icon.icns"
 rm -rf "$icon_tmp"
-# A new file, so a copy still running keeps its own.
-rm -f "$bin.bin"
-cp target/release/thesio "$bin.bin"
-# Finder launches must use the same library as this script.
-printf '#!/bin/zsh\nexport THESIO_HOME=%q\nexec "${0:A:h}/thesio.bin" "$@"\n' "$preview_library" > "$bin"
-chmod +x "$bin"
+# New files, so a copy still running keeps its own.
+rm -f "$bin" "$bin.bin"
+if [ "$preview_library" = "$HOME/Documents/Thesio" ]; then
+  cp target/release/thesio "$bin"
+else
+  cp target/release/thesio "$bin.bin"
+  # Finder launches must use the same library as this script. The shell costs launch time.
+  printf '#!/bin/zsh\nexport THESIO_HOME=%q\nexec "${0:A:h}/thesio.bin" "$@"\n' "$preview_library" > "$bin"
+  chmod +x "$bin"
+fi
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

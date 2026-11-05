@@ -29,6 +29,7 @@ mod sidebar;
 mod source;
 mod settings;
 mod shortcuts;
+mod startup;
 mod theme;
 mod trash;
 mod tree;
@@ -44,6 +45,10 @@ fn set_app_icon() {
     use objc::runtime::Object;
     let png = include_bytes!("../assets/branding/app-icon.png");
     unsafe {
+        // A bundle has its icon from Info.plist, and decoding this one takes 60 ms.
+        let bundle: *mut Object = msg_send![class!(NSBundle), mainBundle];
+        let identifier: *mut Object = msg_send![bundle, bundleIdentifier];
+        if !identifier.is_null() { return; }
         let data: *mut Object = msg_send![class!(NSData), dataWithBytes:png.as_ptr() length:png.len()];
         let image: *mut Object = msg_send![class!(NSImage), alloc];
         let image: *mut Object = msg_send![image, initWithData:data];
@@ -75,6 +80,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
         },
         |window, cx| {
             if document.is_none() { devtools::start(window, cx); }
+            startup::mark("window-open");
             cx.new(|cx| app::Workspace::new(document, window, cx))
         },
     );
@@ -82,6 +88,8 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
 }
 
 fn main() {
+    startup::mark("main");
+    preview::prepare();
     let scripted = std::env::var_os("THESIO_SCRIPT").is_some();
     // No single-instance guard: copies may share a library (builds tested
     // side by side). `Store` rereads an index another copy rewrote before
@@ -90,6 +98,7 @@ fn main() {
     // Clicking the Dock icon brings the main window back after ⌘W.
     app.on_reopen(|cx| if cx.windows().is_empty() { open_main_window(false, None, cx); });
     app.run(move |cx: &mut App| {
+        startup::mark("app-ready");
         #[cfg(target_os = "macos")]
         set_app_icon();
         input::bind_keys(cx);

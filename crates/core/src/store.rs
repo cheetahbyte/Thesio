@@ -216,6 +216,45 @@ fn parent_of(id: &str) -> Option<&str> { id.rsplit_once('/').map(|(parent, _)| p
 fn base_name(id: &str) -> &str { id.rsplit_once('/').map_or(id, |(_, name)| name) }
 fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }
 
+/// What launch will most likely open: the newest document, the top-level file
+/// that includes it, and its text. Read-only, for compiling ahead of the UI; a
+/// wrong guess only wastes that work.
+pub fn launch_target(root: &Path) -> Option<(String, String, String)> {
+    fn walk(dir: &Path, parent: Option<&str>, out: &mut Vec<(String, u64, String)>) {
+        let Ok(read) = std::fs::read_dir(dir) else { return };
+        let mut items: Vec<_> = read.flatten().collect();
+        items.sort_by_key(|e| e.file_name());
+        for item in items {
+            let name = item.file_name().to_string_lossy().into_owned();
+            let Ok(info) = item.metadata() else { continue };
+            if name.starts_with('.') { continue; }
+            let id = join(parent, &name);
+            if info.is_dir() {
+                walk(&item.path(), Some(&id), out);
+            } else if item.path().extension().is_some_and(|e| e == EXTENSION) && let Ok(text) = std::fs::read_to_string(item.path()) {
+                out.push((id, unix_secs(info.modified()), text));
+            }
+        }
+    }
+    let mut documents = vec![];
+    walk(root, None, &mut documents);
+    documents.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
+    let (id, _, text) = documents.first()?.clone();
+    let includes: HashMap<&str, Vec<String>> = documents.iter().map(|(file, _, text)| (file.as_str(), crate::references::included_files(text, file))).collect();
+    let includes_file = |top: &str, target: &str| {
+        let (mut stack, mut seen) = (vec![top.to_string()], std::collections::HashSet::new());
+        while let Some(file) = stack.pop() {
+            if !seen.insert(file.clone()) { continue; }
+            if file == target && file != top { return true; }
+            stack.extend(includes.get(file.as_str()).into_iter().flatten().cloned());
+        }
+        false
+    };
+    let is_included = |file: &str| documents.iter().any(|(top, ..)| top != file && includes_file(top, file));
+    let main = documents.iter().find(|(top, ..)| *top != id && includes_file(top, &id) && !is_included(top)).map_or(id.clone(), |(top, ..)| top.clone());
+    Some((id, main, text))
+}
+
 impl Store {
     /// `THESIO_HOME`, else a folder of its own in the user's Documents.
     pub fn root_dir() -> PathBuf {
@@ -530,5 +569,29 @@ impl Store {
 
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<()> {
         self.update_meta(id, |m| m.pinned = pinned)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_target_is_the_newest_document_within_its_top_file() {
+        let root = std::env::temp_dir().join(format!("thesio-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Thesis/chapters")).unwrap();
+        std::fs::create_dir_all(root.join(".trash")).unwrap();
+        let write = |path: &str, text: &str, age: u64| {
+            let file = std::fs::File::create(root.join(path)).unwrap();
+            std::io::Write::write_all(&mut &file, text.as_bytes()).unwrap();
+            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)).unwrap();
+        };
+        write("old.typ", "old", 500);
+        write("Thesis/thesis.typ", "#include \"chapters/one.typ\"", 300);
+        write("Thesis/chapters/one.typ", "newest", 100);
+        write(".trash/hidden.typ", "hidden", 0);
+        assert_eq!(launch_target(&root), Some(("Thesis/chapters/one.typ".into(), "Thesis/thesis.typ".into(), "newest".into())));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

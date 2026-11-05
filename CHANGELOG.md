@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Launch about twice as fast: the first document compiles while the app starts, and the first frame shows it finished.
 - Resolve Typst paths that start with `/` from the document's own project folder, so projects inside a vault compile as they do with `typst compile`.
 - Show how long the last compile took in the corner of the preview.
 - Turn Home into an overview of the vault: recent documents, favorites, counts, and sources not cited yet.
