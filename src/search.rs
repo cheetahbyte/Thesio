@@ -2,13 +2,13 @@
 
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::Row;
+use thesio_core::library::Row;
 use crate::native_pdf::{Highlight, read_highlights};
-use crate::store::display_title;
-use crate::store::Entry;
+use thesio_core::store::display_title;
+use thesio_core::store::Entry;
 use crate::theme::{self, Theme};
 use crate::overlay::Overlay;
-use crate::ui::{Icon, ModalAt, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, doc_icon, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -169,18 +169,6 @@ pub(crate) fn summary_text(text: String, mut hits: Vec<Range<usize>>, width: f32
     };
     let runs = ui_runs(&text, &style, &hits, Theme::link());
     StyledText::new(text).with_runs(runs)
-}
-
-/// A document's glyph, in a 24 slot.
-pub(crate) fn doc_icon() -> Div {
-    div()
-        .flex_none()
-        .size(px(24.))
-        .mr(px(10.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(icon(Icon::Document, 18., Theme::text_caption()))
 }
 
 /// The 24px square buttons at the right of the input row.
@@ -356,7 +344,7 @@ impl Workspace {
         let q = self.query(cx);
         let mut hits: Vec<Hit> = self.document_results(cx).into_iter().cloned().map(Hit::Doc).collect();
         if q.is_empty() { return hits; }
-        let rows = self.citations.library.as_ref().map_or(vec![], crate::library::Library::rows);
+        let rows = self.citations.library.as_ref().map_or(vec![], thesio_core::library::Library::rows);
         hits.extend(rows.into_iter().filter(|row| row.matches(&q)).map(Hit::Source));
         let mut papers: Vec<_> = self.search.index.iter().collect();
         papers.sort_by(|a, b| a.0.cmp(b.0));

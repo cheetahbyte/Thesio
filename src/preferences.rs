@@ -28,7 +28,7 @@ impl Default for Preferences {
 }
 
 
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(STATE_DIR).join("preferences.json") }
+fn path() -> std::path::PathBuf { thesio_core::store::Store::root_dir().join(STATE_DIR).join("preferences.json") }
 
 pub fn load() {
     let read = match std::fs::read(path()) {
@@ -54,7 +54,7 @@ pub fn prefs() -> Preferences {
 
 pub fn save(p: &Preferences) -> anyhow::Result<()> {
     if let Some(problem) = &*UNREADABLE.read().unwrap() { anyhow::bail!("preferences.json could not be read and was left alone: {problem}"); }
-    std::fs::create_dir_all(crate::store::Store::root_dir().join(STATE_DIR))?;
+    std::fs::create_dir_all(thesio_core::store::Store::root_dir().join(STATE_DIR))?;
     write_atomic(&path(), &serde_json::to_vec_pretty(p)?)?;
     apply(p.clone());
     Ok(())

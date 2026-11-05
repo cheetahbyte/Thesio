@@ -87,7 +87,7 @@ static PREPARED: Mutex<Option<std::thread::JoinHandle<Option<Prepared>>>> = Mute
 /// Starts compiling what launch will open, before the UI exists to ask for it.
 pub fn prepare() {
     *PREPARED.lock().unwrap() = Some(std::thread::spawn(|| {
-        let root = crate::store::Store::root_dir();
+        let root = thesio_core::store::Store::root_dir();
         let target = launch_target(&root)?;
         let mut compiler = Compiler::new(root);
         let result = run(&mut compiler, &target.document, target.text.clone(), &target.main, Some(&[]));

@@ -3,7 +3,7 @@
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::InvalidLibrary;
+use thesio_core::library::InvalidLibrary;
 use crate::overlay::{Overlay, menu_action, menu_panel};
 use crate::theme::{self, Theme, craft};
 use crate::ui::{Icon, ToastKind, anchored_menu, icon, list_line, menu_glyph, menu_label, menu_row, ui_text};

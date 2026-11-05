@@ -5,7 +5,7 @@ use crate::app::Workspace;
 use crate::citations::CitationKeys;
 use crate::completion::CompletionKind;
 use crate::document::Edit;
-use crate::library::{NOTES_DIR, note_file, paper_file};
+use thesio_core::library::{NOTES_DIR, note_file, paper_file};
 use crate::source::{SourceEditor, SourceEvent};
 use crate::ui::ToastKind;
 use gpui::*;

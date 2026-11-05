@@ -4,7 +4,7 @@ use crate::app::Workspace;
 use crate::sidebar::RowMenu;
 use crate::citations::picker::PickFor;
 use crate::citations::table::{CELL_X, Col, ROW_H, TABLE_X, column, column_spec};
-use crate::library::{Library, Row, row_of_paper};
+use thesio_core::library::{Library, Row, row_of_paper};
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme};
 use crate::chrome::page_header;

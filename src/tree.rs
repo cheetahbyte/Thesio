@@ -6,7 +6,7 @@ mod move_dialog;
 pub(crate) use move_dialog::MoveDialog;
 
 use crate::app::Workspace;
-use crate::store::Entry;
+use thesio_core::store::Entry;
 use thesio_core::paths::natural_cmp;
 use gpui::*;
 use std::collections::{HashMap, HashSet};

@@ -6,7 +6,7 @@ mod sources;
 pub(crate) mod viewer;
 
 use crate::app::{View, Workspace};
-use crate::library::{self, PAPERS_DIR, Row, note_file, paper_file};
+use thesio_core::library::{self, PAPERS_DIR, Row, note_file, paper_file};
 use crate::ui::ToastKind;
 use gpui::*;
 use std::cell::Cell;

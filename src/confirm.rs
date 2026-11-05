@@ -2,7 +2,7 @@
 
 use crate::app::Workspace;
 use crate::overlay::Overlay;
-use crate::store::display_title;
+use thesio_core::store::{TRASH_DAYS, display_title};
 use crate::theme::Theme;
 use crate::ui::{ModalAt, dialog, primary_button, secondary_button, ui_para};
 use gpui::{prelude::FluentBuilder, *};
@@ -38,7 +38,7 @@ impl Workspace {
         let (title, body, action, danger) = match c {
             Confirm::Delete { ids, batch } => (
                 if *batch || ids.len() > 1 { format!("Delete the {} selected items?", ids.len()) } else { format!("Delete {}?", title_of(&ids[0])) },
-                "Deleted items will be moved to Trash and permanently deleted after 30 days.".to_string(),
+                format!("Deleted items will be moved to Trash and permanently deleted after {TRASH_DAYS} days."),
                 "Delete",
                 true,
             ),

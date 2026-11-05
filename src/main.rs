@@ -46,8 +46,6 @@ mod trash;
 mod tree;
 mod ui;
 
-use thesio_core::{library, store, time};
-
 use gpui::*;
 
 #[cfg(target_os = "macos")]

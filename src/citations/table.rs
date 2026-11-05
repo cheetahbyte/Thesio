@@ -3,7 +3,7 @@
 use super::inspector::INSPECTOR_W;
 use crate::confirm::Confirm;
 use crate::app::Workspace;
-use crate::library::{Library, Row, paper_file};
+use thesio_core::library::{Library, Row, paper_file};
 use crate::input::TextField;
 use crate::overlay::{Overlay, menu_action, menu_panel};
 use crate::theme::{self, Theme};

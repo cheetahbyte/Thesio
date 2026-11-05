@@ -129,7 +129,7 @@ impl Workspace {
     }
 
     fn library_page(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let root = crate::store::Store::root_dir();
+        let root = thesio_core::store::Store::root_dir();
         let location = if cfg!(target_os = "windows") { root.display().to_string() } else {
             dirs::home_dir().and_then(|h| root.strip_prefix(h).ok().map(|r| format!("~/{}", r.display()))).unwrap_or_else(|| root.display().to_string())
         };
@@ -137,12 +137,12 @@ impl Workspace {
         div().w_full().flex().flex_col().gap(px(8.))
             .child(group(vec![
                 row("Vault folder", Some(location.into()),
-                    secondary_button("reveal-library", crate::system::REVEAL_LABEL).on_click(|_, _, cx| crate::system::reveal(&crate::store::Store::root_dir(), cx))).into_any_element(),
+                    secondary_button("reveal-library", crate::system::REVEAL_LABEL).on_click(|_, _, cx| crate::system::reveal(&thesio_core::store::Store::root_dir(), cx))).into_any_element(),
                 row("Hide library files", Some("Keeps library.yaml and the sources folder out of the sidebar. They stay in the vault.".into()),
                     switch("hide-library-files", hide_library_files).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_files = !hide_library_files, cx)))).into_any_element(),
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
                     ui::field_well(&self.settings.email, window, cx).w(px(220.))).into_any_element(),
-                row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
+                row("Trash", Some(format!("Deleted documents are kept for {} days.", thesio_core::store::TRASH_DAYS).into()),
                     secondary_button("open-trash", "Open").on_click(cx.listener(|w, _, window, cx| w.show_view(View::Trash, window, cx)))).into_any_element(),
             ]))
             .into_any_element()

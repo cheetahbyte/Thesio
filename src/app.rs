@@ -4,8 +4,8 @@ use crate::confirm::Confirm;
 use crate::document::{Edit, OpenDocument, SaveStatus};
 use crate::overlay::Overlay;
 use crate::sidebar::{Outline, Sidebar};
-use crate::store::display_title;
-use crate::store::Entry;
+use thesio_core::store::display_title;
+use thesio_core::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
 use thesio_core::paths;
@@ -67,7 +67,7 @@ pub struct Workspace {
     pub view: View,
     pub home: crate::home::Home,
     /// Trash rows, refreshed when the page opens or changes.
-    pub trash: Vec<crate::store::TrashEntry>,
+    pub trash: Vec<thesio_core::store::TrashEntry>,
     /// The toast and when it appeared.
     pub toast: Option<(ToastKind, SharedString, Instant)>,
     toast_task: Option<Task<()>>,
@@ -303,7 +303,7 @@ impl Workspace {
     /// Asks where to save, then compiles the document's current text to a PDF.
     pub fn export_pdf(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(text) = self.read_document(id, cx) else { return };
-        let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(crate::store::UNTITLED, |e| e.title.as_str()));
+        let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(thesio_core::store::UNTITLED, |e| e.title.as_str()));
         let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
         let picked = crate::system::pick_new_path(&root, &name, cx);
         cx.spawn(async move |this, cx| {

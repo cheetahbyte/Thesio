@@ -2,21 +2,21 @@
 
 use crate::app::Workspace;
 use crate::confirm::Confirm;
-use crate::store::display_title;
-use crate::search::doc_icon;
-use crate::store::{TRASH_DAYS, TrashEntry};
+use thesio_core::store::display_title;
+use thesio_core::store::{TRASH_DAYS, TrashEntry};
 use crate::theme::Theme;
 use crate::overlay::{Overlay, menu_panel};
 use crate::chrome::page_header;
-use crate::ui::{Icon, ROW_RADIUS, anchored_menu, empty_state, icon, list_header_text, list_line, menu_label, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, anchored_menu, doc_icon, empty_state, icon, list_header_text, list_line, menu_label, ui_text};
 use gpui::{prelude::FluentBuilder, *};
+use thesio_core::time::DAY;
 
 pub const TRASH_MENU_W: f32 = 160.;
 
 fn remaining(deleted: u64) -> String {
-    let end = deleted + TRASH_DAYS * 86_400;
-    let left = end.saturating_sub(crate::time::now());
-    if left < 86_400 { "Deleting soon".into() } else { format!("{} days", left.div_ceil(86_400)) }
+    let end = deleted + TRASH_DAYS * DAY;
+    let left = end.saturating_sub(thesio_core::time::now());
+    if left < DAY { "Deleting soon".into() } else { format!("{} days", left.div_ceil(DAY)) }
 }
 
 impl Workspace {

@@ -4,7 +4,7 @@ use super::Tree;
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::overlay::Overlay;
-use crate::store::{Entry, display_title};
+use thesio_core::store::{Entry, display_title};
 use crate::theme::{self, Theme, craft};
 use crate::ui::{Icon, ModalAt, ROW_RADIUS, close_button, dialog, icon, primary_button, secondary_button, ui_text};
 use gpui::{prelude::FluentBuilder, *};

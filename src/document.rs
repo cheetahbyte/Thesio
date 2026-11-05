@@ -9,7 +9,7 @@ use crate::confirm::AfterSave;
 use crate::preview::{Preview, PreviewEvent};
 use crate::session::DocumentSession;
 use crate::source::{SourceEditor, SourceEvent};
-use crate::store::Entry;
+use thesio_core::store::Entry;
 use crate::ui::ToastKind;
 use gpui::*;
 use std::cell::Cell;
@@ -116,7 +116,7 @@ impl Workspace {
         editor.read(cx).focus(window);
         let touched = self.store.borrow_mut().touch(id);
         match touched {
-            Ok(()) => if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) { e.meta.opened = crate::time::now(); },
+            Ok(()) => if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) { e.meta.opened = thesio_core::time::now(); },
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not record opening {id}: {e}"), cx),
         }
         self.document = Some(OpenDocument { id: id.to_string(), editor, session, preview, status: SaveStatus::Idle, unsaved: false, save_task: None, more_button: Default::default(), _subs: subs });
@@ -207,7 +207,7 @@ impl Workspace {
         self.store.borrow_mut().save(id, text)?;
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.body = text.to_string();
-            entry.modified = crate::time::now();
+            entry.modified = thesio_core::time::now();
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 //! Small shared UI pieces: icons, tooltips, popover shells.
 
 use crate::theme::{self, Theme, craft};
-use crate::time::civil;
+use thesio_core::time::civil;
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -478,7 +478,7 @@ pub(crate) fn window_controls(window: &Window) -> Option<Div> {
 
 /// Format search result times relative to the current day.
 pub fn format_visit(secs: u64) -> String {
-    let now = crate::time::now();
+    let now = thesio_core::time::now();
     let ago = now.saturating_sub(secs);
     if ago < 60 {
         return "just now".into();
@@ -763,4 +763,16 @@ impl Element for UiPara {
             t.paint(id, inspector_id, bounds, layout, state, window, cx)
         }
     }
+}
+
+/// A document's glyph, in a 24 slot.
+pub(crate) fn doc_icon() -> Div {
+    div()
+        .flex_none()
+        .size(px(24.))
+        .mr(px(10.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(icon(Icon::Document, 18., Theme::text_caption()))
 }

@@ -2,7 +2,7 @@
 
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::Added;
+use thesio_core::library::Added;
 use crate::overlay::{Overlay, menu_action, modal};
 use crate::theme::{self, Theme, craft};
 use crate::ui::{ModalAt, dialog, field_well, plain_button, primary_button, secondary_button};

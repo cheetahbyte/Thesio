@@ -3,8 +3,8 @@
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
 use crate::input::{TextField, TextFieldEvent};
-use crate::store::display_title;
-use crate::store::{Entry, Settings};
+use thesio_core::store::display_title;
+use thesio_core::store::{Entry, Settings};
 use crate::theme::{self, Theme, craft};
 use std::collections::HashSet;
 use thesio_core::paths;
@@ -236,7 +236,7 @@ impl Workspace {
     pub fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(title) = self.entries.iter().find(|e| e.id == id).map(|e| e.title.trim().to_string()) else { return };
         let field = cx.new(|cx| {
-            let mut f = TextField::new(crate::store::UNTITLED, cx);
+            let mut f = TextField::new(thesio_core::store::UNTITLED, cx);
             f.set_text(&title, cx);
             f.select_all_text(cx);
             f
@@ -292,7 +292,7 @@ impl Workspace {
     /// What the file list shows and "select all" takes: a hidden file must not
     /// be caught by a batch delete or move the user cannot see.
     fn listed_entries(&self) -> impl Iterator<Item = &Entry> {
-        use crate::library::PAPERS_DIR;
+        use thesio_core::library::PAPERS_DIR;
         use thesio_core::paths::LIBRARY_FILE;
         let hide = crate::preferences::prefs().hide_library_files;
         let inside = format!("{PAPERS_DIR}/");

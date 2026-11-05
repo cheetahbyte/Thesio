@@ -17,16 +17,13 @@ const TAB_X: f32 = 16.;
 #[derive(Clone, Copy, Default, PartialEq)]
 pub enum PaperTab { #[default] Notes, Highlights }
 
+#[derive(Default)]
 pub struct PaperPanel {
     hidden: bool,
     tab: PaperTab,
     pub(crate) notes: Option<Notes>,
     /// The highlight whose comment is being written.
     pub(crate) comment: Option<(Highlight, Entity<TextField>, Subscription)>,
-}
-
-impl Default for PaperPanel {
-    fn default() -> Self { Self { hidden: false, tab: PaperTab::Notes, notes: None, comment: None } }
 }
 
 impl Workspace {
@@ -120,8 +117,7 @@ impl Workspace {
     pub(crate) fn render_paper_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let tab = self.papers.panel.tab;
         let highlights = self.papers.pdf.highlights();
-        let label: &'static str = "Highlights";
-        let tabs = crate::ui::segmented("paper-tab", &["Notes", label], usize::from(tab == PaperTab::Highlights), cx.listener(|w, i: &usize, _, cx| {
+        let tabs = crate::ui::segmented("paper-tab", &["Notes", "Highlights"], usize::from(tab == PaperTab::Highlights), cx.listener(|w, i: &usize, _, cx| {
             w.papers.panel.tab = if *i == 0 { PaperTab::Notes } else { PaperTab::Highlights };
             cx.notify();
         }));

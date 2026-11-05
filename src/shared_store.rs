@@ -1,4 +1,4 @@
-use crate::store::Store;
+use thesio_core::store::Store;
 use anyhow::Result;
 use std::{cell::{Ref, RefCell, RefMut}, rc::Rc};
 

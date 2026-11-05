@@ -11,7 +11,7 @@ pub(crate) mod tags;
 use crate::app::{View, Workspace};
 use crate::document::Edit;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::{Library, Row};
+use thesio_core::library::{Library, Row};
 use crate::theme::Theme;
 use crate::ui::ToastKind;
 use gpui::*;

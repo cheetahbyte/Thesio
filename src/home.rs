@@ -4,10 +4,10 @@
 use crate::actions::{FocusSearch, NewDoc};
 use crate::app::{View, Workspace};
 use crate::chrome::page_title_x;
-use crate::library::{NOTES_DIR, paper_file};
+use thesio_core::library::{NOTES_DIR, paper_file};
 use thesio_core::references::cited_keys;
-use crate::store::display_title;
-use crate::store::Entry;
+use thesio_core::store::display_title;
+use thesio_core::store::Entry;
 use thesio_core::bibliography::without_block;
 use crate::theme::Theme;
 use crate::chrome::page_header;

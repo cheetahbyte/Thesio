@@ -3,7 +3,7 @@
 
 use crate::app::Workspace;
 use crate::document::Edit;
-use crate::library::Library;
+use thesio_core::library::Library;
 use crate::theme::{self, Theme, craft};
 use crate::overlay::{Overlay, modal};
 use crate::ui::{ModalAt, ToastKind, dialog, format_visit, list_line, primary_button, secondary_button, ui_para, ui_text};
