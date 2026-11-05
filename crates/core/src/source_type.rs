@@ -86,7 +86,7 @@ pub static SOURCE_TYPES: &[SourceType] = &[
     kind!("Blog Post", "Article", Some("Blog"), [TITLE, AUTHORS, container("Blog"), DATE, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Newspaper Article", "Article", Some("Newspaper"), [TITLE, AUTHORS, container("Newspaper"), DATE, PLACE, PAGES, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Encyclopedia Entry", "Entry", Some("Reference"), [TITLE, AUTHORS, container("Encyclopedia"), EDITORS, DATE, PUBLISHER, PLACE, EDITION, VOLUME, PAGES, ISBN, URL, ACCESSED, LANGUAGE, NOTE]),
-    kind!("Software or Dataset", "Repository", None, [TITLE, AUTHORS, field("Version", "", Slot::Serial("serial")), DATE, field("Publisher", "GitHub", Slot::Publisher), DOI, URL, ACCESSED, ABSTRACT, NOTE]),
+    kind!("Software or Dataset", "Repository", None, [TITLE, AUTHORS, field("Version", "", Slot::Serial("version")), DATE, field("Publisher", "GitHub", Slot::Publisher), DOI, URL, ACCESSED, ABSTRACT, NOTE]),
     kind!("Video", "Video", None, [TITLE, field("Director", "", Slot::Persons("author")), DATE, PUBLISHER, RUNTIME, DOI, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Audio", "Audio", None, [TITLE, AUTHORS, DATE, PUBLISHER, RUNTIME, DOI, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Patent", "Patent", None, [TITLE, field("Inventors", "", Slot::Persons("author")), field("Patent Number", "", Slot::Serial("serial")), field("Assignee", "", Slot::Own("organization")), DATE, URL, ACCESSED, ABSTRACT, NOTE]),
@@ -97,6 +97,29 @@ pub static SOURCE_TYPES: &[SourceType] = &[
 ];
 
 fn same(a: &str, b: &str) -> bool { a.eq_ignore_ascii_case(b) }
+
+/// The type this table knows a Hayagriva type by. `@incollection` imports as
+/// an anthos in an anthology, which is a Book Section here.
+fn alias(kind: &str) -> &str {
+    match kind.to_ascii_lowercase().as_str() {
+        "anthos" => "Chapter",
+        "anthology" => "Book",
+        "conference" => "Proceedings",
+        _ => kind,
+    }
+}
+
+/// Gives an imported entry a better type than BibLaTeX could: `@misc` holds
+/// preprints and web pages alike, and Hayagriva reads `@software` as misc too.
+pub fn refine_imported(entry: &mut Mapping) {
+    let value = Value::Mapping(entry.clone());
+    if !value.get("type").and_then(Value::as_str).is_some_and(|kind| kind.eq_ignore_ascii_case("misc")) { return; }
+    let kind = if !read(&value, Slot::Serial("arxiv")).is_empty() { "Article" }
+        else if !read(&value, Slot::Serial("version")).is_empty() { "Repository" }
+        else if !read(&value, Slot::Accessed).is_empty() { "Web" }
+        else { return };
+    entry.insert("type".into(), kind.into());
+}
 
 /// The parent an entry's fields go on. Hayagriva also allows a list of them.
 fn parent_of(entry: &Value) -> Option<&Value> {
@@ -116,8 +139,8 @@ fn parent_of_mut(entry: &mut Mapping) -> Option<&mut Mapping> {
 impl SourceType {
     /// The type of a raw entry. Any Hayagriva type this table lacks is Other.
     pub fn of(entry: &Value) -> &'static SourceType {
-        let kind = entry.get("type").and_then(Value::as_str).unwrap_or_default();
-        let parent = parent_of(entry).and_then(|p| p.get("type")).and_then(Value::as_str);
+        let kind = alias(entry.get("type").and_then(Value::as_str).unwrap_or_default());
+        let parent = parent_of(entry).and_then(|p| p.get("type")).and_then(Value::as_str).map(alias);
         let candidates = || SOURCE_TYPES.iter().filter(|t| same(t.entry, kind));
         candidates().find(|t| match (t.parent, parent) {
             (Some(a), Some(b)) => same(a, b),
@@ -143,6 +166,11 @@ impl SourceType {
             None => { entry.remove("parent"); }
         }
     }
+}
+
+/// The publisher, which a chapter's import leaves on its book.
+fn publisher_of(entry: &Value) -> Option<&Value> {
+    entry.get("publisher").or_else(|| parent_of(entry)?.get("publisher"))
 }
 
 fn text(value: Option<&Value>) -> String {
@@ -181,11 +209,11 @@ pub fn read(entry: &Value, slot: Slot) -> String {
             None => String::new(),
         },
         Slot::Date => text(entry.get("date")),
-        Slot::Publisher => match entry.get("publisher") {
+        Slot::Publisher => match publisher_of(entry) {
             Some(Value::Mapping(publisher)) => text(publisher.get("name")),
             other => text(other),
         },
-        Slot::Place => text(entry.get("publisher").and_then(|publisher| publisher.get("location")).or_else(|| entry.get("location"))),
+        Slot::Place => text(publisher_of(entry).and_then(|publisher| publisher.get("location")).or_else(|| entry.get("location"))),
         Slot::Url => match entry.get("url") {
             Some(Value::Mapping(url)) => text(url.get("value")),
             other => text(other),
@@ -246,6 +274,9 @@ pub fn write(entry: &mut Mapping, slot: Slot, new: &str) {
         }
         // A bare year is a number in Hayagriva files.
         Slot::Date => set(entry, "date", value_of(new).map(|date| date.as_str().and_then(|d| d.parse::<i64>().ok()).map_or(date.clone(), Value::from))),
+        Slot::Publisher | Slot::Place if !entry.contains_key("publisher") && parent_of_mut(entry).is_some_and(|parent| parent.contains_key("publisher")) => {
+            if let Some(parent) = parent_of_mut(entry) { write(parent, slot, new); }
+        }
         Slot::Publisher => match entry.get_mut("publisher").and_then(Value::as_mapping_mut) {
             Some(publisher) if value_of(new).is_some() => set(publisher, "name", value_of(new)),
             _ => set(entry, "publisher", value_of(new)),

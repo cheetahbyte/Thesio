@@ -6373,6 +6373,7 @@ name = "thesio_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "biblatex",
  "comemo",
  "dirs 7.0.0",
  "hayagriva",

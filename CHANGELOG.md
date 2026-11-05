@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+- Import more from BibLaTeX and Zotero: keywords become tags, language is kept, each entry gets its source type, and a known DOI, ISBN, or arXiv ID counts as a duplicate.
+- Export every field the Library shows that BibLaTeX can hold, such as editors, ISBN, edition, and abstract.
+- Save an edit in the Library panel when the app quits.
 - Keep a source's notes named `key.typ` when its citation key changes. They became `key.typ.typ`.
 - Scroll to the caret when it jumps far ahead in a document that just opened, as ⌘↓ does.
-- Save an edit in the Library panel when the app quits.
 - Draw hairlines between the sidebar and the content, and under the header, as Finder does.
 - Keep the editor's scroll position while typing, saving, and folding the bibliography. It used to jump to the top once you were more than a screen down.
 - Restyle the sidebar after Finder: chevrons sit at the end of the line, and the hover buttons are gone. Right-click the list for New document, New folder, and Select documents, or a row for its actions.

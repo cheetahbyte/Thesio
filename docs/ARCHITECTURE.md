@@ -65,6 +65,8 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 
 `source_type.rs` lists the source types and each type's fields. A source type is a Hayagriva type plus its parent's type, so it is read from any entry without a new field, and a Hayagriva type outside the table shows as Other and keeps its `type` until changed. The table is our own: Zotero's schema has no licence file, so it is not copied. The inspector beside the table edits the selected entry and saves when a field loses focus.
 
+BibLaTeX goes through Hayagriva, except keywords and language, which it drops and `import_biblatex` reads with the `biblatex` crate. Import then refines `@misc` entries: an arXiv ID makes a Preprint, a version a Software entry, and an access date a Web Page. A test exports the fields of every imported type and reads them back.
+
 Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 
 Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Keys are generated as surname and year.

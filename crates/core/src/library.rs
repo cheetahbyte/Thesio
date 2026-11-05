@@ -8,6 +8,7 @@ use crate::references::{self, BibliographyCall};
 use crate::source_type::{self, Field, Slot, SourceType};
 use crate::store::{natural_cmp, write_atomic};
 use anyhow::{Context, Result};
+use biblatex::ChunksExt;
 use hayagriva::types::EntryType;
 use serde_yaml::{Mapping, Value};
 use std::collections::BTreeSet;
@@ -253,15 +254,25 @@ impl Library {
             anyhow::anyhow!(errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "))
         })?;
         let incoming: Mapping = serde_yaml::from_str(&hayagriva::io::to_yaml_str(&library)?)?;
+        // Hayagriva has no place for these; it read the same text, so this parses.
+        let raw = biblatex::Bibliography::parse(text).ok();
+        let verbatim = |key: &str, field: &str| raw.as_ref()?.get(key)?.get(field).map(|chunks| chunks.format_verbatim());
         let mut entries = self.entries.clone();
         let (mut added, mut skipped) = (0, 0);
-        for (key, value) in incoming {
-            if entries.contains_key(&key) {
+        for (key, mut value) in incoming {
+            let Some(map) = value.as_mapping_mut() else { continue };
+            if entries.contains_key(&key) || self.find_duplicate(map).is_some() {
                 skipped += 1;
-            } else {
-                entries.insert(key, value);
-                added += 1;
+                continue;
             }
+            source_type::refine_imported(map);
+            let name = key.as_str().unwrap_or_default();
+            let tags: Vec<Value> = verbatim(name, "keywords").unwrap_or_default().split([',', ';']).filter_map(|tag| Some(tag.trim()).filter(|tag| !tag.is_empty())).map(Value::from).collect();
+            if !tags.is_empty() { map.insert(TAGS_FIELD.into(), Value::Sequence(tags)); }
+            // `langid` names a language (`german`); only codes are valid here.
+            if let Some(code) = verbatim(name, "language").filter(|code| code.len() == 2 && code.chars().all(|c| c.is_ascii_lowercase())) { map.insert("language".into(), code.into()); }
+            entries.insert(key, value);
+            added += 1;
         }
         if added > 0 { self.commit(entries)?; }
         Ok((added, skipped))
@@ -315,12 +326,12 @@ impl Library {
             .unwrap_or_else(|| (2..).map(|n| format!("{base}-{n}")).find(|key| !self.contains(key)).unwrap_or(base))
     }
 
-    /// The whole library as BibLaTeX. Fields BibLaTeX has no place for are
-    /// left out.
+    /// The whole library as BibLaTeX. Fields BibLaTeX has no place for, such
+    /// as a running time, are left out.
     pub fn export_biblatex(&self) -> String {
         let mut rows: Vec<&hayagriva::Entry> = self.parsed.iter().collect();
         rows.sort_by(|a, b| natural_cmp(a.key(), b.key()));
-        rows.into_iter().map(|entry| biblatex_entry(entry, &self.entries.get(entry.key()).map(tags_of).unwrap_or_default())).collect::<Vec<_>>().join("\n")
+        rows.into_iter().map(|entry| biblatex_entry(entry, self.entries.get(entry.key()).unwrap_or(&Value::Null))).collect::<Vec<_>>().join("\n")
     }
 
     /// YAML for the entries in `keys`, in library order. Tags stay out: this
@@ -364,7 +375,11 @@ fn ascii_key(text: &str) -> String {
 fn biblatex_kind(entry: &hayagriva::Entry) -> &'static str {
     let parent = entry.parents().first().map(|p| p.entry_type());
     match entry.entry_type() {
-        EntryType::Article => if matches!(parent, Some(EntryType::Conference | EntryType::Proceedings)) { "inproceedings" } else { "article" },
+        EntryType::Article => match parent {
+            Some(EntryType::Conference | EntryType::Proceedings) => "inproceedings",
+            None => "misc",
+            _ => "article",
+        },
         EntryType::Book => "book",
         EntryType::Chapter => "inbook",
         EntryType::Anthos => "incollection",
@@ -375,39 +390,55 @@ fn biblatex_kind(entry: &hayagriva::Entry) -> &'static str {
         EntryType::Web => "online",
         EntryType::Manuscript => "unpublished",
         EntryType::Patent => "patent",
+        EntryType::Repository => "software",
+        EntryType::Entry => "inreference",
+        EntryType::Video => "video",
+        EntryType::Audio => "audio",
         _ => "misc",
     }
 }
 
-fn biblatex_entry(entry: &hayagriva::Entry, tags: &[String]) -> String {
+fn biblatex_entry(entry: &hayagriva::Entry, raw: &Value) -> String {
     let escape = |text: &str| text.replace('{', "\\{").replace('}', "\\}");
+    let names = |persons: &[hayagriva::types::Person]| persons.iter().map(|p| match &p.given_name {
+        Some(given) => format!("{}, {given}", p.name),
+        None => p.name.clone(),
+    }).collect::<Vec<_>>().join(" and ");
+    let kind = biblatex_kind(entry);
+    let text = |slot: Slot| source_type::read(raw, slot);
     let mut fields: Vec<(&str, String)> = vec![];
     if let Some(title) = entry.title() { fields.push(("title", title.to_string())); }
-    if let Some(authors) = entry.authors() {
-        let names = authors.iter().map(|p| match &p.given_name {
-            Some(given) => format!("{}, {given}", p.name),
-            None => p.name.clone(),
-        }).collect::<Vec<_>>().join(" and ");
-        fields.push(("author", names));
-    }
+    if let Some(authors) = entry.authors() { fields.push(("author", names(authors))); }
+    if let Some(editors) = entry.editors() { fields.push(("editor", names(editors))); }
     if let Some(date) = entry.date_any() {
         let mut text = format!("{:04}", date.year);
-        if let Some(month) = date.month { text += &format!("-{:02}", month + 1); }
+        if let Some(month) = date.month {
+            text += &format!("-{:02}", month + 1);
+            if let Some(day) = date.day { text += &format!("-{:02}", day + 1); }
+        }
         fields.push(("date", text));
     }
     if let Some(parent) = entry.parents().first().and_then(|p| p.title()) {
-        let name = if biblatex_kind(entry) == "article" { "journaltitle" } else { "booktitle" };
+        let name = if kind == "article" { "journaltitle" } else { "booktitle" };
         fields.push((name, parent.to_string()));
     }
-    if let Some(publisher) = entry.publisher().and_then(|p| p.name()) { fields.push(("publisher", publisher.to_string())); }
-    if let Some(volume) = entry.volume().or_else(|| entry.parents().first().and_then(|p| p.volume())) { fields.push(("volume", volume.to_string())); }
-    if let Some(issue) = entry.issue().or_else(|| entry.parents().first().and_then(|p| p.issue())) { fields.push(("number", issue.to_string())); }
-    if let Some(pages) = entry.page_range() { fields.push(("pages", pages.to_string())); }
-    if let Some(doi) = entry.doi() { fields.push(("doi", doi.to_string())); }
-    if let Some(url) = entry.url_any() { fields.push(("url", url.value.to_string())); }
-    if !tags.is_empty() { fields.push(("keywords", tags.join(", "))); }
+    let institution = matches!(kind, "thesis" | "report");
+    let number = text(Slot::Serial("serial"));
+    let mut plain = vec![
+        ("publisher", text(Slot::Publisher)), ("location", text(Slot::Place)), ("edition", text(Slot::Own("edition"))),
+        ("volume", text(Slot::Either("volume"))), ("number", if number.is_empty() { text(Slot::Either("issue")) } else { number }),
+        ("pages", text(Slot::Own("page-range"))), ("pagetotal", text(Slot::Own("page-total"))), ("type", text(Slot::Own("genre"))),
+        (if institution { "institution" } else { "organization" }, text(Slot::Own("organization"))), ("version", text(Slot::Serial("version"))),
+        ("doi", text(Slot::Serial("doi"))), ("isbn", text(Slot::Serial("isbn"))), ("issn", text(Slot::Serial("issn"))),
+        ("url", text(Slot::Url)), ("urldate", text(Slot::Accessed)), ("language", text(Slot::Own("language"))),
+        ("abstract", text(Slot::Own("abstract"))), ("note", text(Slot::Own("note"))),
+    ];
+    let arxiv = text(Slot::Serial("arxiv"));
+    if !arxiv.is_empty() { plain.extend([("eprint", arxiv), ("eprinttype", "arxiv".to_string())]); }
+    plain.push(("keywords", tags_of(raw).join(", ")));
+    fields.extend(plain.into_iter().filter(|(_, value)| !value.is_empty()));
     let body = fields.iter().map(|(name, value)| format!("  {name} = {{{}}},", escape(value))).collect::<Vec<_>>().join("\n");
-    format!("@{}{{{},\n{body}\n}}\n", biblatex_kind(entry), entry.key())
+    format!("@{kind}{{{},\n{body}\n}}\n", entry.key())
 }
 
 /// The bytes of a document's generated block, with its final newline.
@@ -477,3 +508,73 @@ pub fn remove(text: &str, file: &str) -> String {
 }
 
 pub const BLOCK_MARKER: &str = BLOCK_START;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn library(name: &str) -> Library {
+        let root = std::env::temp_dir().join(format!("thesio-library-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let _ = std::fs::remove_file(root.join(LIBRARY_FILE));
+        Library::load(&root).unwrap()
+    }
+
+    const ZOTERO: &str = r#"
+@article{parry2022, title = {Flaky}, author = {Parry, Owain}, journal = {TOSEM}, volume = {31}, number = {1}, pages = {1--74},
+  year = {2022}, doi = {10.1145/3476105}, issn = {1049-331X}, language = {en}, keywords = {testing, flaky tests}}
+@book{knuth1984, title = {TeXbook}, author = {Knuth, Donald}, editor = {Doe, Jane}, publisher = {AW}, address = {Reading},
+  edition = {2}, isbn = {0-201-13447-0}, year = {1984}, note = {A note}}
+@incollection{chap2020, title = {Chapter}, booktitle = {Big Book}, publisher = {Pub}, author = {Doe, A.}, year = {2020}}
+@phdthesis{phd2020, title = {On Tests}, type = {PhD thesis}, school = {TU Berlin}, author = {Doe, Jane}, year = {2020}}
+@misc{arx2021, title = {Preprint}, author = {Doe, A.}, year = {2021}, eprint = {2112.12331}, eprinttype = {arxiv}}
+@software{sw2022, title = {Tool}, author = {Doe, A.}, version = {1.2}, year = {2022}}
+@misc{web2024, title = {Page}, url = {https://example.com}, urldate = {2024-03-15}, year = {2024}}
+"#;
+
+    fn kinds(library: &Library) -> Vec<(String, &'static str)> {
+        let mut kinds: Vec<_> = library.rows().into_iter().map(|row| (row.key.clone(), library.source_type(&row.key).unwrap().label)).collect();
+        kinds.sort();
+        kinds
+    }
+
+    #[test]
+    fn a_zotero_export_keeps_its_types_tags_and_details() {
+        let mut library = library("zotero");
+        assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (7, 0));
+        assert_eq!(kinds(&library), [
+            ("arx2021", "Preprint"), ("chap2020", "Book Section"), ("knuth1984", "Book"), ("parry2022", "Journal Article"),
+            ("phd2020", "Thesis"), ("sw2022", "Software or Dataset"), ("web2024", "Web Page"),
+        ].map(|(key, label)| (key.to_string(), label)));
+        let tags: Vec<String> = library.tags().into_iter().map(|(tag, _)| tag).collect();
+        assert_eq!(tags, ["flaky tests", "testing"]);
+        assert_eq!(source_type::read(&library.entries["parry2022"], Slot::Own("language")), "en");
+        assert_eq!(source_type::read(&library.entries["chap2020"], Slot::Publisher), "Pub");
+        assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (0, 7));
+    }
+
+    #[test]
+    fn a_new_key_for_a_known_doi_is_a_duplicate() {
+        let mut library = library("duplicate");
+        library.import_biblatex(ZOTERO).unwrap();
+        assert_eq!(library.import_biblatex("@article{other, title = {Flaky}, doi = {10.1145/3476105}}").unwrap(), (0, 1));
+    }
+
+    #[test]
+    fn export_then_import_loses_nothing_it_can_hold() {
+        let mut first = library("export");
+        first.import_biblatex(ZOTERO).unwrap();
+        let text = first.export_biblatex();
+        let mut second = self::library("reimport");
+        assert_eq!(second.import_biblatex(&text).unwrap(), (7, 0));
+        assert_eq!(kinds(&second), kinds(&first));
+        for (key, entry) in &first.entries {
+            let key = key.as_str().unwrap();
+            let kind = SourceType::of(entry);
+            for field in kind.fields {
+                assert_eq!(source_type::read(&second.entries[key], field.slot), source_type::read(entry, field.slot), "{key}: {}", field.label);
+            }
+            assert_eq!(tags_of(&second.entries[key]), tags_of(entry), "{key}: tags");
+        }
+    }
+}
