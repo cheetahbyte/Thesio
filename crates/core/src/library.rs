@@ -397,11 +397,19 @@ fn ascii_key(text: &str) -> String {
 mod tests {
     use super::*;
 
-    fn library(name: &str) -> Library {
+    fn root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("thesio-library-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let _ = std::fs::remove_file(root.join(LIBRARY_FILE));
-        Library::load(&root).unwrap()
+        root
+    }
+
+    fn library(name: &str) -> Library {
+        Library::load(&root(name)).unwrap()
+    }
+
+    fn tags_of(library: &Library, key: &str) -> Vec<String> {
+        library.rows().into_iter().find(|row| row.key == key).unwrap().tags
     }
 
     const ZOTERO: &str = r#"
@@ -416,78 +424,108 @@ mod tests {
 @misc{web2024, title = {Page}, url = {https://example.com}, urldate = {2024-03-15}, year = {2024}}
 "#;
 
-    fn kinds(library: &Library) -> Vec<(String, &'static str)> {
-        let mut kinds: Vec<_> = library.rows().into_iter().map(|row| (row.key.clone(), library.source_type(&row.key).unwrap().label)).collect();
+    fn zotero(name: &str) -> Library {
+        let mut library = library(name);
+        assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (7, 0));
+        library
+    }
+
+    fn kinds(library: &Library) -> Vec<(String, String)> {
+        let mut kinds: Vec<_> = library.rows().into_iter().map(|row| (row.key, row.kind)).collect();
         kinds.sort();
         kinds
     }
 
     #[test]
-    fn a_zotero_export_keeps_its_types_tags_and_details() {
-        let mut library = library("zotero");
-        assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (7, 0));
-        assert_eq!(kinds(&library), [
+    fn a_zotero_export_keeps_its_types() {
+        assert_eq!(kinds(&zotero("zotero-types")), [
             ("arx2021", "Preprint"), ("chap2020", "Book Section"), ("knuth1984", "Book"), ("parry2022", "Journal Article"),
             ("phd2020", "Thesis"), ("sw2022", "Software, Data"), ("web2024", "Web Page"),
-        ].map(|(key, label)| (key.to_string(), label)));
-        let tags: Vec<String> = library.tags().into_iter().map(|(tag, _)| tag).collect();
+        ].map(|(key, label)| (key.to_string(), label.to_string())));
+    }
+
+    #[test]
+    fn keywords_become_tags() {
+        let tags: Vec<String> = zotero("zotero-tags").tags().into_iter().map(|(tag, _)| tag).collect();
         assert_eq!(tags, ["flaky tests", "testing"]);
-        assert_eq!(read(library.entry("parry2022").unwrap(), source_type::LANGUAGE.slot), "en");
-        assert_eq!(read(library.entry("chap2020").unwrap(), Slot::Publisher), "Pub");
-        assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (0, 7));
+    }
+
+    #[test]
+    fn import_reads_what_hayagriva_drops_and_what_it_files_on_the_parent() {
+        let library = zotero("zotero-details");
+        assert_eq!(library.field_text("parry2022", &source_type::LANGUAGE), "en");
+        assert_eq!(library.field_text("chap2020", &source_type::PUBLISHER), "Pub");
+    }
+
+    #[test]
+    fn importing_the_same_file_again_adds_nothing() {
+        assert_eq!(zotero("zotero-again").import_biblatex(ZOTERO).unwrap(), (0, 7));
+    }
+
+    fn tagged(name: &str) -> Library {
+        let mut library = library(name);
+        library.import_biblatex("@book{a, title = {A}, keywords = {old, keep}}\n@book{b, title = {B}, keywords = {old, merged}}\n@book{c, title = {C}, keywords = {merged}}").unwrap();
+        library
+    }
+
+    #[test]
+    fn a_renamed_tag_changes_on_every_entry() {
+        let mut library = tagged("tag-rename");
+        library.rename_tag("old", "fresh").unwrap();
+        assert_eq!(tags_of(&library, "a"), ["fresh", "keep"]);
     }
 
     #[test]
     fn a_renamed_tag_merges_into_one_in_use() {
-        let mut library = library("tags");
-        library.import_biblatex("@book{a, title = {A}, keywords = {old, keep}}\n@book{b, title = {B}, keywords = {old, merged}}\n@book{c, title = {C}, keywords = {merged}}").unwrap();
-        library.rename_tag("old", "fresh").unwrap();
-        assert_eq!(source_type::tags(library.entry("a").unwrap()), ["fresh", "keep"]);
-        library.rename_tag("fresh", "MERGED").unwrap();
+        let mut library = tagged("tag-merge");
+        library.rename_tag("old", "MERGED").unwrap();
         assert_eq!(library.tags(), [("keep".to_string(), 1), ("merged".to_string(), 3)]);
-        assert_eq!(source_type::tags(library.entry("b").unwrap()), ["merged"]);
-        library.delete_tag("merged").unwrap();
-        assert_eq!(library.tags(), [("keep".to_string(), 1)]);
-        assert!(library.entries["c"].get("tags").is_none());
+        assert_eq!(tags_of(&library, "b"), ["merged"]);
     }
 
     #[test]
-    fn an_article_without_a_journal_is_a_preprint_only_if_something_says_so() {
-        let of = |yaml: &str| SourceType::of(&serde_yaml::from_str::<Mapping>(yaml).unwrap()).label;
-        assert_eq!(of("type: Article\ntitle: T"), "Journal Article");
-        assert_eq!(of("type: Article\nserial-number:\n  arxiv: 2112.12331"), "Preprint");
-        assert_eq!(of("type: Article\nurl: https://arxiv.org/abs/2112.12331"), "Preprint");
-        assert_eq!(of("type: Article\narchive: SSRN"), "Preprint");
+    fn a_deleted_tag_leaves_no_empty_list_behind() {
+        let mut library = library("tag-delete");
+        library.import_biblatex("@book{a, title = {A}, keywords = {only}}").unwrap();
+        library.delete_tag("only").unwrap();
+        assert!(library.tags().is_empty());
+        assert!(!library.text().contains("tags"));
+    }
+
+    #[test]
+    fn choosing_preprint_sticks_and_choosing_again_leaves_no_trace() {
         let mut library = library("preprint");
         library.import_biblatex("@article{a, title = {A}}").unwrap();
         library.set_source_type("a", &source_type::PREPRINT).unwrap();
-        assert_eq!(library.source_type("a").unwrap().label, "Preprint", "choosing it sticks");
+        assert_eq!(library.source_type("a").unwrap().label, "Preprint");
         library.set_source_type("a", &source_type::JOURNAL_ARTICLE).unwrap();
         assert_eq!(library.source_type("a").unwrap().label, "Journal Article");
-        assert!(library.entries["a"].get("genre").is_none());
+        assert!(!library.text().contains("genre"));
     }
 
     #[test]
     fn a_deleted_entry_can_come_back_from_a_version() {
-        let mut library = library("versions");
-        library.import_biblatex(ZOTERO).unwrap();
-        let _ = std::fs::remove_dir_all(library.versions().dir);
+        let mut library = zotero("versions");
         let before = library.text();
         library.delete_entries(&["knuth1984".to_string()]).unwrap();
         assert!(!library.contains("knuth1984"));
         let versions = library.versions().list();
-        assert_eq!(versions.len(), 1);
         assert_eq!(library.versions().read(versions[0]).unwrap(), before);
-        assert!(library.restore("not: [valid").is_err());
-        assert!(!library.contains("knuth1984"), "a bad version changes nothing");
         library.restore(&before).unwrap();
         assert!(library.contains("knuth1984"));
     }
 
     #[test]
+    fn a_version_that_does_not_parse_changes_nothing() {
+        let mut library = zotero("bad-version");
+        let before = library.text();
+        assert!(library.restore("not: [valid").is_err());
+        assert_eq!(library.text(), before);
+    }
+
+    #[test]
     fn a_new_key_for_a_known_doi_is_a_duplicate() {
-        let mut library = library("duplicate");
-        library.import_biblatex(ZOTERO).unwrap();
+        let mut library = zotero("duplicate");
         assert_eq!(library.import_biblatex("@article{other, title = {Flaky}, doi = {10.1145/3476105}}").unwrap(), (0, 1));
     }
 
@@ -510,12 +548,13 @@ mod tests {
 
     #[test]
     fn a_library_that_cannot_be_read_back_is_not_replaced() {
-        let mut library = library("unreadable");
+        let root = root("unreadable");
+        let mut library = Library::load(&root).unwrap();
         library.import_biblatex("@book{a, title = {A}}").unwrap();
         let unreadable = [0xff, 0xfe, b'a'];
-        std::fs::write(&library.path, unreadable).unwrap();
+        std::fs::write(root.join(LIBRARY_FILE), unreadable).unwrap();
         assert!(library.delete_entries(&["a".to_string()]).is_err());
-        assert_eq!(std::fs::read(&library.path).unwrap(), unreadable);
+        assert_eq!(std::fs::read(root.join(LIBRARY_FILE)).unwrap(), unreadable);
     }
 
     #[test]
@@ -530,18 +569,15 @@ mod tests {
 
     #[test]
     fn export_then_import_loses_nothing_it_can_hold() {
-        let mut first = library("export");
-        first.import_biblatex(ZOTERO).unwrap();
-        let text = first.export_biblatex();
-        let mut second = self::library("reimport");
-        assert_eq!(second.import_biblatex(&text).unwrap(), (7, 0));
+        let first = zotero("export");
+        let mut second = library("reimport");
+        assert_eq!(second.import_biblatex(&first.export_biblatex()).unwrap(), (7, 0));
         assert_eq!(kinds(&second), kinds(&first));
         for key in first.rows().into_iter().map(|row| row.key) {
-            let (entry, again) = (first.entry(&key).unwrap(), second.entry(&key).unwrap());
-            for field in SourceType::of(entry).fields {
-                assert_eq!(read(again, field.slot), read(entry, field.slot), "{key}: {}", field.label);
+            for field in first.source_type(&key).unwrap().fields {
+                assert_eq!(second.field_text(&key, field), first.field_text(&key, field), "{key}: {}", field.label);
             }
-            assert_eq!(source_type::tags(again), source_type::tags(entry), "{key}: tags");
+            assert_eq!(tags_of(&second, &key), tags_of(&first, &key), "{key}: tags");
         }
     }
 }

@@ -130,6 +130,10 @@ mod tests {
     #[test]
     fn a_folder_contains_only_its_own_children() {
         assert!(is_within("a/b.typ", "a") && is_within("a", "a") && !is_within("ab/c.typ", "a"));
+    }
+
+    #[test]
+    fn a_move_carries_a_folder_and_what_it_holds_and_nothing_else() {
         assert_eq!(moved("a/b.typ", "a", "x/y").as_deref(), Some("x/y/b.typ"));
         assert_eq!(moved("a", "a", "b").as_deref(), Some("b"));
         assert_eq!(moved("ab", "a", "b"), None);

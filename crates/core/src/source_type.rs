@@ -435,3 +435,24 @@ pub fn write(entry: &mut Mapping, slot: Slot, new: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn label(yaml: &str) -> &'static str {
+        SourceType::of(&serde_yaml::from_str::<Mapping>(yaml).unwrap()).label
+    }
+
+    #[test]
+    fn an_article_without_a_journal_is_a_journal_article_until_something_says_otherwise() {
+        assert_eq!(label("type: Article\ntitle: T"), "Journal Article");
+    }
+
+    #[test]
+    fn an_arxiv_id_link_or_archive_makes_a_preprint() {
+        assert_eq!(label("type: Article\nserial-number:\n  arxiv: 2112.12331"), "Preprint");
+        assert_eq!(label("type: Article\nurl: https://arxiv.org/abs/2112.12331"), "Preprint");
+        assert_eq!(label("type: Article\narchive: SSRN"), "Preprint");
+    }
+}

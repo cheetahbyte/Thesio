@@ -64,16 +64,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_diff_shows_changes_with_context_and_gaps() {
-        let old = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj";
-        let new = "a\nb\nc\nd\nE\nf\ng\nh\ni\nj";
-        let lines = diff(old, new);
+    fn a_change_shows_with_its_context() {
+        let lines = diff("a\nb\nc\nd\ne\nf\ng\nh\ni\nj", "a\nb\nc\nd\nE\nf\ng\nh\ni\nj");
         let kinds: Vec<(LineKind, &str)> = lines.iter().map(|line| (line.kind, line.text.as_str())).collect();
         use LineKind::*;
         assert_eq!(kinds, [(Same, "c"), (Same, "d"), (Removed, "e"), (Added, "E"), (Same, "f"), (Same, "g")]);
+    }
+
+    #[test]
+    fn distant_changes_have_a_gap_between_them() {
         let far = diff("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl", "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL");
-        assert!(far.iter().any(|line| line.kind == Gap));
+        assert!(far.iter().any(|line| line.kind == LineKind::Gap));
+    }
+
+    #[test]
+    fn equal_texts_have_no_lines() {
         assert_eq!(diff("same\n", "same\n"), []);
-        assert_eq!(diff("", "new").iter().map(|line| line.kind).collect::<Vec<_>>(), [Added]);
+    }
+
+    #[test]
+    fn everything_is_added_to_an_empty_text() {
+        assert_eq!(diff("", "new").iter().map(|line| line.kind).collect::<Vec<_>>(), [LineKind::Added]);
     }
 }

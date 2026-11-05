@@ -47,22 +47,19 @@ impl Versions {
     }
 
     /// Keeps `text` unless the newest version already holds it.
-    pub fn keep(&self, text: &str) -> Result<bool> { self.keep_at(text, now()) }
-
-    /// As `keep`, at most once per `INTERVAL`, for use while writing.
-    pub fn keep_paced(&self, text: &str) -> Result<bool> { self.keep_paced_at(text, now()) }
-
-    fn keep_paced_at(&self, text: &str, time: u64) -> Result<bool> {
-        if self.list().first().is_some_and(|last| time.saturating_sub(*last) < INTERVAL) { return Ok(false); }
-        self.keep_at(text, time)
-    }
-
-    fn keep_at(&self, text: &str, time: u64) -> Result<bool> {
+    pub fn keep(&self, text: &str) -> Result<bool> {
         if self.list().first().is_some_and(|newest| self.read(*newest).is_ok_and(|kept| kept == text)) { return Ok(false); }
         std::fs::create_dir_all(&self.dir)?;
+        let time = now();
         write_atomic(&self.file(time).unwrap_or_else(|| self.new_file(time)), text.as_bytes())?;
         self.prune(time);
         Ok(true)
+    }
+
+    /// As `keep`, at most once per `INTERVAL`, for use while writing.
+    pub fn keep_paced(&self, text: &str) -> Result<bool> {
+        if self.list().first().is_some_and(|last| now().saturating_sub(*last) < INTERVAL) { return Ok(false); }
+        self.keep(text)
     }
 
     /// Thins out old versions. The newest always stays, however old.
@@ -88,52 +85,81 @@ impl Versions {
 mod tests {
     use super::*;
 
-    fn versions(name: &str, id: &str) -> Versions {
+    fn root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("thesio-history-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        Versions::of(&root, id)
+        root
+    }
+
+    /// Versions of `a.typ` holding these (time, text) files, as earlier runs left them.
+    fn seeded(name: &str, kept: &[(u64, &str)]) -> Versions {
+        let versions = Versions::of(&root(name), "a.typ");
+        std::fs::create_dir_all(&versions.dir).unwrap();
+        for (time, text) in kept { std::fs::write(versions.dir.join(format!("{time}.typ")), text).unwrap(); }
+        versions
     }
 
     #[test]
     fn an_unchanged_document_adds_no_version() {
-        let versions = versions("same", "a.typ");
-        assert!(versions.keep_at("one", 100).unwrap());
-        assert!(!versions.keep_at("one", 500).unwrap());
-        assert!(versions.keep_at("two", 900).unwrap());
-        assert_eq!(versions.list(), [900, 100]);
-        assert_eq!(versions.read(100).unwrap(), "one");
+        let versions = seeded("same", &[(100, "one")]);
+        assert!(!versions.keep("one").unwrap());
+        assert_eq!(versions.list(), [100]);
     }
 
     #[test]
-    fn old_versions_thin_to_one_a_day_and_the_newest_stays() {
-        let kept = versions("prune", "a.typ");
-        let now = 200 * DAY;
-        // Three versions on each of two old days, one recent, one past the limit.
-        for (i, time) in [now - 100 * DAY, now - 10 * DAY, now - 10 * DAY + 60, now - 9 * DAY, now - 9 * DAY + 60, now - 100].into_iter().enumerate() {
-            kept.keep_at(&i.to_string(), time).unwrap();
-        }
-        kept.keep_at("latest", now).unwrap();
-        assert_eq!(kept.list(), [now, now - 100, now - 9 * DAY + 60, now - 10 * DAY + 60]);
-        let lonely = versions("lonely", "a.typ");
-        lonely.keep_at("old", 0).unwrap();
-        lonely.prune(now);
-        assert_eq!(lonely.list(), [0]);
+    fn a_changed_document_adds_one_and_the_old_stays_readable() {
+        let versions = seeded("changed", &[(now() - 100, "one")]);
+        assert!(versions.keep("two").unwrap());
+        let times = versions.list();
+        assert_eq!(times.len(), 2);
+        assert_eq!(versions.read(times[0]).unwrap(), "two");
+        assert_eq!(versions.read(times[1]).unwrap(), "one");
     }
 
     #[test]
-    fn writing_keeps_at_most_one_version_per_interval() {
-        let versions = versions("paced", "a.typ");
-        assert!(versions.keep_paced_at("one", 1000).unwrap());
-        assert!(!versions.keep_paced_at("two", 1000 + INTERVAL - 1).unwrap());
-        assert!(versions.keep_paced_at("three", 1000 + INTERVAL).unwrap());
-        assert_eq!(versions.list(), [1000 + INTERVAL, 1000]);
+    fn old_versions_thin_to_one_a_day() {
+        // Aligned to a day boundary, so `now` cannot split the seeded days.
+        let today = now() / DAY * DAY;
+        let (a, b) = (today - 10 * DAY, today - 9 * DAY);
+        let versions = seeded("prune", &[(a, "1"), (a + 60, "2"), (b, "3"), (b + 60, "4")]);
+        versions.keep("latest").unwrap();
+        let times = versions.list();
+        assert_eq!(times[1..], [b + 60, a + 60]);
+    }
+
+    #[test]
+    fn versions_past_the_daily_limit_go() {
+        let versions = seeded("limit", &[(now() - (DAILY_DAYS + 1) * DAY, "old")]);
+        versions.keep("latest").unwrap();
+        assert_eq!(versions.list().len(), 1);
+    }
+
+    #[test]
+    fn versions_of_the_last_day_all_stay() {
+        let time = now();
+        let versions = seeded("recent", &[(time - 200, "1"), (time - 100, "2")]);
+        versions.keep("latest").unwrap();
+        assert_eq!(versions.list().len(), 3);
+    }
+
+    #[test]
+    fn writing_inside_the_interval_keeps_nothing() {
+        let versions = seeded("paced-inside", &[(now() - INTERVAL + 60, "one")]);
+        assert!(!versions.keep_paced("two").unwrap());
+    }
+
+    #[test]
+    fn writing_past_the_interval_keeps_a_version() {
+        let versions = seeded("paced-past", &[(now() - INTERVAL, "one")]);
+        assert!(versions.keep_paced("two").unwrap());
     }
 
     #[test]
     fn versions_survive_a_rename_that_changes_the_extension() {
-        let old = versions("extension", "a.typ");
-        old.keep_at("text", 100).unwrap();
-        let root = old.dir.parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
+        let root = root("extension");
+        let old = Versions::of(&root, "a.typ");
+        std::fs::create_dir_all(&old.dir).unwrap();
+        std::fs::write(old.dir.join("100.typ"), "text").unwrap();
         let new = Versions::of(&root, "a.txt");
         old.move_to(&new).unwrap();
         assert_eq!(new.list(), [100]);

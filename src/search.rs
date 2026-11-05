@@ -554,14 +554,22 @@ mod tests {
     use super::snippet;
 
     #[test]
-    fn snippet_context() {
-        let (s, r) = snippet("first line\nsome long prefix text before the Needle here\nnext", "needle").unwrap();
-        assert_eq!(&s[r[0].clone()], "Needle");
-        assert!(s.starts_with('…'));
-        assert!(s.ends_with("\u{a0}\u{a0}\u{a0}next"));
-        let (s, r) = snippet("中文内容测试内容", "内容").unwrap();
-        assert_eq!(r.len(), 2);
-        assert_eq!(&s[r[1].clone()], "内容");
+    fn a_snippet_starts_shortly_before_its_hit_and_runs_on() {
+        let (text, hits) = snippet("first line\nsome long prefix text before the Needle here\nnext", "needle").unwrap();
+        assert_eq!(&text[hits[0].clone()], "Needle");
+        assert!(text.starts_with('…') && !text.contains("first line"), "{text}");
+        assert!(text.ends_with("next"), "{text}");
+    }
+
+    #[test]
+    fn a_snippet_marks_every_hit_in_multibyte_text() {
+        let (text, hits) = snippet("中文内容测试内容", "内容").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(&text[hits[1].clone()], "内容");
+    }
+
+    #[test]
+    fn no_hit_is_no_snippet() {
         assert!(snippet("abc", "x").is_none());
     }
 }

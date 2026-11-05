@@ -565,27 +565,50 @@ mod tests {
         let mut store = vault("trash");
         let id = store.create(None).unwrap();
         store.delete(&id).unwrap();
-        let key = store.list_trash()[0].id.clone();
-        store.trash.get_mut(&key).unwrap().deleted = 1;
+        let root = store.root().to_path_buf();
+        let index = root.join(STATE_DIR).join(TRASH_FILE);
+        let mut trash: serde_json::Value = serde_json::from_slice(&std::fs::read(&index).unwrap()).unwrap();
+        for entry in trash.as_object_mut().unwrap().values_mut() { entry["deleted"] = 1.into(); }
+        std::fs::write(&index, trash.to_string()).unwrap();
+        let (mut store, _) = Store::open_at(root).unwrap();
         assert_eq!(store.list_trash().len(), 1);
         assert_eq!(store.purge_expired(), Vec::<String>::new());
         assert!(store.list_trash().is_empty());
     }
 
     #[test]
-    fn a_move_reports_what_it_could_not_update() {
+    fn a_rename_updates_the_documents_that_include_it() {
         let mut store = vault("moved");
         let id = store.create_from(None, "a", "x").unwrap();
         store.create_from(None, "b", "#include \"a.typ\"").unwrap();
         let moved = store.rename(&id, "c").unwrap();
         assert_eq!((moved.id.as_str(), moved.rewritten.as_slice()), ("c.typ", ["b.typ".to_string()].as_slice()));
-        assert!(moved.warnings.is_empty());
+        assert_eq!(store.load("b.typ").unwrap(), "#include \"c.typ\"");
+    }
+
+    #[test]
+    fn a_move_warns_about_a_document_it_cannot_read() {
+        let mut store = vault("unreadable");
+        let id = store.create_from(None, "a", "x").unwrap();
+        std::fs::write(store.root().join("b.typ"), [0xff, 0xfe]).unwrap();
+        let moved = store.rename(&id, "c").unwrap();
+        assert_eq!(moved.warnings.len(), 1, "{:?}", moved.warnings);
+        assert!(moved.warnings[0].contains("b.typ"), "{:?}", moved.warnings);
     }
 
     #[test]
     fn a_document_name_gets_one_extension() {
-        assert_eq!(renamed_file("flaky2024", true), "flaky2024.typ");
-        assert_eq!(renamed_file("flaky2024.typ", true), "flaky2024.typ");
-        assert_eq!(renamed_file("paper.pdf", false), "paper.pdf");
+        let mut store = vault("names");
+        let id = store.create_from(None, "a", "").unwrap();
+        let bare = store.rename(&id, "flaky2024").unwrap().id;
+        assert_eq!(bare, "flaky2024.typ");
+        assert_eq!(store.rename(&bare, "other.typ").unwrap().id, "other.typ");
+    }
+
+    #[test]
+    fn another_file_keeps_the_name_it_is_given() {
+        let mut store = vault("other-names");
+        std::fs::write(store.root().join("paper.pdf"), "%PDF-").unwrap();
+        assert_eq!(store.rename("paper.pdf", "notes.pdf").unwrap().id, "notes.pdf");
     }
 }

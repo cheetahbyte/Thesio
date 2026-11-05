@@ -462,8 +462,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn the_preview_and_the_source_point_at_each_other() {
+    fn chapters() -> Compilation {
         let page_of_text = "Word ".repeat(600);
         let root = vault("jump", &[
             ("main.typ", "#include \"chapters/one.typ\"\n#pagebreak()\n#include \"chapters/two.typ\"\n#pagebreak()\n#include \"chapters/three.typ\"\n"),
@@ -473,16 +472,32 @@ mod tests {
         ]);
         let compilation = Compiler::new(root).compile("main.typ").unwrap();
         assert!(errors(&compilation).is_empty());
+        compilation
+    }
+
+    #[test]
+    fn the_preview_and_the_source_point_at_each_other() {
+        let compilation = chapters();
         let (page, y) = compilation.position_of("chapters/two.typ", 3).unwrap();
         assert_eq!(page, 1);
         let Some(PageTarget::Source(path, offset)) = compilation.target_at(page, 75., y - 3.) else { panic!("no source there") };
         assert_eq!(path, "chapters/two.typ");
         assert!(offset < "Second chapter.".len(), "{offset}");
-        // The blank lines draw nothing, so the text before them stands in.
-        assert_eq!(compilation.position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
-        // Nor does a heading's marker, at the very start of a file.
-        assert_eq!(compilation.position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
-        assert_eq!(compilation.target_at(page, 1., 1.), None);
+    }
+
+    #[test]
+    fn blank_lines_take_the_place_of_the_text_before_them() {
+        assert_eq!(chapters().position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
+    }
+
+    #[test]
+    fn a_heading_marker_takes_the_place_of_the_heading() {
+        assert_eq!(chapters().position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
+    }
+
+    #[test]
+    fn a_click_on_a_margin_lands_on_nothing() {
+        assert_eq!(chapters().target_at(1, 1., 1.), None);
     }
 
     #[test]
@@ -563,16 +578,17 @@ mod tests {
         assert!(!errors(&Compiler::new(root).compile("main.typ").unwrap()).is_empty());
     }
 
+    /// Layout of nested content recurses far past the stack a pool thread has,
+    /// so without `with_large_stack` this aborts the test process.
     #[test]
-    fn work_on_a_large_stack_outgrows_a_small_thread() {
-        #[inline(never)]
-        fn deep(level: usize) -> usize {
-            let padding = std::hint::black_box([level as u8; 4096]);
-            if level == 0 { padding[0] as usize } else { deep(level - 1) + usize::from(padding[1]) }
-        }
-        // Four times the stack of the thread that asks for it, as a pool thread would.
-        let small = std::thread::Builder::new().stack_size(512 * 1024).spawn(|| with_large_stack(|| deep(500)).unwrap()).unwrap();
-        assert!(small.join().unwrap() > 0);
+    fn a_deep_document_compiles_on_a_thread_with_a_small_stack() {
+        const DEPTH: usize = 70;
+        let nested = format!("{}deep{}", "#box[".repeat(DEPTH), "]".repeat(DEPTH));
+        let root = vault("deep", &[("main.typ", &nested)]);
+        let compile = move || Compiler::new(root).compile("main.typ").unwrap();
+        let compilation = std::thread::Builder::new().stack_size(512 * 1024).spawn(compile).unwrap().join().unwrap();
+        assert_eq!(errors(&compilation), Vec::<String>::new());
+        assert_eq!(compilation.words, [("main.typ".to_string(), 1)]);
     }
 
     #[test]

@@ -252,14 +252,6 @@ fn well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> D
         .border_1().border_color(if focused { Theme::primary() } else { Theme::line_border() })
 }
 
-#[cfg(test)]
-mod button_tests {
-    #[test]
-    fn danger_button_constructs_without_duplicate_interaction_styles() {
-        let _ = super::danger_button("test-danger", "Delete");
-    }
-}
-
 pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)

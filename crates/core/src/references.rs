@@ -167,18 +167,35 @@ pub fn citation_at(text: &str, caret: usize) -> Option<Range<usize>> {
 mod tests {
     use super::*;
 
+    const LINKS: &str = "#link(\"../b.typ\")[B] #link(\"https://x.org/a.typ\")[web] #link(\"c.pdf\")[pdf]\n#link(\"d.typ\", \"e.typ\")\n`#link(\"raw.typ\")`\n";
+
     #[test]
-    fn note_links_are_found_and_written_and_follow_a_move() {
-        let text = "#link(\"../b.typ\")[B] #link(\"https://x.org/a.typ\")[web] #link(\"c.pdf\")[pdf]\n#link(\"d.typ\", \"e.typ\")\n`#link(\"raw.typ\")`\n";
-        let links = note_links(text, "notes/a.typ");
+    fn only_links_to_vault_documents_are_note_links() {
+        let links = note_links(LINKS, "notes/a.typ");
         assert_eq!(links.iter().map(|link| link.target.as_str()).collect::<Vec<_>>(), ["b.typ", "notes/d.typ"]);
-        assert_eq!(&text[links[0].range.clone()], "#link(\"../b.typ\")[B]");
-        let moved = rewrite_paths(text, "notes/a.typ", "notes/a.typ", "notes/a.typ", |_| false, |path| (path == "b.typ").then(|| "archive/b.typ".to_string())).unwrap();
+        assert_eq!(&LINKS[links[0].range.clone()], "#link(\"../b.typ\")[B]");
+    }
+
+    #[test]
+    fn a_note_link_follows_its_target() {
+        let moved = rewrite_paths(LINKS, "notes/a.typ", "notes/a.typ", "notes/a.typ", |_| false, |path| (path == "b.typ").then(|| "archive/b.typ".to_string())).unwrap();
         assert!(moved.starts_with("#link(\"../archive/b.typ\")[B] #link(\"https://x.org/a.typ\")"), "{moved}");
+    }
+
+    #[test]
+    fn a_note_link_is_written_relative_with_its_title_escaped() {
         assert_eq!(note_link("notes/a.typ", "ch/b.typ", "Why [this] #1"), "#link(\"../ch/b.typ\")[Why \\[this\\] \\#1]");
+    }
+
+    #[test]
+    fn a_note_link_is_being_written_up_to_its_closing_brackets() {
         assert_eq!(note_link_at("see [[fla", 9), Some(4..9));
         assert_eq!(note_link_at("see [[fla]] x", 9), Some(4..11));
         assert_eq!(note_link_at("see [[a]] b", 11), None);
+    }
+
+    #[test]
+    fn raw_text_comments_and_strings_hold_no_note_links() {
         assert_eq!(note_link_at("`[[a", 4), None);
         assert_eq!(note_link_at("// [[a", 6), None);
         assert_eq!(note_link_at("#let a = \"[[a", 13), None);

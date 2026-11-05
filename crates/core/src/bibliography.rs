@@ -205,10 +205,22 @@ mod tests {
         let custom = "Text\n#bibliography(\"refs.bib\")\n";
         assert_eq!(mode(custom, "doc.typ"), Mode::Custom);
         assert_eq!(remove(custom, "doc.typ"), custom);
+    }
+
+    #[test]
+    fn several_sources_are_not_the_library_even_when_one_of_them_is() {
         let several = "#bibliography((\"library.yaml\", \"refs.bib\"))\n";
         assert_eq!(mode(several, "doc.typ"), Mode::Custom);
         assert_eq!(remove(several, "doc.typ"), several);
+    }
+
+    #[test]
+    fn a_web_address_is_not_the_library() {
         assert_eq!(mode("#bibliography(\"https://x.org/library.yaml\")", "doc.typ"), Mode::Custom);
+    }
+
+    #[test]
+    fn a_linked_library_is_found_from_a_subfolder_and_comes_out_again() {
         let linked = link("Text\n", "ch/doc.typ");
         assert_eq!(mode(&linked, "ch/doc.typ"), Mode::Linked);
         assert_eq!(remove(&linked, "ch/doc.typ"), "Text\n\n");
