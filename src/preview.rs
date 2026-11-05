@@ -6,7 +6,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use thesio_core::compiler::{Compiler, Diagnostic, PageTarget, render_changed, with_large_stack};
+use thesio_core::compiler::{Compilation, Compiler, Diagnostic, PageTarget, render_changed};
 use thesio_core::project::{LaunchTarget, launch_target};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
@@ -24,23 +24,21 @@ const BLUR_SIGMA: f32 = 1.5;
 const PAGE_GAP: f32 = 16.;
 const PAD: f32 = 24.;
 
-type CompileResult = anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32, bool)>)>, Vec<Diagnostic>, Duration)>;
+type Rendered = (Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32, bool)>);
+type CompileResult = anyhow::Result<(Option<Rendered>, Arc<Compilation>, Duration)>;
 
 /// Compiles `text` as `path` within `main`, rendering pages not in `known`.
 fn run(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
-    with_large_stack(|| compile_and_render(compiler, path, text, main, known))?
-}
-
-fn compile_and_render(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
     let started = Instant::now();
     compiler.set_buffer(path, text)?;
-    let compilation = compiler.compile(main)?;
+    let compilation = Arc::new(compiler.compile(main)?);
     crate::startup::mark("typst-done");
-    let pages = compilation.document.as_ref().map(|document| {
-        let own = compiler.pages_from(document, path);
+    let mut pages = None;
+    if let Some(document) = &compilation.document {
+        let own = compilation.pages_from(path);
         let sizes: Vec<(f32, f32, bool)> = document.pages().iter().zip(&own).map(|(p, own)| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32, *own)).collect();
-        let scales: Vec<f32> = own.iter().map(|own| if *own { RENDER_SCALE } else { BLUR_SCALE }).collect();
-        let rendered = render_changed(document, &scales, known).into_iter().zip(&own).map(|((hash, image), own)| {
+        let changed = render_changed(document, known, |page| if own[page] { RENDER_SCALE } else { BLUR_SCALE })?;
+        let rendered = changed.into_iter().zip(&own).map(|((hash, image), own)| {
             (hash, image.map(|image| {
                 let mut buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba).expect("page size matches its pixels");
                 if !*own { buffer = image::imageops::fast_blur(&buffer, BLUR_SIGMA); }
@@ -48,9 +46,9 @@ fn compile_and_render(compiler: &mut Compiler, path: &str, text: String, main: &
                 Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
             }))
         }).collect::<Vec<_>>();
-        (rendered, sizes)
-    });
-    anyhow::Ok((pages, compilation.diagnostics, started.elapsed()))
+        pages = Some((rendered, sizes));
+    }
+    anyhow::Ok((pages, compilation, started.elapsed()))
 }
 
 /// A launch compile: what it guessed, its compiler, and its result.
@@ -87,6 +85,8 @@ pub enum PreviewEvent {
 
 pub struct Preview {
     compiler: Arc<Mutex<Compiler>>,
+    /// The last compile that gave pages, for moving between them and the source.
+    compilation: Option<Arc<Compilation>>,
     pages: Vec<Page>,
     diagnostics: Vec<Diagnostic>,
     generation: u64,
@@ -120,6 +120,7 @@ impl Preview {
     pub fn new(vault: std::path::PathBuf, path: String, main: String) -> Self {
         Self {
             compiler: Arc::new(Mutex::new(Compiler::new(vault))),
+            compilation: None,
             pages: vec![],
             diagnostics: vec![],
             generation: 0,
@@ -155,11 +156,11 @@ impl Preview {
         let Some(offset) = self.follow else { return };
         self.follow_generation += 1;
         let generation = self.follow_generation;
-        let (compiler, path) = (self.compiler.clone(), self.open_path.clone());
+        let (compilation, path) = (self.compilation.clone(), self.open_path.clone());
         let executor = cx.background_executor().clone();
         let work = cx.background_spawn(async move {
             executor.timer(delay).await;
-            compiler.lock().unwrap().position_of(&path, offset)
+            compilation?.position_of(&path, offset)
         });
         cx.spawn(async move |this, cx| {
             let target = work.await;
@@ -197,8 +198,7 @@ impl Preview {
         let origin = bounds.origin + self.scroll.offset();
         let zoom = f32::from(bounds.size.width) / width;
         let (x, y) = (f32::from(position.x - origin.x) / zoom, f32::from(position.y - origin.y) / zoom);
-        let target = self.compiler.lock().unwrap().target_at(page, x, y);
-        match target {
+        match self.compilation.as_ref().and_then(|compilation| compilation.target_at(page, x, y)) {
             Some(PageTarget::Source(path, offset)) => cx.emit(PreviewEvent::Source(path, offset)),
             Some(PageTarget::Note(path)) => cx.emit(PreviewEvent::Note(path)),
             None => {}
@@ -258,12 +258,15 @@ impl Preview {
     }
 
     fn finish(&mut self, result: CompileResult, cx: &mut Context<Self>) {
-        let (pages, diagnostics, took) = match result {
-            Ok(result) => result,
-            Err(error) => (None, vec![Diagnostic { error: true, message: format!("{error:#}"), hints: vec![], path: None, range: None, line: None }], Duration::ZERO),
+        let (pages, compilation, took) = match result {
+            Ok((pages, compilation, took)) => (pages, Some(compilation), took),
+            Err(error) => {
+                self.diagnostics = vec![Diagnostic { error: true, message: format!("{error:#}"), hints: vec![], path: None, range: None, line: None }];
+                (None, None, Duration::ZERO)
+            }
         };
+        if let Some(compilation) = &compilation { self.diagnostics = compilation.diagnostics.clone(); }
         self.unsettled = true;
-        self.diagnostics = diagnostics;
         self.took = pages.is_some().then_some(took);
         // A failed compile keeps the last good pages on screen.
         if let Some((rendered, sizes)) = pages {
@@ -274,7 +277,10 @@ impl Preview {
                 if let Some(image) = image { self.pages.push(Page { hash, image, width, height }); }
             }
             for page in old { cx.drop_image(page.image, None); }
-            if let Ok(compiler) = self.compiler.try_lock() { self.words = compiler.word_counts().to_vec(); }
+            if let Some(compilation) = compilation {
+                self.words = compilation.words.clone();
+                self.compilation = Some(compilation);
+            }
             // Pages moved, and the caret's place may be on a page that just arrived.
             self.locate(Duration::ZERO, cx);
         }

@@ -705,17 +705,15 @@ impl Workspace {
             };
             let Some(path) = path else { return };
             let result = cx.background_spawn(async move {
-                thesio_core::compiler::with_large_stack(move || -> anyhow::Result<_> {
-                    let mut compiler = thesio_core::compiler::Compiler::new(root);
-                    compiler.set_buffer(&id, text)?;
-                    let compilation = compiler.compile(&id)?;
-                    let Some(document) = compilation.document else {
-                        let first = compilation.diagnostics.into_iter().find(|d| d.error).map_or("unknown error".to_string(), |d| d.message);
-                        anyhow::bail!("{first}");
-                    };
-                    std::fs::write(&path, thesio_core::compiler::export_pdf(&document)?)?;
-                    anyhow::Ok(())
-                })?
+                let mut compiler = thesio_core::compiler::Compiler::new(root);
+                compiler.set_buffer(&id, text)?;
+                let compilation = compiler.compile(&id)?;
+                let Some(document) = compilation.document else {
+                    let first = compilation.diagnostics.into_iter().find(|d| d.error).map_or("unknown error".to_string(), |d| d.message);
+                    anyhow::bail!("{first}");
+                };
+                std::fs::write(&path, thesio_core::compiler::export_pdf(&document)?)?;
+                anyhow::Ok(())
             }).await;
             let _ = this.update(cx, |w, cx| match result {
                 Ok(()) => w.show_toast("Exported PDF", cx),
