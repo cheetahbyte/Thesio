@@ -185,7 +185,7 @@ impl Workspace {
     pub(crate) fn import_bib(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let picked = crate::system::pick_files(Some("bib"), true, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let Some(paths) = picked.await else { return };
+            let Some(paths) = Self::picked(&this, picked.await, cx) else { return };
             let _ = this.update_in(cx, |w, window, cx| {
                 let (mut added, mut skipped) = (0, 0);
                 for path in &paths {
@@ -211,7 +211,7 @@ impl Workspace {
         let root = self.store.borrow().root().to_path_buf();
         let picked = crate::system::pick_new_path(&root, "library.bib", cx);
         cx.spawn(async move |this, cx| {
-            let Some(path) = picked.await else { return };
+            let Some(path) = Self::picked(&this, picked.await, cx) else { return };
             let result = std::fs::write(&path, text);
             let _ = this.update(cx, |w, cx| match result {
                 Ok(()) => w.show_toast("Exported BibLaTeX", cx),

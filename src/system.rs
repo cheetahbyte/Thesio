@@ -1,6 +1,7 @@
 //! What reaches outside the app: file dialogs, other apps, the clipboard. A
 //! scripted run (`devtools.rs`) stops here: its answers stand in for the system.
 
+use anyhow::Result;
 use gpui::*;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -21,24 +22,24 @@ fn scripted_pick() -> Option<Vec<PathBuf>> {
 }
 
 /// The files chosen in an open dialog, if any. `extension` limits them.
-pub fn pick_files(extension: Option<&'static str>, multiple: bool, cx: &App) -> impl Future<Output = Option<Vec<PathBuf>>> + use<> {
+pub fn pick_files(extension: Option<&'static str>, multiple: bool, cx: &App) -> impl Future<Output = Result<Option<Vec<PathBuf>>>> + use<> {
     let extensions = extension.map(|extension| vec![extension.into()]);
     let dialog = (!scripted()).then(|| cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple, prompt: None, extensions }));
     async move {
         match dialog {
-            Some(dialog) => dialog.await.ok().and_then(Result::ok).flatten(),
-            None => scripted_pick(),
+            Some(dialog) => dialog.await.unwrap_or(Ok(None)),
+            None => Ok(scripted_pick()),
         }
     }
 }
 
 /// The path chosen in a save dialog, if any.
-pub fn pick_new_path(directory: &Path, name: &str, cx: &App) -> impl Future<Output = Option<PathBuf>> + use<> {
+pub fn pick_new_path(directory: &Path, name: &str, cx: &App) -> impl Future<Output = Result<Option<PathBuf>>> + use<> {
     let dialog = (!scripted()).then(|| cx.prompt_for_new_path(directory, Some(name)));
     async move {
         match dialog {
-            Some(dialog) => dialog.await.ok().and_then(Result::ok).flatten(),
-            None => scripted_pick().and_then(|paths| paths.into_iter().next()),
+            Some(dialog) => dialog.await.unwrap_or(Ok(None)),
+            None => Ok(scripted_pick().and_then(|paths| paths.into_iter().next())),
         }
     }
 }

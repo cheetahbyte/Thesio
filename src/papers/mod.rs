@@ -70,7 +70,7 @@ impl Workspace {
     pub(crate) fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
         let picked = crate::system::pick_files(Some("pdf"), false, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let Some(path) = picked.await.and_then(|paths| paths.into_iter().next()) else { return };
+            let Some(path) = Self::picked(&this, picked.await, cx).and_then(|paths| paths.into_iter().next()) else { return };
             let _ = this.update_in(cx, |w, window, cx| then(w, path, window, cx));
         }).detach();
     }

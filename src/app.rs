@@ -191,7 +191,11 @@ impl Workspace {
         // Their paths changed on disk: open editors take them in.
         for id in rewritten {
             let text = self.store.borrow().load(id);
-            if let Ok(text) = text { self.show_text(id, &text, Edit::Undoable, cx); }
+            match text {
+                Ok(text) => self.show_text(id, &text, Edit::Undoable, cx),
+                // The editor keeps the old paths, and its next save writes them back.
+                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not reload {id} after its paths changed: {e:#}"), cx),
+            }
         }
         self.refresh_outline(cx);
     }
@@ -309,7 +313,7 @@ impl Workspace {
         let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
         let picked = crate::system::pick_new_path(&root, &name, cx);
         cx.spawn(async move |this, cx| {
-            let Some(path) = picked.await else { return };
+            let Some(path) = Self::picked(&this, picked.await, cx) else { return };
             let result = cx.background_spawn(async move {
                 let mut compiler = thesio_core::compiler::Compiler::new(root);
                 compiler.set_buffer(&id, text)?;
@@ -328,11 +332,19 @@ impl Workspace {
         }).detach();
     }
 
+    /// What a file dialog answered. A dialog that failed says so, unlike one cancelled.
+    pub(crate) fn picked<T>(this: &WeakEntity<Self>, answer: anyhow::Result<Option<T>>, cx: &mut AsyncApp) -> Option<T> {
+        answer.unwrap_or_else(|e| {
+            let _ = this.update(cx, |w, cx| w.show_toast_kind(ToastKind::Error, &format!("Could not open the file dialog: {e:#}"), cx));
+            None
+        })
+    }
+
     /// Copies chosen files into the vault and opens the first document.
     pub fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let picked = crate::system::pick_files(None, true, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let Some(paths) = picked.await else { return };
+            let Some(paths) = Self::picked(&this, picked.await, cx) else { return };
             let _ = this.update_in(cx, |w, window, cx| {
                 let mut first = None;
                 for path in &paths {
@@ -623,8 +635,8 @@ impl Render for Workspace {
             .font_family(theme::UI_FONT)
             .text_color(Theme::text())
             .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {
-                // Esc leaves Settings.
-                if ev.keystroke.key == "escape" && w.view == View::Settings {
+                // Both pages show Back with this key.
+                if ev.keystroke.key == "escape" && matches!(w.view, View::Settings | View::Trash) {
                     w.close_settings(window, cx);
                     cx.stop_propagation();
                 }

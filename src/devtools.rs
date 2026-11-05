@@ -150,8 +150,7 @@ struct Driver {
     handle: AnyWindowHandle,
     #[cfg(target_os = "macos")]
     view: usize,
-    /// Set to stop the running recording.
-    recording: Option<Rc<Cell<bool>>>,
+    recording: Option<Recording>,
 }
 
 impl Driver {
@@ -160,11 +159,10 @@ impl Driver {
     }
 
     async fn stop_recording(&mut self, cx: &mut AsyncApp) {
-        let Some(stop) = self.recording.take() else { return };
+        let Some(Recording { stop, writer }) = self.recording.take() else { return };
         stop.set(true);
         *CURSOR_LOG.lock().unwrap() = None;
-        // Lets the writer drain and ffmpeg finish the file.
-        cx.background_executor().timer(Duration::from_millis(300)).await;
+        let _ = cx.background_spawn(async move { writer.join() }).await;
     }
 
     fn wheel(&self, x: f32, y: f32, dy: f32, cx: &mut AsyncApp) {
@@ -757,8 +755,14 @@ fn grab(window: &Window) -> anyhow::Result<(usize, usize, Vec<u8>)> {
     Ok((w, h, out))
 }
 
-/// Starts capturing frames into ffmpeg; set the returned flag to stop.
-fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Rc<Cell<bool>> {
+/// A running capture: `stop` ends it, and `writer` then drains into ffmpeg.
+struct Recording {
+    stop: Rc<Cell<bool>>,
+    writer: std::thread::JoinHandle<()>,
+}
+
+/// Starts capturing frames into ffmpeg.
+fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Recording {
     let stop = Rc::new(Cell::new(false));
     let start = Instant::now();
     *CURSOR_LOG.lock().unwrap() = std::fs::File::create(format!("{path}.cursor")).ok().map(|f| (start, f));
@@ -769,7 +773,7 @@ fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Rc
     let fps = fps();
     // Encoding runs off the main thread; frames that arrive late are repeated
     // so the video keeps wall-clock time.
-    std::thread::spawn(move || {
+    let writer = std::thread::spawn(move || {
         use std::io::Write;
         let mut ffmpeg: Option<std::process::Child> = None;
         let mut next = 0u64;
@@ -810,7 +814,7 @@ fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Rc
         }
     })
     .detach();
-    stop
+    Recording { stop, writer }
 }
 
 #[cfg(not(target_os = "macos"))]
