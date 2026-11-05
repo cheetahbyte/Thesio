@@ -732,7 +732,7 @@ impl Workspace {
         self.entries.iter().filter(|e| !e.folder && e.meta.parent.as_deref() == Some(PAPERS_DIR)).map(|e| e.id.clone()).collect()
     }
 
-    fn has_paper(&self, key: &str) -> bool {
+    pub(crate) fn has_paper(&self, key: &str) -> bool {
         let file = paper_file(key);
         self.entries.iter().any(|e| e.id == file)
     }

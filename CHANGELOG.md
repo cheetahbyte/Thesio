@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Turn Home into an overview of the vault: recent documents, favorites, counts, and sources not cited yet.
 - Remove the Shortcuts page from Settings. Shortcuts keep working, and keys saved earlier still apply.
 - Draw indent lines under open folders in the sidebar.
 - Insert a highlight as a quotation with its page citation. Correcting a page number once fixes the numbering for that paper.

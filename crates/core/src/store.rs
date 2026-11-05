@@ -50,11 +50,6 @@ pub struct Settings {
     /// Dragged sidebar width; `None` is the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_width: Option<f32>,
-    /// Home: list instead of grid, and the sort order.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub home_list: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub home_sort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_size: Option<[f32; 2]>,
     /// Folders open in the sidebar.

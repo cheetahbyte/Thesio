@@ -266,8 +266,6 @@ impl Theme {
     pub fn fill_active() -> Hsla { ca(craft::N1000, 0.13) }
     /// Text selection: the accent, light.
     pub fn selection() -> Hsla { ca(accent(), 0.24) }
-    pub fn scrollbar_thumb() -> Hsla { ca(craft::N1000, 0.22) }
-    pub fn pinned() -> Hsla { c(accent()) }
     pub fn danger() -> Hsla { c(craft::R500) }
 
     // ---- Thesio shell

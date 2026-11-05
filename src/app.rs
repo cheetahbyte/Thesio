@@ -361,7 +361,6 @@ impl Workspace {
             _subs: subs,
         };
         ws.sort();
-        ws.load_home();
         match document.or_else(|| ws.first_document()) {
             Some(id) => ws.open(&id, window, cx),
             None => ws.new_doc(window, cx),
@@ -507,7 +506,6 @@ impl Workspace {
         match self.store.create(None) {
             Ok(id) => {
                 self.search_open = false;
-                self.home.sort_menu = false;
                 self.entries = self.store.list();
                 self.sort();
                 self.search.update(cx, |s, cx| s.set_text("", cx));
@@ -692,7 +690,6 @@ impl Workspace {
         self.view = view;
         self.row_menu = None;
         self.trash_menu = None;
-        self.home.sort_menu = false;
         cx.notify();
     }
 
@@ -1074,7 +1071,6 @@ impl Render for Workspace {
         let doc_menu = self.render_doc_menu(window, cx);
         let confirm = self.render_confirm(cx);
         let trash_menu = self.render_trash_menu(cx);
-        let home_menus = self.render_home_menus(cx);
         let toast = self.render_toast(window);
         let main = match self.view {
             View::Doc => div()
@@ -1194,7 +1190,6 @@ impl Render for Workspace {
             .children(row_menu)
             .children(doc_menu)
             .children(trash_menu)
-            .children(home_menus)
             .children(confirm)
             .children(move_dlg)
             .children(entry_form)
