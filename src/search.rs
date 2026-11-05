@@ -392,7 +392,7 @@ impl Workspace {
 
     pub(crate) fn render_search(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let q = self.query(cx);
-        let has_text = !self.search.read(cx).text.is_empty();
+        let has_text = !self.search.read(cx).text().is_empty();
         let results = self.search_results(cx);
         let vh = f32::from(window.viewport_size().height);
 

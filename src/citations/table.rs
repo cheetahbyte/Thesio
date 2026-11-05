@@ -92,7 +92,7 @@ impl Table {
 impl Workspace {
     /// The table's rows, in order: the search and the tag filter applied.
     pub(crate) fn library_rows(&self, cx: &App) -> Vec<Row> {
-        let query = self.citations.table.search.read(cx).text.trim().to_lowercase();
+        let query = self.citations.table.search.read(cx).text().trim().to_lowercase();
         let mut rows = self.visible_rows(&query);
         if let Some(tag) = &self.citations.tag_filter { rows.retain(|row| row.tags.contains(tag)); }
         rows

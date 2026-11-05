@@ -37,6 +37,7 @@ mod source;
 mod settings;
 mod shortcuts;
 mod startup;
+mod text;
 mod theme;
 mod trash;
 mod tree;

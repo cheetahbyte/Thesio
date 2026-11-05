@@ -38,7 +38,7 @@ impl Citations {
     pub fn new(root: &Path, window: &mut Window, cx: &mut Context<Workspace>) -> Self {
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search library", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f
         });
         let subs = vec![

@@ -239,16 +239,16 @@ impl Workspace {
         let entries = store.borrow_mut().list();
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f
         });
         let subs = vec![
             cx.observe_window_bounds(window, |_, window, cx| crate::window_size::remember(window, cx)),
             // The system switched between light and dark (or the app's own look changed).
-            cx.observe_window_appearance(window, |this, _, cx| if crate::appearance::sync_dark(cx) { crate::appearance::refresh_all(this, cx); }),
+            cx.observe_window_appearance(window, |_, _, cx| if crate::appearance::sync_dark(cx) { crate::appearance::refresh_all(cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(this, cx); } this.refresh_entries(cx); this.reload_library(); this.table_changed(window, cx); cx.notify(); }
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(cx); } this.refresh_entries(cx); this.reload_library(); this.table_changed(window, cx); cx.notify(); }
                 else { this.save_all(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -351,7 +351,7 @@ impl Workspace {
     }
 
     pub fn query(&self, cx: &App) -> String {
-        self.search.read(cx).text.trim().to_lowercase()
+        self.search.read(cx).text().trim().to_lowercase()
     }
 
     /// Shows `id`, once the open document is safely saved.
@@ -401,19 +401,19 @@ impl Workspace {
         self.editor_subs = vec![
             cx.subscribe_in(&editor, window, |this, editor, event: &SourceEvent, window, cx| match event {
                 SourceEvent::Changed => {
-                    let text = editor.read(cx).buffer.text().to_string();
+                    let text = editor.read(cx).text().to_string();
                     if let Some(session) = &this.session { session.update(cx, |session, cx| session.set_text(text, cx)); }
                     this.schedule_save(window, cx);
                 }
                 SourceEvent::Caret => {
-                    let caret = editor.read(cx).buffer.caret();
+                    let caret = editor.read(cx).caret();
                     if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.follow(caret, cx)); }
                     this.mark_outline(caret, cx);
                 }
                 SourceEvent::Citing => this.offer_sources(editor, cx),
                 SourceEvent::Follow(offset) => {
                     let Some(id) = this.current.clone() else { return };
-                    let text = editor.read(cx).buffer.text();
+                    let text = editor.read(cx).text();
                     if let Some(link) = note_links(text, &id).into_iter().find(|link| link.range.contains(offset)) { this.follow_link(&link.target, window, cx); }
                 }
                 SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
@@ -501,7 +501,7 @@ impl Workspace {
             self.backlinks.clear();
             return;
         };
-        let open = self.current.clone().zip(self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string()));
+        let open = self.current.clone().zip(self.editor.as_ref().map(|editor| editor.read(cx).text().to_string()));
         self.backlinks = self.current.as_ref().map_or(vec![], |current| self.entries.iter().filter(|e| e.typst && e.id != *current)
             .filter_map(|e| note_links(&e.body, &e.id).into_iter().find(|link| link.target == *current).map(|link| (e.id.clone(), e.title.clone(), link.range.start))).collect());
         let entries = &self.entries;
@@ -509,7 +509,7 @@ impl Workspace {
             Some((id, text)) if id == path => Some(text.clone()),
             _ => entries.iter().find(|e| e.id == path).map(|e| e.body.clone()),
         }).outline();
-        let caret = self.editor.as_ref().map_or(0, |editor| editor.read(cx).buffer.caret());
+        let caret = self.editor.as_ref().map_or(0, |editor| editor.read(cx).caret());
         self.mark_outline(caret, cx);
     }
 
@@ -783,7 +783,7 @@ impl Workspace {
     fn finish_rename(&mut self, commit: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(r) = self.rename.take() else { return };
         let refocus = r.field.read(cx).is_focused(window);
-        let title = r.field.read(cx).text.trim().to_string();
+        let title = r.field.read(cx).text().trim().to_string();
         let old = self.entries.iter().find(|e| e.id == r.id).map(|e| e.title.trim().to_string());
         if commit && old.is_some_and(|o| o != title) {
             self.flush(cx);

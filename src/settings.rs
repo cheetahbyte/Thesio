@@ -26,12 +26,12 @@ impl Settings {
     pub fn new(cx: &mut Context<Workspace>) -> Self {
         let email = cx.new(|cx| {
             let mut f = TextField::new("name@university.edu", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f.set_text(&prefs().unpaywall_email, cx);
             f
         });
         let subs = vec![cx.subscribe(&email, |w, field, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) {
-            let email = field.read(cx).text.trim().to_string();
+            let email = field.read(cx).text().trim().to_string();
             w.set_pref(|p| p.unpaywall_email = email, cx);
         })];
         Self { page: Page::default(), scroll: ScrollHandle::new(), email, _subs: subs }

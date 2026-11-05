@@ -81,7 +81,7 @@ impl Workspace {
             // Worded as an example: a bare value in an empty field reads as data.
             let hint = if example.is_empty() { String::new() } else { format!("e.g. {example}") };
             let mut f = TextField::new(hint, cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f.tab_events = true;
             f.wrap = wrap;
             f.set_text(text, cx);
@@ -134,8 +134,8 @@ impl Workspace {
     pub(crate) fn save_inspector(&mut self, cx: &mut Context<Self>) {
         let Some(inspector) = &self.citations.details.panel else { return };
         let key = inspector.key.clone();
-        let new_key = inspector.key_field.read(cx).text.trim().to_string();
-        let fields: Vec<(Field, String)> = inspector.fields.iter().map(|(field, entity)| (*field, entity.read(cx).text.clone())).collect();
+        let new_key = inspector.key_field.read(cx).text().trim().to_string();
+        let fields: Vec<(Field, String)> = inspector.fields.iter().map(|(field, entity)| (*field, entity.read(cx).text().to_string())).collect();
         let Some(library) = &mut self.citations.library else { return };
         let before = library.paper_ids(&key);
         let result = library.save_fields(&key, &new_key, &fields);

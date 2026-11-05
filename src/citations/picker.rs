@@ -37,7 +37,7 @@ impl Workspace {
         self.reload_library();
         let field = cx.new(|cx| {
             let mut f = TextField::new("Search library", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f
         });
         let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| {
@@ -73,7 +73,7 @@ impl Workspace {
     }
 
     pub(crate) fn picker_rows(&self, picker: &CitePicker, cx: &App) -> Vec<Row> {
-        let query = picker.field.read(cx).text.trim().to_lowercase();
+        let query = picker.field.read(cx).text().trim().to_lowercase();
         let mut rows = self.visible_rows(&query);
         // A source holds one paper.
         if !matches!(picker.purpose, PickFor::Cite) { rows.retain(|row| !self.has_paper(&row.key)); }

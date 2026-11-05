@@ -30,13 +30,13 @@ impl Workspace {
     pub(crate) fn open_tag_editor(&mut self, keys: Vec<String>, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let field = cx.new(|cx| {
             let mut f = TextField::new("Add a tag", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f
         });
         let tagged = keys.clone();
         let subs = vec![cx.subscribe_in(&field, window, move |w, field, ev: &TextFieldEvent, window, cx| match ev {
             TextFieldEvent::Submit => {
-                let tag = field.read(cx).text.clone();
+                let tag = field.read(cx).text().to_string();
                 if tag.trim().is_empty() { return; }
                 if w.set_tag(&tagged, &tag, true, window, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
             }
@@ -61,7 +61,7 @@ impl Workspace {
 
     pub(crate) fn finish_tag_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(Overlay::TagRename(TagRename { tag: old, field, .. })) = self.take_overlay(window, cx) else { return };
-        let new = field.read(cx).text.trim().to_string();
+        let new = field.read(cx).text().trim().to_string();
         let Some(library) = &mut self.citations.library else { return };
         if new != old {
             match library.rename_tag(&old, &new) {
@@ -111,7 +111,7 @@ impl Workspace {
 
     pub(crate) fn render_tag_editor(&self, editor: &TagEditor, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let library = self.citations.library.as_ref()?;
-        let typed = editor.field.read(cx).text.trim().to_string();
+        let typed = editor.field.read(cx).text().trim().to_string();
         let query = typed.to_lowercase();
         let keys: BTreeSet<&String> = editor.keys.iter().collect();
         let rows: Vec<Row> = library.rows().into_iter().filter(|row| keys.contains(&row.key)).collect();

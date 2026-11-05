@@ -47,14 +47,14 @@ impl Workspace {
         self.papers.pdf.release_keys();
         let field = cx.new(|cx| {
             let mut f = TextField::new("Add a comment", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f.set_text(&highlight.comment, cx);
             f
         });
         let target = highlight.clone();
         let subscription = cx.subscribe_in(&field, window, move |w, field, event: &TextFieldEvent, _, cx| match event {
             TextFieldEvent::Submit => {
-                let comment = field.read(cx).text.trim().to_string();
+                let comment = field.read(cx).text().trim().to_string();
                 w.papers.panel.comment = None;
                 if let Err(e) = w.papers.pdf.set_comment(&target, &comment) { w.show_toast_kind(ToastKind::Error, &format!("Could not save the comment: {e}"), cx); }
                 cx.notify();

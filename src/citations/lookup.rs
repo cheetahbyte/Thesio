@@ -23,7 +23,7 @@ impl Workspace {
     pub(crate) fn open_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let field = cx.new(|cx| {
             let mut f = TextField::new("DOI, arXiv ID, PMID, or ISBN", cx);
-            f.placeholder_color = Theme::text_disabled();
+            f.placeholder_color = Theme::text_disabled;
             f
         });
         let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| if let TextFieldEvent::Submit = ev { w.run_lookup(window, cx); })];
@@ -36,7 +36,7 @@ impl Workspace {
     pub(crate) fn run_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(Overlay::Lookup(dialog)) = &mut self.overlay else { return };
         if dialog.busy { return; }
-        let text = dialog.field.read(cx).text.clone();
+        let text = dialog.field.read(cx).text().to_string();
         let parsed = identifiers(&text);
         if parsed.is_empty() { return; }
         dialog.busy = true;

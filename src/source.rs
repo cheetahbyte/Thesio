@@ -3,11 +3,12 @@
 
 use crate::library::Row;
 use crate::session::DocumentSession;
+use crate::text::{CaretMark, LineMarks, PaintedLine, Shaped, from_utf16, paint_line, plain_newlines, range_from_utf16, range_to_utf16, request_line, to_utf16};
 use crate::theme::{self, MONO_FONT, Theme, c, craft};
 use crate::ui::{MENU_PAD_Y, ROW_RADIUS, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
-use thesio_core::buffer::{Buffer, EditKind};
+use thesio_core::buffer::{Buffer, Change, EditKind};
 use thesio_core::bibliography;
 use thesio_core::compiler::Compilation;
 use thesio_core::references::{citation_at, note_link_at};
@@ -109,25 +110,16 @@ struct Completion {
     waited: u8,
 }
 
-/// A painted row: where it landed and how it wrapped, for hit testing.
-#[derive(Clone)]
-struct PaintedLine {
-    bounds: Bounds<Pixels>,
-    layout: Option<WrappedLine>,
-}
-
 type Painted = Rc<RefCell<HashMap<usize, PaintedLine>>>;
 
 pub struct SourceEditor {
-    pub buffer: Buffer,
+    buffer: Buffer,
     /// Highlight as Typst; other text files stay plain.
     typst: bool,
     focus: FocusHandle,
     list: ListState,
     /// Notes to link to: the `#link` to insert, the title, and the path.
     pub notes: Vec<(String, String, String)>,
-    /// The text `list` has rows for.
-    listed: String,
     /// Frames left to bring the caret into view, once its row is painted.
     reveal_tries: u8,
     /// Room to keep below the caret, so typing never runs along the edge.
@@ -165,7 +157,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { notes: vec![], listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None, session: None };
+        let mut editor = Self { notes: vec![], reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None, session: None };
         editor.refold();
         editor
     }
@@ -200,6 +192,9 @@ impl SourceEditor {
     }
 
     pub fn focus(&self, window: &mut Window) { window.focus(&self.focus); }
+
+    pub fn text(&self) -> &str { self.buffer.text() }
+    pub fn caret(&self) -> usize { self.buffer.caret() }
 
     pub fn set_session(&mut self, session: Entity<DocumentSession>) { self.session = Some(session); }
 
@@ -237,8 +232,8 @@ impl SourceEditor {
         if self.buffer.text() == text { return; }
         let (range, new_end, caret) = self.diff(text);
         let start = range.start;
-        self.buffer.replace_selecting(range, &text[start..new_end], caret..caret, EditKind::Other);
-        self.changed(cx);
+        let change = self.buffer.replace_selecting(range, &text[start..new_end], caret..caret, EditKind::Other);
+        self.changed(change, cx);
     }
 
     /// Takes in text Thesio generated, outside the undo history and without
@@ -247,10 +242,8 @@ impl SourceEditor {
         if self.buffer.text() == text { return; }
         let (range, new_end, caret) = self.diff(text);
         let start = range.start;
-        self.buffer.replace_silently(range, &text[start..new_end], caret);
-        if self.typst { self.spans = highlights(self.buffer.text()); }
-        self.refold();
-        self.relist();
+        let change = self.buffer.replace_silently(range, &text[start..new_end], caret..caret);
+        self.text_changed(change);
         cx.notify();
     }
 
@@ -277,14 +270,6 @@ impl SourceEditor {
         self.insert(&text, EditKind::Other, cx);
     }
 
-    /// Updates only the edited rows: a reset would lose the scroll position
-    /// and every measured height, and with them the way back to the caret.
-    fn relist(&mut self) {
-        let (old, new) = changed_lines(&self.listed, self.buffer.text());
-        self.splice_rows(old, new);
-        self.listed = self.buffer.text().to_string();
-    }
-
     /// Replaces rows, keeping the view: `splice` sends a list whose top row is
     /// replaced to that row's start, and paragraphs are often taller than the view.
     fn splice_rows(&mut self, old: Range<usize>, new: usize) {
@@ -296,10 +281,17 @@ impl SourceEditor {
         }
     }
 
-    fn changed(&mut self, cx: &mut Context<Self>) {
+    /// Brings what derives from the text up to date. Rows follow only the edit:
+    /// a reset would lose the scroll position and every measured height, and
+    /// with them the way back to the caret.
+    fn text_changed(&mut self, change: Change) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.refold();
-        self.relist();
+        self.splice_rows(change.lines, change.new_lines);
+    }
+
+    fn changed(&mut self, change: Change, cx: &mut Context<Self>) {
+        self.text_changed(change);
         self.goal_x = None;
         self.reveal_tries = REVEAL_TRIES;
         self.reveal_margin = TYPING_MARGIN;
@@ -361,8 +353,8 @@ impl SourceEditor {
         let Some(insert) = self.completions().into_iter().nth(index).map(|choice| choice.insert) else { return };
         let Some(open) = self.completion.take() else { return };
         self.settled = Some(open.range.start);
-        self.buffer.replace(open.range, &insert, EditKind::Other);
-        self.changed(cx);
+        let change = self.buffer.replace(open.range, &insert, EditKind::Other);
+        self.changed(change, cx);
         if !open.notes { cx.emit(SourceEvent::Cited); }
     }
 
@@ -389,7 +381,7 @@ impl SourceEditor {
         let line = self.buffer.line_of(offset);
         let painted = self.painted.borrow();
         let row = painted.get(&line)?;
-        Some(row.bounds.origin + row.layout.as_ref()?.position_for_index(offset - self.buffer.line_range(line).start, px(LINE_HEIGHT))?)
+        Some(row.bounds.origin + row.position(offset - self.buffer.line_range(line).start)?)
     }
 
     fn render_completion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -467,14 +459,14 @@ impl SourceEditor {
             caret.min(offset)..caret.max(offset)
         } else { self.buffer.sel.clone() };
         if !range.is_empty() {
-            self.buffer.replace(range, "", EditKind::Deleting);
-            self.changed(cx);
+            let change = self.buffer.replace(range, "", EditKind::Deleting);
+            self.changed(change, cx);
         }
     }
 
     fn insert(&mut self, text: &str, kind: EditKind, cx: &mut Context<Self>) {
-        self.buffer.replace(self.buffer.sel.clone(), text, kind);
-        self.changed(cx);
+        let change = self.buffer.replace(self.buffer.sel.clone(), text, kind);
+        self.changed(change, cx);
     }
 
     /// The offset one visual row away, keeping the column.
@@ -484,14 +476,14 @@ impl SourceEditor {
         let range = self.buffer.line_range(line);
         let height = px(LINE_HEIGHT);
         let painted = self.painted.borrow();
-        let current = painted.get(&line).and_then(|p| p.layout.as_ref());
-        let here = current.and_then(|l| l.position_for_index(caret - range.start, height));
+        let current = painted.get(&line);
+        let here = current.and_then(|row| row.position(caret - range.start));
         let x = self.goal_x.or(here.map(|p| p.x)).unwrap_or(px(0.));
         // A move inside a wrapped line stays on it.
-        if let (Some(here), Some(layout)) = (here, current) {
+        if let (Some(here), Some(row)) = (here, current) {
             let y = if down { here.y + height } else { here.y - height };
-            if y >= px(0.) && y < layout.size(height).height {
-                let offset = range.start + layout.closest_index_for_position(point(x, y), height).unwrap_or_else(|i| i);
+            if y >= px(0.) && y < row.height() {
+                let offset = range.start + row.index_at(point(x, y));
                 drop(painted);
                 self.goal_x = Some(x);
                 return offset;
@@ -505,11 +497,8 @@ impl SourceEditor {
             return if down { self.buffer.text().len() } else { 0 };
         }
         let target_range = self.buffer.line_range(target);
-        let offset = match painted.get(&target).and_then(|p| p.layout.as_ref()) {
-            Some(layout) => {
-                let y = if down { px(0.) } else { layout.size(height).height - height };
-                target_range.start + layout.closest_index_for_position(point(x, y), height).unwrap_or_else(|i| i)
-            }
+        let offset = match painted.get(&target) {
+            Some(row) => target_range.start + row.index_at(point(x, if down { px(0.) } else { row.height() - height })),
             None => target_range.end.min(target_range.start + (caret - range.start)),
         };
         drop(painted);
@@ -527,10 +516,7 @@ impl SourceEditor {
             if position.y < top { top - position.y } else if position.y >= bottom { position.y - bottom + px(1.) } else { px(0.) }
         });
         let Some((line, row)) = row else { return self.buffer.text().len() };
-        let range = self.buffer.line_range(*line);
-        let Some(layout) = &row.layout else { return range.start };
-        let local = point(position.x - row.bounds.left(), (position.y - row.bounds.top()).clamp(px(0.), row.bounds.size.height - px(1.)));
-        range.start + layout.closest_index_for_position(local, px(LINE_HEIGHT)).unwrap_or_else(|i| i)
+        self.buffer.line_range(*line).start + row.index_for(position)
     }
 
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -622,18 +608,8 @@ impl SourceEditor {
         }.into_any_element()
     }
 
-    fn to16(&self, offset: usize) -> usize { self.buffer.text()[..offset].encode_utf16().count() }
-
-    fn from16(&self, offset16: usize) -> usize {
-        let mut units = 0;
-        for (i, ch) in self.buffer.text().char_indices() {
-            if units >= offset16 { return i; }
-            units += ch.len_utf16();
-        }
-        self.buffer.text().len()
-    }
-
-    fn range8(&self, range: &Range<usize>) -> Range<usize> { self.from16(range.start)..self.from16(range.end) }
+    fn range8(&self, range: &Range<usize>) -> Range<usize> { range_from_utf16(self.buffer.text(), range) }
+    fn range16(&self, range: &Range<usize>) -> Range<usize> { range_to_utf16(self.buffer.text(), range) }
 }
 
 fn tag_color(tag: SyntaxTag) -> Hsla {
@@ -725,11 +701,11 @@ impl SourceEditor {
     }
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.insert(&text.replace("\r\n", "\n"), EditKind::Other, cx);
+            self.insert(&plain_newlines(&text), EditKind::Other, cx);
         }
     }
-    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) { if self.buffer.undo() { self.changed(cx); } }
-    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) { if self.buffer.redo() { self.changed(cx); } }
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) { if let Some(change) = self.buffer.undo() { self.changed(change, cx); } }
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) { if let Some(change) = self.buffer.redo() { self.changed(change, cx); } }
     fn enter(&mut self, _: &Enter, _: &mut Window, cx: &mut Context<Self>) {
         let start = self.line_start();
         let indent: String = self.buffer.text()[start..self.buffer.sel.start.max(start)].chars().take_while(|ch| *ch == ' ' || *ch == '\t').collect();
@@ -741,16 +717,16 @@ impl SourceEditor {
 impl EntityInputHandler for SourceEditor {
     fn text_for_range(&mut self, range: Range<usize>, actual: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
         let range = self.range8(&range);
-        *actual = Some(self.to16(range.start)..self.to16(range.end));
+        *actual = Some(self.range16(&range));
         Some(self.buffer.text()[range].to_string())
     }
 
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        Some(UTF16Selection { range: self.to16(self.buffer.sel.start)..self.to16(self.buffer.sel.end), reversed: self.buffer.reversed })
+        Some(UTF16Selection { range: self.range16(&self.buffer.sel), reversed: self.buffer.reversed })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        self.marked.as_ref().map(|r| self.to16(r.start)..self.to16(r.end))
+        self.marked.as_ref().map(|r| self.range16(r))
     }
 
     fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) { self.marked = None; }
@@ -758,26 +734,18 @@ impl EntityInputHandler for SourceEditor {
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
         let range = range.map(|r| self.range8(&r)).or(self.marked.take()).unwrap_or(self.buffer.sel.clone());
         self.marked = None;
-        self.buffer.replace(range, text, EditKind::Typing);
-        self.changed(cx);
+        let change = self.buffer.replace(range, text, EditKind::Typing);
+        self.changed(change, cx);
         self.refresh_completion(true, cx);
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, new_sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
         let range = range.map(|r| self.range8(&r)).or(self.marked.clone()).unwrap_or(self.buffer.sel.clone());
         let base = range.start;
-        let byte_at = |units: usize| {
-            let mut seen = 0;
-            for (i, ch) in text.char_indices() {
-                if seen >= units { return i; }
-                seen += ch.len_utf16();
-            }
-            text.len()
-        };
-        let sel = new_sel.map_or(base + text.len()..base + text.len(), |sel| base + byte_at(sel.start)..base + byte_at(sel.end));
-        self.buffer.replace_selecting(range, text, sel, EditKind::Typing);
+        let sel = new_sel.map_or(base + text.len()..base + text.len(), |sel| base + from_utf16(text, sel.start)..base + from_utf16(text, sel.end));
+        let change = self.buffer.replace_selecting(range, text, sel, EditKind::Typing);
         self.marked = (!text.is_empty()).then(|| base..base + text.len());
-        self.changed(cx);
+        self.changed(change, cx);
     }
 
     fn bounds_for_range(&mut self, range: Range<usize>, _: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
@@ -785,24 +753,13 @@ impl EntityInputHandler for SourceEditor {
         let line = self.buffer.line_of(offset);
         let painted = self.painted.borrow();
         let row = painted.get(&line)?;
-        let local = row.layout.as_ref().and_then(|l| l.position_for_index(offset - self.buffer.line_range(line).start, px(LINE_HEIGHT))).unwrap_or_default();
+        let local = row.position(offset - self.buffer.line_range(line).start).unwrap_or_default();
         Some(Bounds::new(row.bounds.origin + local, size(px(1.), px(LINE_HEIGHT))))
     }
 
     fn character_index_for_point(&mut self, point: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
-        Some(self.to16(self.offset_at(point)))
+        Some(to_utf16(self.buffer.text(), self.offset_at(point)))
     }
-}
-
-/// The rows an edit replaced, and how many rows replace them.
-fn changed_lines(old: &str, new: &str) -> (Range<usize>, usize) {
-    let (old, new) = (old.as_bytes(), new.as_bytes());
-    let lines = |bytes: &[u8]| bytes.iter().filter(|b| **b == b'\n').count();
-    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
-    let room = old.len().min(new.len()) - prefix;
-    let suffix = old.iter().rev().zip(new.iter().rev()).take(room).take_while(|(a, b)| a == b).count();
-    let first = lines(&old[..prefix]);
-    (first..lines(&old[..old.len() - suffix]) + 1, lines(&new[prefix..new.len() - suffix]) + 1)
 }
 
 impl Render for SourceEditor {
@@ -886,68 +843,22 @@ impl IntoElement for LineElement {
 }
 
 impl Element for LineElement {
-    type RequestLayoutState = Rc<RefCell<Option<WrappedLine>>>;
+    type RequestLayoutState = Shaped;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> { None }
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
 
     fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, _: &mut App) -> (LayoutId, Self::RequestLayoutState) {
-        let state: Self::RequestLayoutState = Default::default();
-        let (slot, text, runs) = (state.clone(), self.text.clone(), self.runs.clone());
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        let id = window.request_measured_layout(style, move |known, available, window, _| {
-            let width = known.width.or(match available.width { AvailableSpace::Definite(w) => Some(w), _ => None });
-            let height = px(LINE_HEIGHT);
-            if text.is_empty() { return size(width.unwrap_or(px(0.)), height); }
-            let lines = window.text_system().shape_text(text.clone(), px(FONT_SIZE), &runs, width, None).unwrap_or_default();
-            let line = lines.into_iter().next();
-            let measured = line.as_ref().map_or(height, |l| l.size(height).height);
-            *slot.borrow_mut() = line;
-            size(width.unwrap_or(px(0.)), measured)
-        });
-        (id, state)
+        request_line(self.text.clone(), self.runs.clone(), px(FONT_SIZE), px(LINE_HEIGHT), true, window)
     }
 
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut Self::RequestLayoutState, _: &mut Window, _: &mut App) {}
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, state: &mut Self::RequestLayoutState, _: &mut (), window: &mut Window, cx: &mut App) {
-        let layout = state.borrow().clone();
-        let height = px(LINE_HEIGHT);
-        let position = |index: usize| layout.as_ref().and_then(|l| l.position_for_index(index, height)).unwrap_or_default();
-        if let Some(selection) = &self.selection {
-            let (a, b) = (position(selection.start), position(selection.end));
-            let mut y = a.y;
-            while y <= b.y {
-                let left = if y == a.y { a.x } else { px(0.) };
-                let right = if y == b.y { b.x + if self.through_newline { px(7.) } else { px(0.) } } else { bounds.size.width };
-                window.paint_quad(fill(Bounds::from_corners(bounds.origin + point(left, y), bounds.origin + point(right, y + height)), Theme::selection()));
-                y += height;
-            }
-        }
-        if let Some(line) = &layout {
-            let _ = line.paint(bounds.origin, height, TextAlign::Left, None, window, cx);
-        }
-        if let Some(caret) = self.caret {
-            let at = bounds.origin + position(caret);
-            window.paint_quad(fill(Bounds::new(at + point(px(0.), px(2.)), size(px(2.), height - px(4.))), Theme::primary()));
-        }
-        self.painted.borrow_mut().insert(self.line, PaintedLine { bounds, layout });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::changed_lines;
-
-    #[test]
-    fn an_edit_replaces_only_its_own_rows() {
-        assert_eq!(changed_lines("a\nb\nc", "a\nbX\nc"), (1..2, 1));
-        assert_eq!(changed_lines("a\nb\nc", "a\nb\n\nc"), (2..3, 2));
-        assert_eq!(changed_lines("a\nb\nc", "a\nc"), (1..3, 1));
-        assert_eq!(changed_lines("a", "a"), (0..1, 1));
-        assert_eq!(changed_lines("", "x\ny"), (0..1, 2));
-        assert_eq!(changed_lines("x\nx\nx", "x\nx"), (1..3, 1));
+        let line = PaintedLine { bounds, layout: state.borrow().clone(), line_height: px(LINE_HEIGHT) };
+        let marks = LineMarks { selection: self.selection.clone(), selection_tail: if self.through_newline { px(7.) } else { px(0.) }, caret: self.caret.map(|at| CaretMark { at, width: px(2.), inset: px(2.) }) };
+        paint_line(&line, &marks, window, cx);
+        self.painted.borrow_mut().insert(self.line, line);
     }
 }

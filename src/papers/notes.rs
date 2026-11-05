@@ -53,7 +53,7 @@ impl Workspace {
         let subscription = cx.subscribe(&editor, |w, editor, event: &SourceEvent, cx| {
             let Some(note) = w.papers.panel.notes.as_ref().map(|notes| notes.id.clone()) else { return };
             match event {
-                SourceEvent::Changed => { let text = editor.read(cx).buffer.text().to_string(); w.save_note(&note, &text, cx); }
+                SourceEvent::Changed => { let text = editor.read(cx).text().to_string(); w.save_note(&note, &text, cx); }
                 SourceEvent::Citing => w.offer_sources(&editor, cx),
                 SourceEvent::Cited => w.link_note_library(&note, &editor, cx),
                 SourceEvent::Caret | SourceEvent::Follow(_) => {}
@@ -74,7 +74,7 @@ impl Workspace {
 
     /// Notes that cite the library read it directly, so they compile on their own.
     pub(crate) fn link_note_library(&mut self, id: &str, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
-        let text = editor.read(cx).buffer.text().to_string();
+        let text = editor.read(cx).text().to_string();
         if bibliography::mode(&text, id) != Mode::None { return; }
         self.save_note(id, &bibliography::link(&text, id), cx);
     }

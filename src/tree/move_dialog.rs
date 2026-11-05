@@ -27,7 +27,7 @@ impl Workspace {
     pub(crate) fn open_move(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search destinations", cx);
-            f.placeholder_color = Theme::text_placeholder();
+            f.placeholder_color = Theme::text_placeholder;
             f
         });
         let subs = vec![cx.subscribe(&search, |_, _, _: &TextFieldEvent, cx| cx.notify())];
@@ -84,7 +84,7 @@ impl Workspace {
     pub(crate) fn render_move_dialog(&self, dlg: &MoveDialog, cx: &mut Context<Self>) -> AnyElement {
         let tree = Tree::new(&self.entries);
         let hidden: HashSet<String> = dlg.ids.iter().flat_map(|id| tree.subtree(id)).collect();
-        let q = dlg.search.read(cx).text.trim().to_lowercase();
+        let q = dlg.search.read(cx).text().trim().to_lowercase();
         let border = Theme::line_border();
 
         let search = div()

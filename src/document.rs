@@ -21,7 +21,7 @@ impl Workspace {
     /// What `id` holds now: the open editor's copy, or the file.
     pub(crate) fn text_of(&self, id: &str, cx: &App) -> anyhow::Result<String> {
         match (&self.current, &self.editor) {
-            (Some(current), Some(editor)) if current == id => Ok(editor.read(cx).buffer.text().to_string()),
+            (Some(current), Some(editor)) if current == id => Ok(editor.read(cx).text().to_string()),
             _ => self.store.borrow().load(id),
         }
     }
@@ -67,7 +67,7 @@ impl Workspace {
 
     fn recompile(&mut self, cx: &mut Context<Self>) {
         let (Some(editor), Some(session)) = (self.editor.clone(), self.session.clone()) else { return };
-        let text = editor.read(cx).buffer.text().to_string();
+        let text = editor.read(cx).text().to_string();
         session.update(cx, |session, cx| session.set_text(text, cx));
     }
 
@@ -99,7 +99,7 @@ impl Workspace {
             self.unsaved = false;
             return true;
         };
-        let text = editor.read(cx).buffer.text().to_string();
+        let text = editor.read(cx).text().to_string();
         match self.commit(&id, &text) {
             Ok(()) => {
                 self.saved();

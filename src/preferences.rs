@@ -76,7 +76,7 @@ impl Workspace {
         }
         if p.appearance != old.appearance { crate::appearance::apply_appearance(&p.appearance); }
         if crate::appearance::sync_dark(cx) || p.hide_library_files != old.hide_library_files {
-            crate::appearance::refresh_all(self, cx);
+            crate::appearance::refresh_all(cx);
         }
         cx.notify();
     }

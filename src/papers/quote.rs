@@ -63,9 +63,9 @@ impl Workspace {
 
     pub(crate) fn insert_quote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(Overlay::Quote(dialog)) = &self.overlay else { return };
-        let text = dialog.text_field.read(cx).text.clone();
+        let text = dialog.text_field.read(cx).text().to_string();
         if text.trim().is_empty() { return; }
-        let entered = dialog.page_field.read(cx).text.trim().to_string();
+        let entered = dialog.page_field.read(cx).text().trim().to_string();
         let offset = (entered != dialog.page).then(|| page_offset(&dialog.highlight.label, dialog.highlight.page, &entered)).flatten();
         let (markup, block) = quote_markup(&text, &dialog.key, &entered);
         let Some((target, editor)) = self.quote_target() else { return };

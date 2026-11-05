@@ -1,8 +1,7 @@
 //! Light, dark, and the system accent.
 
-use crate::app::Workspace;
 use crate::preferences::prefs;
-use crate::theme::{self, Theme};
+use crate::theme;
 use gpui::*;
 
 /// Tell the OS which look the app wants (macOS: the window material, menus
@@ -34,25 +33,8 @@ pub fn sync_dark(cx: &App) -> bool {
     theme::set_dark(on)
 }
 
-/// Redraw every window's document after the theme changed.
-pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
-    fn refresh(ws: &mut Workspace, cx: &mut Context<Workspace>) {
-        ws.search.update(cx, |f, _| f.placeholder_color = Theme::text_disabled());
-        cx.notify();
-    }
-    refresh(this, cx);
-    // The other windows. Skip this workspace, and never read a window that is
-    // mid-update (the one a click came from): GPUI panics on that, so ask
-    // `is_active` first, which is None for a window on the update stack.
-    let me = cx.entity_id();
-    for w in cx.windows() {
-        if let Some(h) = w.downcast::<Workspace>()
-            && h.is_active(cx).is_some()
-            && h.entity(cx).is_ok_and(|e| e.entity_id() != me)
-        {
-            let _ = h.update(cx, |ws, _, cx| refresh(ws, cx));
-        }
-    }
+/// Redraws every window after the theme changed.
+pub(crate) fn refresh_all(cx: &mut App) {
     crate::app::set_menus(cx);
     cx.refresh_windows();
 }
