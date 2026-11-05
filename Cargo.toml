@@ -17,6 +17,10 @@ default-members = [".", "crates/core"]
 [profile.dev.package.thesio]
 opt-level = 1
 
+# Unoptimized rendering libraries take seconds per compile, against milliseconds in release.
+[profile.dev.package."*"]
+opt-level = 2
+
 [dependencies]
 thesio_core = { path = "crates/core" }
 anyhow = "1.0.104"
