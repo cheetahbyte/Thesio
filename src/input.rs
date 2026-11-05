@@ -48,7 +48,7 @@ pub fn bind_keys(cx: &mut App) {
 pub enum TextFieldEvent {
     Changed,
     Submit,
-    /// Shift+Enter (查找: previous match).
+    /// Shift+Enter (find: previous match).
     ShiftSubmit,
     Cancel,
     Up,

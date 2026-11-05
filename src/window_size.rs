@@ -14,7 +14,7 @@ pub fn persist(cx: &mut App) {
     let (Some(size), Some(store)) = (cx.try_global::<Size>().copied(), cx.try_global::<crate::shared_store::SharedStore>()) else { return };
     let mut settings = store.settings();
     if size.0.is_some() { settings.window_size = size.0 }
-    if let Err(e) = store.save_settings(&settings) { eprintln!("无法保存窗口尺寸：{e}"); }
+    if let Err(e) = store.save_settings(&settings) { eprintln!("Could not save window size: {e}"); }
 }
 
 pub fn main_window_size(cx: &App) -> gpui::Size<Pixels> {

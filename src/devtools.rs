@@ -562,7 +562,7 @@ fn run(cmd: &str, rest: &str, window: &mut Window, cx: &mut App) {
         "pick" => *PICK.lock().unwrap() = Some(rest.trim().split('|').map(std::path::PathBuf::from).collect()),
         // `deskshot name margin`: the window as it sits on screen, with
         // `margin` pt of whatever is below it (a wallpaper backdrop for the
-        // 开始指南 screenshots) and the system's own corners and shadow.
+        // Getting Started screenshots) and the system's own corners and shadow.
         #[cfg(target_os = "macos")]
         "deskshot" => {
             let mut it = rest.split_whitespace();

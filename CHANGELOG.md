@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix a crash when opening destructive confirmation dialogs.
+
+- Optimize the application crate in debug builds to reduce macOS unwind data.
+
 - Make sidebar text and icons readable on fully transparent macOS glass.
 - Fold the generated bibliography in the editor, and leave it out of Home cards and search.
 - Add entries to the Library by DOI, arXiv ID, PMID, or ISBN.

@@ -1,6 +1,6 @@
-//! 主页: the local library's home — the 新建 / 上传
-//! cards (a new document, or 导入为文档 at once: no menus), the 最近访问 and 收藏 lists (list or grid view), 显示设置 for the
-//! list columns and the sort dropdown. Dressed as 所有文档: a
+//! Home: the local library's home — the New / Upload
+//! cards (a new document, or Import as document at once: no menus), the Recently visited and Favorites lists (list or grid view), Display settings for the
+//! list columns and the sort dropdown. Dressed as All documents: a
 //! hairline list with quiet hover fills, white cards and pills, native menus.
 
 use crate::app::{RowMenu, Workspace};
@@ -24,7 +24,7 @@ pub enum HomeTab {
     Starred,
 }
 
-/// The optional list columns (标题 is always shown).
+/// The optional list columns (Title is always shown).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Col {
     Modified,
@@ -36,15 +36,15 @@ pub enum Col {
 impl Col {
     fn label(self) -> &'static str {
         match self {
-            Col::Modified => "修改时间",
-            Col::Created => "创建时间",
-            Col::Visited => "最近访问",
-            Col::Starred => "收藏时间",
+            Col::Modified => "Date modified",
+            Col::Created => "Date created",
+            Col::Visited => "Recently visited",
+            Col::Starred => "Date favorited",
         }
     }
 }
 
-/// 最近访问's columns (no 所有者); 显示设置 toggles them.
+/// Recently visited's columns (no Owner); Display settings toggles them.
 const RECENT_COLS: [Col; 3] = [Col::Modified, Col::Created, Col::Visited];
 const STARRED_COLS: [Col; 4] = [Col::Modified, Col::Created, Col::Visited, Col::Starred];
 
@@ -57,10 +57,10 @@ impl HomeSort {
 impl HomeSort {
     fn label(self) -> &'static str {
         match self {
-            Self::Visited => "最近访问时间",
-            Self::Modified => "最近修改时间",
-            Self::Created => "创建时间（最新优先）",
-            Self::Title => "标题（升序）",
+            Self::Visited => "Last visited",
+            Self::Modified => "Last modified",
+            Self::Created => "Created (newest first)",
+            Self::Title => "Title (A–Z)",
         }
     }
 }
@@ -202,7 +202,7 @@ impl Workspace {
             }))
     }
 
-    /// 主页's view and sort order are remembered (`settings.json`).
+    /// Home's view and sort order are remembered (`settings.json`).
     pub(crate) fn load_home(&mut self) {
         let s = self.store.settings();
         self.home.grid = !s.home_list;
@@ -212,7 +212,7 @@ impl Workspace {
     fn save_home(&mut self) {
         let mut s = self.store.settings();
         (s.home_list, s.home_sort) = (!self.home.grid, Some(self.home.sort.key().to_string()));
-        if let Err(e) = self.store.save_settings(&s) { eprintln!("无法保存主页视图：{e}"); }
+        if let Err(e) = self.store.save_settings(&s) { eprintln!("Could not save home view: {e}"); }
     }
 
     pub(crate) fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -480,7 +480,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// 显示设置 and the sort dropdown: the menu panel; the sort item is a
+    /// Display settings and the sort dropdown: the menu panel; the sort item is a
     /// native menu row.
     pub(crate) fn render_home_menus(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = vec![];

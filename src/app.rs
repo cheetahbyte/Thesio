@@ -50,7 +50,7 @@ pub fn set_menus(cx: &mut App) {
             ],
         },
         // The standard Edit menu: its items act on the focused editor, and
-        // macOS adds 听写 and 表情与符号 to it.
+        // macOS adds Dictation and Emoji & Symbols to it.
         Menu {
             name: "Edit".into(),
             items: {
@@ -112,15 +112,15 @@ pub fn bind_keys(cx: &mut App) {
                 if let Err(e) = handle.update(cx, |ws, window, cx| {
                     crate::window_size::persist(cx);
                     if ws.save_before(cx, |_, window, _| window.remove_window()) { window.remove_window(); }
-                }) { eprintln!("无法关闭笔记窗口：{e}"); }
+                }) { eprintln!("Could not close document window: {e}"); }
             });
         }
     });
     cx.on_action(|_: &Quit, cx| quit(cx));
 }
 
-/// 退出: the open document is saved first; when that fails its dialog asks
-/// (重试 / 放弃修改) and quits afterwards. Call it outside any window update
+/// Quit: the open document is saved first; when that fails its dialog asks
+/// (Retry / Discard changes) and quits afterwards. Call it outside any window update
 /// (`cx.defer`): a window on the update stack cannot be asked to save.
 pub fn quit(cx: &mut App) {
     let ready = cx
@@ -149,7 +149,7 @@ pub struct RowMenu {
     pub pos: Point<Pixels>,
     /// Which corner of the menu sits at `pos`.
     pub corner: Corner,
-    /// The 批量操作 menu for the checked rows.
+    /// The selection menu for the checked rows.
     pub batch: bool,
 }
 
@@ -166,23 +166,23 @@ pub enum View {
 /// A confirmation dialog and the pages it is about.
 #[derive(Clone, Debug)]
 pub enum Confirm {
-    /// 删除 (to the 回收站); `batch` for the 批量操作 selection.
+    /// Delete to Trash; `batch` for the selected rows.
     Delete { ids: Vec<String>, batch: bool },
-    /// 回收站 → 恢复.
+    /// Trash → Restore.
     Restore(String),
-    /// 回收站 → 彻底删除.
+    /// Trash → Delete permanently.
     Purge(String),
     /// Library → delete an entry.
     DeleteEntry(String),
     /// The open document could not be written before it was to be replaced
-    /// (another document, 新建, 退出): 重试 / 放弃修改, then carry on.
+    /// (another document, New, Quit): Retry / Discard changes, then carry on.
     SaveFailed,
 }
 
 /// What to do once the open document is safely on disk (or its changes given up).
 pub type AfterSave = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
-/// Inline 重命名 of a sidebar row.
+/// Inline rename of a sidebar row.
 pub struct Rename {
     pub id: String,
     pub field: Entity<TextField>,
@@ -195,7 +195,7 @@ pub struct Workspace {
     /// The failed change: (action, message); an empty action is page-wide.
     pub shortcut_error: Option<(String, String)>,
     pub settings_page: crate::settings::Page,
-    /// 快捷键's filter field.
+    /// The shortcuts filter field.
     pub settings_filter: Entity<TextField>,
     native_sidebar: crate::native_header::NativeSidebar,
     pub store: SharedStore,
@@ -223,23 +223,23 @@ pub struct Workspace {
     pub doc_menu: bool,
     pub list_scroll: ScrollHandle,
     pub search_scroll: ScrollHandle,
-    /// 批量操作 mode: the checked docs of 我的文档, in check order.
+    /// Selection mode: checked documents in My documents, in check order.
     pub batch: Option<Vec<String>>,
     /// The open confirmation dialog.
     pub confirm: Option<Confirm>,
     pub view: View,
     pub home: crate::home::Home,
     pub settings_scroll: ScrollHandle,
-    /// 回收站 rows, refreshed when the page opens or changes.
+    /// Trash rows, refreshed when the page opens or changes.
     pub trash: Vec<crate::store::TrashEntry>,
-    /// A 回收站 row's menu: the page and where it opens.
+    /// A Trash row's menu: the page and where it opens.
     pub trash_menu: Option<(String, Point<Pixels>, Corner)>,
     /// The toast and when it appeared.
     pub toast: Option<(ToastKind, SharedString, Instant)>,
     toast_task: Option<Task<()>>,
-    /// Folded sidebar sections: 置顶, 我的文档.
+    /// Folded sidebar sections: Pinned, My documents.
     pub folded: [bool; 2],
-    /// Expanded pages of the 我的文档 tree.
+    /// Expanded pages of the My documents tree.
     pub expanded: HashSet<String>,
     pub move_dlg: Option<crate::tree::MoveDialog>,
     /// The header "…" button, which the doc menu hangs from.
@@ -247,9 +247,9 @@ pub struct Workspace {
     pub(crate) focus: FocusHandle,
     save_task: Option<Task<()>>,
     /// The open document has changes not yet on disk (cleared only by a
-    /// successful save or by 放弃修改).
+    /// successful save or by Discard changes).
     unsaved: bool,
-    /// Held back by a failed save: runs after 重试 succeeds or 放弃修改.
+    /// Held back by a failed save: runs after Retry succeeds or Discard changes.
     pub(crate) after_save: Option<AfterSave>,
     editor_subs: Vec<Subscription>,
     _subs: Vec<Subscription>,
@@ -264,7 +264,7 @@ impl Workspace {
         let mut store = cx.global::<SharedStore>().clone();
         let entries = store.list();
         let search = cx.new(|cx| {
-            let mut f = TextField::new("搜索", cx);
+            let mut f = TextField::new("Search", cx);
             f.placeholder_color = Theme::text_disabled();
             f
         });
@@ -661,7 +661,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// 收藏 / 取消收藏 (listed under 主页 → 收藏).
+    /// Favorites / Remove from favorites (listed under Home → Favorites).
     pub fn toggle_star(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { return };
         let on = e.meta.starred == 0;
@@ -674,7 +674,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Switch the main pane to 主页 or 回收站 (or back to the document).
+    /// Switch the main pane to Home or Trash (or back to the document).
     pub fn show_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.cancel_shortcut_recording(cx);
         if view == View::Trash {
@@ -690,7 +690,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A success toast (删除成功, 移动成功 …).
+    /// A success toast (Deleted successfully, Moved successfully …).
     pub fn show_toast(&mut self, msg: &str, cx: &mut Context<Self>) {
         self.show_toast_kind(ToastKind::Success, msg, cx);
     }
@@ -709,7 +709,7 @@ impl Workspace {
         crate::ui::toast_el(*kind, msg, *t0, window)
     }
 
-    /// 重命名: the row's title turns into an input; Enter or clicking away saves, Esc cancels.
+    /// Rename: the row's title turns into an input; Enter or clicking away saves, Esc cancels.
     pub fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(title) = self.entries.iter().find(|e| e.id == id).map(|e| e.title.trim().to_string()) else { return };
         let field = cx.new(|cx| {
@@ -729,7 +729,7 @@ impl Workspace {
             cx.on_blur(&focus, window, |w, window, cx| w.finish_rename(true, window, cx)),
         ];
         self.rename = Some(Rename { id: id.to_string(), field, _subs: subs });
-        // From 主页 the row may be hidden: show it in the sidebar.
+        // From Home the row may be hidden: show it in the sidebar.
         self.sidebar_open = true;
         self.reveal_in_tree(id);
         self.row_menu = None;
@@ -808,7 +808,7 @@ impl Workspace {
     }
 
     /// Save the open document before something replaces it. When the save
-    /// fails nothing is replaced: the 保存失败 dialog offers 重试 / 放弃修改
+    /// fails nothing is replaced: the Save failed dialog offers Retry / Discard changes
     /// and runs `then` after either.
     pub fn save_before(&mut self, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) -> bool {
         if self.flush(cx) {
@@ -820,7 +820,7 @@ impl Workspace {
         false
     }
 
-    /// The 保存失败 dialog's choices: `retry` saves again, otherwise the
+    /// The Save failed dialog's choices: `retry` saves again, otherwise the
     /// changes are given up. Either way the held-back action runs once the
     /// document no longer needs saving.
     pub(crate) fn resolve_save_failed(&mut self, retry: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -839,7 +839,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The error of the last failed save, for the 保存失败 dialog.
+    /// The error of the last failed save, for the Save failed dialog.
     pub(crate) fn save_error(&self) -> String {
         match &self.status {
             SaveStatus::Failed(e) => e.clone(),
@@ -851,16 +851,16 @@ impl Workspace {
 
 
 
-    /// 主页's search box, centred on the pane but never over what sits on
+    /// Home's search box, centred on the pane but never over what sits on
     /// either side of it: the title (and, with the sidebar hidden, the
-    /// traffic lights and 展开侧栏) on the left, + on the right. Below a
+    /// traffic lights and Show sidebar) on the left, + on the right. Below a
     /// usable width it is None and the caller shows a search icon instead.
     pub(crate) fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
         let title = crate::settings::label("Home");
         let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(17.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
         // page_header's left inset (26 with the sidebar, else the traffic
-        // lights plus the 4 + 28 + 12 of 展开侧栏), then 16 clear of the title.
+        // lights plus the 4 + 28 + 12 of Show sidebar), then 16 clear of the title.
         let left = if self.sidebar_open { 26. } else { theme::TRAFFIC_LIGHTS_W + 44. + if cfg!(target_os = "windows") { 32. } else { 0. } } + title_w + 16.;
         // + is 32 wide with an 8pt inset; 16 clear of it.
         let right = HEADER_ACTIONS_H + crate::ui::header_right_inset() + 16.;
@@ -1043,7 +1043,7 @@ impl Workspace {
                             .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx))),
                     )
                     .child(
-                        // Straight to a new document: no 新建 menu, as 导入 is rare.
+                        // Straight to a new document: no New menu, as Import is rare.
                         seg("doc-new", "plus").tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
                     ).into_any_element()
             )
@@ -1141,7 +1141,7 @@ impl Render for Workspace {
                 cx.notify();
             }))
             .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {
-                // Esc leaves 设置 (unless its filter field has the caret).
+                // Esc leaves Settings (unless its filter field has the caret).
                 if ev.keystroke.key == "escape" && w.view == View::Settings && !w.settings_filter.read(cx).is_focused(window) {
                     w.close_settings(cx);
                     cx.stop_propagation();
@@ -1153,7 +1153,7 @@ impl Render for Workspace {
                     cx.notify();
                 }
             }))
-            // Esc leaves 批量操作 (closing its menu or confirmation first), even from the editor.
+            // Esc leaves Selection mode (closing its menu or confirmation first), even from the editor.
             .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
                 if w.record_shortcut(ev, cx) { return; }
                 // Esc cancels a confirmation dialog.

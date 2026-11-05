@@ -20,7 +20,7 @@ fn row_menu_height(items: usize, dividers: usize) -> f32 {
 }
 
 /// Sidebar geometry (measured from the window edge), shared by the
-/// document sidebar and 设置's: selection pills start 14pt in, every row is
+/// document and Settings sidebars: selection pills start 14pt in, every row is
 /// 30pt with radius 9 on a 31pt pitch, glyphs (18pt) centre at 37pt and
 /// labels start at 54pt; groups are 16pt apart, a section header is 34pt
 /// (6 above its 28pt label).
@@ -34,10 +34,10 @@ pub(crate) const GROUP_GAP: f32 = 16.;
 pub(crate) const SECTION_H: f32 = 34.;
 pub(crate) const SECTION_TOP: f32 = 6.;
 
-/// 批量操作 caps at 50 pages.
+/// Selection mode caps at 50 pages.
 const BATCH_LIMIT: usize = 50;
 
-/// The footer row: like 主页 (same pill, glyph and label columns) under
+/// The footer row: like Home (same pill, glyph and label columns) under
 /// the footer line, so the bottom corner mirrors the top.
 pub(crate) fn footer_row(id: &'static str, glyph: &'static str, label: &'static str) -> Stateful<Div> {
     div()
@@ -149,8 +149,8 @@ impl Workspace {
             ))
             .child(div().flex_1());
 
-        // The nav is just 主页: 36px items, a blue tint when selected. Its
-        // icon column (x 17) is shared with 搜索 and the doc rows.
+        // The nav is just Home: 36px items, a blue tint when selected. Its
+        // icon column (x 17) is shared with Search and the doc rows.
         let nav_row = |id: &'static str, label: &'static str, view: View, glyph: &'static str, on_glyph: &'static str, cx: &mut Context<Self>| {
             let on = self.view == view;
             div()
@@ -179,7 +179,7 @@ impl Workspace {
             .child(nav_row("nav-library", "Library", View::Library, "library", "library", cx));
 
         let mut list = div().flex().flex_col().px(px(SB_X)).pb(px(8.));
-        // Pinned docs are shortcuts: they stay in 我的文档 too.
+        // Pinned docs are shortcuts: they stay in My documents too.
         let pinned: Vec<&Entry> = entries.iter().filter(|e| e.meta.pinned).collect();
         if !pinned.is_empty() {
             list = list.child(self.section(0, "Pinned", cx));
@@ -198,8 +198,8 @@ impl Workspace {
             }
         }
 
-        // The footer holds one row: 设置 (存储管理 and 回收站 live in 设置).
-        // The 批量操作 toolbar keeps the footer glyphs: bare on the sidebar, a rounded fill on hover.
+        // The footer holds one row: Settings (Storage and Trash live in Settings).
+        // The Selection mode toolbar keeps the footer glyphs: bare on the sidebar, a rounded fill on hover.
         let footer_btn = |id: &'static str, name: &'static str, tip: &'static str, enabled: bool, on: bool| {
             let group = SharedString::from(format!("{id}-slot"));
             div()
@@ -227,7 +227,7 @@ impl Workspace {
                 )
         };
         let some = self.batch.as_ref().is_some_and(|b| !b.is_empty());
-        // 设置; in 设置 the same row reads 返回 (`settings.rs`), so one spot toggles.
+        // Settings; in Settings the same row reads Back (`settings.rs`), so one spot toggles.
         let footer = div()
             .flex_none()
             .flex()
@@ -239,7 +239,7 @@ impl Workspace {
                         .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Settings, cx))),
                 ))
             })
-            // 批量操作 toolbar: 创建副本 | 移动到 | 删除, minus the cloud ones.
+            // Selection mode toolbar: Duplicate | Move to | Delete, minus the cloud ones.
             .when(self.batch.is_some(), |d| {
                 d.child(
                     div().h(px(46.)).mx(px(SB_X + 6. + 10. - 18.)).flex().items_center().gap(px(4.))
@@ -343,7 +343,7 @@ impl Workspace {
     }
 
     /// Section header: the title folds the list (an
-    /// arrow appears on hover); 我的文档 has "+" and 批量操作 on the right,
+    /// arrow appears on hover); My documents has "+" and Selection mode on the right,
     /// laid out so the last one lines up with the rows' "…".
     fn section(&self, idx: usize, title: &'static str, cx: &mut Context<Self>) -> Div {
         let group = SharedString::from(format!("section-{idx}"));
@@ -446,7 +446,7 @@ impl Workspace {
         })
     }
 
-    /// Check or uncheck a 我的文档 row (entering 批量操作 if needed); false
+    /// Check or uncheck a My documents row (entering Selection mode if needed); false
     /// when the 50-page limit blocks it.
     pub(crate) fn toggle_check(&mut self, id: &str) -> bool {
         self.folded[1] = false;
@@ -467,7 +467,7 @@ impl Workspace {
         self.entries.iter().filter(|e| sel.contains(&e.id)).map(|e| e.id.clone()).collect()
     }
 
-    /// 批量创建副本: a "… 副本" of each checked doc; leaves 批量操作.
+    /// Batch duplicate: a "… Copy" of each checked doc; leaves Selection mode.
     pub(crate) fn batch_copy(&mut self, cx: &mut Context<Self>) {
         let ids = self.checked();
         if ids.is_empty() {
@@ -570,7 +570,7 @@ impl Workspace {
             )
     }
 
-    /// Hover "+" (新建子页面): a new page under this one, straight away.
+    /// Hover "+" (New child page): a new page under this one, straight away.
     fn add_button(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let id = e.id.clone();
         div()
@@ -625,7 +625,7 @@ impl Workspace {
                 .into_any_element(),
         };
         let renaming = self.rename.as_ref().is_some_and(|r| r.id == e.id);
-        // 批量操作: 我的文档 rows get a checkbox and lose "…"; checked rows are tinted.
+        // Selection mode: My documents rows get a checkbox and lose "…"; checked rows are tinted.
         let batch = self.batch.as_ref().filter(|_| key == "doc");
         let checked = batch.is_some_and(|b| b.contains(&e.id));
         let blocked = batch.is_some_and(|b| !checked && b.len() >= BATCH_LIMIT);
@@ -704,7 +704,7 @@ impl Workspace {
         let item = |id, ic, label| item_c(id, ic, label, Theme::text(), Theme::text_code());
         let divider = || div().mx(px(8.)).my(px(5.)).h(px(1.)).bg(Theme::line_border());
         if m.batch {
-            // Right-click in 批量操作: the batch menu minus 添加快捷方式到, 转移所有权.
+            // Right-click in Selection mode: the batch menu minus Add shortcut to, Transfer ownership.
             let n = self.batch.as_ref().map_or(0, |b| b.len());
             let menu = popover()
                 .id("batch-menu")

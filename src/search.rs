@@ -1,6 +1,6 @@
-//! 搜索 dialog: a 540-wide white dialog with the input row, 最近浏览 / hit
+//! Search dialog: a 540-wide white dialog with the input row, Recently viewed / hit
 //! rows and a gray footer. Locally there is one owner and no sessions or
-//! spaces, so each row's extra line is just 所有者 + the opened / modified
+//! spaces, so each row's extra line is just Owner + the opened / modified
 //! times. Radius 16, quiet row fills, monochrome page glyphs.
 
 use crate::app::Workspace;
@@ -12,7 +12,7 @@ use crate::ui::{ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::ops::Range;
 
-/// How many documents 最近浏览 lists.
+/// How many documents Recently viewed lists.
 const RECENT: usize = 20;
 /// Body text kept for a hit's two-line summary.
 const SUMMARY_CHARS: usize = 160;
@@ -147,7 +147,7 @@ fn extra_segment(glyph: Option<&'static str>, text: String) -> Div {
         .child(ui_text(text))
 }
 
-/// A result's extra line: 所有者 and the opened / modified times.
+/// A result's extra line: Owner and the opened / modified times.
 pub(crate) fn extra_line(e: &Entry) -> Div {
     let mut extra = vec![extra_segment(None, "Owner: me".into())];
     if e.meta.opened > 0 {
@@ -255,7 +255,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Title hits first, then body hits; with no query, 最近浏览.
+    /// Title hits first, then body hits; with no query, Recently viewed.
     pub fn search_results(&self, cx: &App) -> Vec<&Entry> {
         let q = self.query(cx);
         if q.is_empty() {

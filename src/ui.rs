@@ -130,6 +130,14 @@ pub fn dialog(id: &'static str) -> Stateful<Div> {
 
 /// The primary button: the accent, a white 13pt semibold label, 30 tall, radius 9.
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    colored_button(id, label, false)
+}
+
+pub fn danger_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    colored_button(id, label, true)
+}
+
+fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -140,15 +148,23 @@ pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .justify_center()
         .rounded(px(9.))
         .cursor_pointer()
-        .bg(Theme::primary())
+        .bg(if danger { Theme::danger() } else { Theme::primary() })
         .shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::B600)))
-        .active(|s| s.bg(theme::c(craft::B700)))
+        .hover(move |s| s.bg(theme::c(if danger { craft::R600 } else { craft::B600 })))
+        .active(move |s| s.bg(theme::c(if danger { craft::R700 } else { craft::B700 })))
         .text_size(px(13.))
         .line_height(px(20.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(gpui::white())
         .child(crate::settings::label(label))
+}
+
+#[cfg(test)]
+mod button_tests {
+    #[test]
+    fn danger_button_constructs_without_duplicate_interaction_styles() {
+        let _ = super::danger_button("test-danger", "Delete");
+    }
 }
 
 /// The secondary button: white with a hairline and a 1px drop, 30 tall, radius 9.
@@ -370,7 +386,7 @@ impl Render for Tooltip {
 
 /// Tooltip anchored on the element rather than the mouse.
 pub trait TipExt: Sized {
-    /// Window chrome: below, shortcut in full-width parens ("展开面板（⌘ + ]）").
+    /// Window chrome: below, with the shortcut in full-width parentheses.
     fn tip(self, text: &str, keys: Option<&str>) -> Self {
         let text = crate::settings::label(text);
         let label = match keys {
@@ -443,8 +459,7 @@ impl TipExt for Stateful<Div> {
 
 
 
-/// Search result times (`space.date_format.*`): "刚刚", "N 分钟前",
-/// "今天 / 昨天 / 前天 HH:mm", "M月D日 HH:mm", across years "YYYY年M月D日".
+/// Format search result times relative to the current day.
 pub fn format_visit(secs: u64) -> String {
     let now = crate::time::now();
     let ago = now.saturating_sub(secs);

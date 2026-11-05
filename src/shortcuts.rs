@@ -36,7 +36,7 @@ static CUSTOM: std::sync::RwLock<BTreeMap<String, String>> = std::sync::RwLock::
 static HINTS: std::sync::Mutex<BTreeMap<String, &'static str>> = std::sync::Mutex::new(BTreeMap::new());
 
 /// The key hint the UI shows for `action`: `default` (its built-in key,
-/// written as the UI writes it) unless the user changed it in 设置.
+/// written as the UI writes it) unless the user changed it in Settings.
 pub fn hint(action: &str, default: &'static str) -> &'static str {
     let Some(key) = CUSTOM.read().unwrap().get(action).cloned() else { return default };
     let mut cache = HINTS.lock().unwrap();
@@ -63,32 +63,32 @@ pub fn rebuild(cx: &mut App) {
 }
 
 /// Settings groups, in order.
-const GROUPS: [(&str, &str); 5] = [("应用与窗口", "App & windows"), ("文档", "Documents"), ("编辑", "Editing"), ("文字样式", "Text styles"), ("段落与块", "Paragraphs & blocks")];
+const GROUPS: [&str; 5] = ["App & windows", "Documents", "Editing", "Text styles", "Paragraphs & blocks"];
 
-/// (group, 中文, English) of the actions shown in Settings.
-fn info(name: &str) -> Option<(usize, &'static str, &'static str)> {
+/// Group and label of the actions shown in Settings.
+fn info(name: &str) -> Option<(usize, &'static str)> {
     Some(match name.rsplit("::").next().unwrap_or(name) {
-        "NewDoc" => (0, "新建文档", "New document"),
-        "NewFolder" => (0, "新建文件夹", "New folder"),
-        "CloseWindow" => (0, "关闭窗口", "Close window"),
-        "HideApp" => (0, "隐藏 Thesio", "Hide Thesio"),
-        "Minimize" => (0, "最小化窗口", "Minimize window"),
-        "ToggleFullScreen" => (0, "进入 / 退出全屏", "Enter / exit full screen"),
-        "OpenSettings" => (0, "打开设置", "Open Settings"),
-        "GoHome" => (0, "返回主页", "Go to Home"),
-        "ToggleSidebar" => (0, "展开 / 收起侧栏", "Show / hide sidebar"),
-        "FocusSearch" => (0, "搜索文档", "Search documents"),
-        "ImportDoc" => (1, "导入文档", "Import documents"),
-        "Undo" => (2, "撤销", "Undo"),
-        "Redo" => (2, "重做", "Redo"),
-        "Copy" => (2, "复制", "Copy"),
-        "Cut" => (2, "剪切", "Cut"),
-        "Paste" => (2, "粘贴", "Paste"),
-        "SelectAll" => (2, "全选", "Select all"),
+        "NewDoc" => (0, "New document"),
+        "NewFolder" => (0, "New folder"),
+        "CloseWindow" => (0, "Close window"),
+        "HideApp" => (0, "Hide Thesio"),
+        "Minimize" => (0, "Minimize window"),
+        "ToggleFullScreen" => (0, "Enter / exit full screen"),
+        "OpenSettings" => (0, "Open Settings"),
+        "GoHome" => (0, "Go to Home"),
+        "ToggleSidebar" => (0, "Show / hide sidebar"),
+        "FocusSearch" => (0, "Search documents"),
+        "ImportDoc" => (1, "Import documents"),
+        "Undo" => (2, "Undo"),
+        "Redo" => (2, "Redo"),
+        "Copy" => (2, "Copy"),
+        "Cut" => (2, "Cut"),
+        "Paste" => (2, "Paste"),
+        "SelectAll" => (2, "Select all"),
         _ => return None,
     })
 }
-pub fn label(name: &str) -> Option<&'static str> { info(name).map(|(_, _, en)| en) }
+pub fn label(name: &str) -> Option<&'static str> { info(name).map(|(_, label)| label) }
 fn default_key(s: &Shortcuts, id: &str) -> String {
     if id.ends_with("::NewDoc") { return if cfg!(target_os = "windows") { "ctrl-n" } else { "cmd-n" }.into(); }
     s.base.iter().find(|b| b.action().name() == id).map(|b| b.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>().join(" ")).unwrap_or_default()
@@ -258,7 +258,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// 快捷键's controls on the page title's line: 全部恢复默认 (once something
+    /// Shortcut controls on the page title's line: Reset all (once something
     /// is changed) and a compact search field, like a toolbar search.
     pub(crate) fn shortcut_actions(&self, cx: &mut Context<Self>) -> AnyElement {
         let customized = cx.try_global::<Shortcuts>().is_some_and(|s| s.custom.keys().any(|k| k != "global"));
@@ -275,8 +275,8 @@ impl Workspace {
         let customized = cx.try_global::<Shortcuts>().map(|s| s.custom.keys().filter(|k| *k != "global").cloned().collect::<Vec<_>>()).unwrap_or_default();
         let mut groups: Vec<Vec<AnyElement>> = (0..GROUPS.len()).map(|_| vec![]).collect();
         for (id, title, key) in rows(cx) {
-            let Some((g, zh, en)) = info(&id) else { continue };
-            if !q.is_empty() && ![zh.to_lowercase(), en.to_lowercase(), pretty(&key).to_lowercase(), key.to_lowercase()].iter().any(|s| s.contains(&q)) { continue; }
+            let Some((g, label)) = info(&id) else { continue };
+            if !q.is_empty() && ![label.to_lowercase(), pretty(&key).to_lowercase(), key.to_lowercase()].iter().any(|s| s.contains(&q)) { continue; }
             let recording = self.shortcut_recording.as_ref() == Some(&id);
             let error = self.shortcut_error.as_ref().filter(|(e, _)| *e == id).map(|(_, m)| m.clone());
             let is_custom = customized.contains(&id);
@@ -303,7 +303,7 @@ impl Workspace {
             .children(groups.into_iter().enumerate().filter(|(_, rows)| !rows.is_empty()).map(|(g, rows)| {
                 let n = rows.len();
                 div().w_full().flex().flex_col().gap(px(8.))
-                    .child(div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(GROUPS[g].1))
+                    .child(div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(GROUPS[g]))
                     .child(div().w_full().flex().flex_col().rounded(px(12.)).border_1().border_color(Theme::line_border()).overflow_hidden()
                         .children(rows.into_iter().enumerate().map(move |(i, r)| div().w_full().flex().flex_col().when(i + 1 < n, |d| d.border_b_1().border_color(crate::ui::list_line())).child(r))))
             }))

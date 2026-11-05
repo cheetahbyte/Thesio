@@ -72,11 +72,11 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// The 移动到 dialog.
+/// The Move to dialog.
 pub struct MoveDialog {
     /// Pages being moved (each with its subtree).
     pub ids: Vec<String>,
-    /// Chosen destination: `Some(None)` is the top level of 我的文档.
+    /// Chosen destination: `Some(None)` is the top level of My documents.
     pub target: Option<Option<String>>,
     pub expanded: HashSet<String>,
     pub search: Entity<TextField>,
@@ -131,7 +131,7 @@ impl Workspace {
     pub(crate) fn open_move(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.row_menu = None;
         let search = cx.new(|cx| {
-            let mut f = TextField::new("搜索目标位置", cx);
+            let mut f = TextField::new("Search destinations", cx);
             f.placeholder_color = Theme::text_placeholder();
             f
         });
@@ -207,7 +207,7 @@ impl Workspace {
         let _ = self.store.save_settings(&settings);
     }
 
-    /// The 移动到 dialog: 我的文档 on the left, its page tree on the right.
+    /// The Move to dialog: My documents on the left, its page tree on the right.
     /// Quiet selection fills, a 30pt search field, the modal buttons.
     pub(crate) fn render_move_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dlg = self.move_dlg.as_ref()?;
@@ -349,7 +349,7 @@ impl Workspace {
         }
 
         let ready = dlg.target.is_some();
-        // 确定 waits for a target: the accent, faded, until one is picked.
+        // OK waits for a target: the accent, faded, until one is picked.
         let ok = primary_button("move-ok", "OK");
         let ok = if ready {
             ok

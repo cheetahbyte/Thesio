@@ -1,4 +1,4 @@
-//! 回收站 page and the confirmation dialogs (删除, 恢复, 彻底删除).
+//! Trash page and the confirmation dialogs (Delete, Restore, Delete permanently).
 //! Deleted pages wait in the library's `trash/` for 30 days; each row is a
 //! deleted page together with the child pages that went with it.
 
@@ -7,14 +7,14 @@ use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
 pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, row_hover, scrim, secondary_button};
-use crate::theme::{self, Theme, craft};
+use crate::theme::{self, Theme};
 use crate::ui::{ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::references::cited_keys;
 
 pub const TRASH_MENU_W: f32 = 160.;
 
-/// 剩余时间: whole days left before the automatic 彻底删除.
+/// Time remaining: whole days left before automatic permanent deletion.
 fn remaining(deleted: u64) -> String {
     let end = deleted + TRASH_DAYS * 86_400;
     let left = end.saturating_sub(crate::time::now());
@@ -82,11 +82,11 @@ impl Workspace {
         t.parent
             .as_ref()
             .and_then(|p| self.entries.iter().find(|e| &e.id == p))
-            .map_or_else(|| crate::settings::label("我的文档"), |e| display_title(&e.title))
+            .map_or_else(|| crate::settings::label("My documents"), |e| display_title(&e.title))
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let header = page_header(self, "回收站", 26., cx).child(
+        let header = page_header(self, "Trash", 26., cx).child(
             crate::ui::header_icon("trash-search", "search")
                 .tip_label("Search (⌘ + J)".into(), crate::ui::TipSide::Below)
                 .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(crate::app::FocusSearch), cx))),
@@ -115,9 +115,9 @@ impl Workspace {
             .items_center()
             .border_b_1()
             .border_color(list_line())
-            .child(col(None, "标题"))
-            .child(col(Some(168.), "位置"))
-            .child(col(Some(168.), "剩余时间"))
+            .child(col(None, "Title"))
+            .child(col(Some(168.), "Location"))
+            .child(col(Some(168.), "Time remaining"))
             .child(div().w(px(48.)).flex_none());
         let mut list = div().id("trash-list").flex_1().min_h_0().overflow_y_scroll().px(px(24.)).pb(px(24.));
         for (i, t) in self.trash.iter().enumerate() {
@@ -260,7 +260,7 @@ impl Workspace {
     }
 
     /// The confirmation dialog: a modal (white, radius 16), a 15pt
-    /// semibold title, one line of 13pt body, 取消 and the action button on
+    /// semibold title, one line of 13pt body, Cancel and the action button on
     /// the right.
     pub(crate) fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let c = self.confirm.as_ref()?;
@@ -297,8 +297,7 @@ impl Workspace {
                 false,
             ),
         };
-        let ok = primary_button("confirm-ok", action);
-        let ok = if danger { ok.bg(Theme::danger()).hover(|s| s.bg(theme::c(craft::R600))).active(|s| s.bg(theme::c(craft::R700))) } else { ok };
+        let ok = if danger { crate::ui::danger_button("confirm-ok", action) } else { primary_button("confirm-ok", action) };
         let dialog = dialog("confirm-dialog")
             .w(px(400.))
             .px(px(24.))

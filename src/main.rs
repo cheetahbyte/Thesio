@@ -71,7 +71,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
             cx.new(|cx| app::Workspace::new(document, window, cx))
         },
     );
-    if let Err(e) = result { eprintln!("无法打开文档窗口：{e}"); }
+    if let Err(e) = result { eprintln!("Could not open document window: {e}"); }
 }
 
 fn main() {

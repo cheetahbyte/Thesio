@@ -13,6 +13,10 @@ categories = ["text-editors"]
 members = ["crates/core"]
 default-members = [".", "crates/core"]
 
+# Keep macOS debug unwind data within the linker's compact-unwind limit.
+[profile.dev.package.thesio]
+opt-level = 1
+
 [dependencies]
 thesio_core = { path = "crates/core" }
 anyhow = "1.0.104"
