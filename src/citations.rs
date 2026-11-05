@@ -636,7 +636,7 @@ impl Workspace {
 
     /// Writes what the inspector holds. The fields stay as typed when the
     /// library refuses them, with the reason beside them.
-    fn save_inspector(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn save_inspector(&mut self, cx: &mut Context<Self>) {
         let Some(inspector) = &self.citations.inspector else { return };
         let key = inspector.key.clone();
         let new_key = inspector.key_field.read(cx).text.trim().to_string();

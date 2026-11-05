@@ -787,6 +787,7 @@ impl Workspace {
     /// that failed: the changes stay pending (a later save retries them) and
     /// the top bar shows the error.
     pub fn flush(&mut self, cx: &mut Context<Self>) -> bool {
+        self.save_inspector(cx);
         self.save_task = None;
         if !self.unsaved {
             return true;
