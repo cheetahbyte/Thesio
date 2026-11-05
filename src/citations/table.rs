@@ -33,6 +33,9 @@ const COLS: [(Col, &str, Option<f32>); 6] = [
     (Col::Key, "Key", Some(150.)),
 ];
 
+/// By title, ascending: the table until its header is clicked, and always the picker and `@`.
+pub(crate) const DEFAULT_SORT: (Col, bool) = (Col::Title, true);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Col { Title, Authors, Year, Kind, Tags, Key }
 
@@ -97,7 +100,7 @@ pub(crate) struct Table {
 
 impl Table {
     pub(crate) fn new(search: Entity<TextField>, cx: &mut Context<Workspace>) -> Self {
-        Self { search, sort: (Col::Title, true), selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: saved_widths(), column_drag: None }
+        Self { search, sort: DEFAULT_SORT, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: saved_widths(), column_drag: None }
     }
 }
 
@@ -105,7 +108,7 @@ impl Workspace {
     /// The table's rows, in order: the search and the tag filter applied.
     pub(crate) fn library_rows(&self, cx: &App) -> Vec<Row> {
         let query = self.citations.table.search.read(cx).text().trim().to_lowercase();
-        let mut rows = self.visible_rows(&query);
+        let mut rows = self.visible_rows(&query, self.citations.table.sort);
         if let Some(tag) = &self.citations.tag_filter { rows.retain(|row| row.tags.contains(tag)); }
         rows
     }

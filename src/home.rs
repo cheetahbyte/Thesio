@@ -79,8 +79,7 @@ impl Workspace {
         let papers = rows.iter().filter(|row| self.has_paper(&row.key)).count();
         let sources = rows.len();
         let mut uncited: Vec<_> = rows.into_iter().filter(|row| !cited.contains(&row.key)).map(|row| {
-            let title = if row.title.is_empty() { row.key.clone() } else { row.title };
-            (row.key, title)
+            (row.key.clone(), row.label().to_string())
         }).collect();
         uncited.sort_by(|a, b| a.1.cmp(&b.1));
         Overview { documents: writing.len(), words: writing.iter().map(|e| words(&without_block(&e.body))).sum(), sources, papers, uncited }

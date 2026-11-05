@@ -18,7 +18,7 @@ use crate::ui::ToastKind;
 use gpui::*;
 use inspector::Details;
 use std::path::Path;
-use table::{Table, cell};
+use table::{Col, DEFAULT_SORT, Table, cell};
 use thesio_core::paths::LIBRARY_FILE;
 use thesio_core::paths::natural_cmp;
 use thesio_core::references::note_link;
@@ -33,6 +33,14 @@ pub struct Citations {
     _subs: Vec<Subscription>,
 }
 
+/// The library, or why it could not be read.
+fn load(root: &Path) -> (Option<Library>, Option<String>) {
+    match Library::load(root) {
+        Ok(library) => (Some(library), None),
+        Err(e) => (None, Some(e.to_string())),
+    }
+}
+
 impl Citations {
     pub(crate) fn close_inspector(&mut self) { self.details.panel = None; }
 
@@ -45,10 +53,7 @@ impl Citations {
         let subs = vec![
             cx.subscribe_in(&search, window, |w, _, ev: &TextFieldEvent, window, cx| if matches!(ev, TextFieldEvent::Changed) { w.table_changed(window, cx); }),
         ];
-        let (library, error) = match Library::load(root) {
-            Ok(library) => (Some(library), None),
-            Err(e) => (None, Some(e.to_string())),
-        };
+        let (library, error) = load(root);
         let details = Details { panel: None, hidden: crate::preferences::prefs().library_details_hidden };
         Self { library, error, table: Table::new(search, cx), details, tag_filter: None, _subs: subs }
     }
@@ -56,22 +61,14 @@ impl Citations {
 
 impl Workspace {
     pub(crate) fn reload_library(&mut self) {
-        let result = Library::load(self.store.borrow().root());
-        match result {
-            Ok(library) => {
-                self.citations.library = Some(library);
-                self.citations.error = None;
-            }
-            Err(e) => {
-                self.citations.library = None;
-                self.citations.error = Some(e.to_string());
-            }
-        }
+        let (library, error) = load(self.store.borrow().root());
+        self.citations.library = library;
+        self.citations.error = error;
     }
 
-    pub(crate) fn visible_rows(&self, query: &str) -> Vec<Row> {
+    /// The rows `query` finds, in `order`.
+    pub(crate) fn visible_rows(&self, query: &str, (col, ascending): (Col, bool)) -> Vec<Row> {
         let Some(library) = &self.citations.library else { return vec![] };
-        let (col, ascending) = self.citations.table.sort;
         let mut rows: Vec<Row> = library.rows().into_iter().filter(|r| query.is_empty() || r.matches(query)).collect();
         rows.sort_by(|a, b| {
             let order = natural_cmp(&cell(a, col), &cell(b, col));
@@ -94,12 +91,12 @@ impl Workspace {
     /// as it is on disk now.
     pub(crate) fn citation_items(&mut self, query: &Query) -> Vec<Item> {
         if query.opening { self.reload_library(); }
-        let mut rows = self.visible_rows(&query.text);
+        let mut rows = self.visible_rows(&query.text, DEFAULT_SORT);
         rows.sort_by_key(|row| !row.key.to_lowercase().starts_with(&query.text));
         rows.into_iter().map(|row| Item {
             detail: [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · "),
             insert: format!("@{}", row.key),
-            title: if row.title.is_empty() { row.key } else { row.title },
+            title: row.label().to_string(),
             info: None,
             selection: None,
         }).collect()

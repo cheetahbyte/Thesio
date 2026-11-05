@@ -11,6 +11,7 @@ use crate::overlay::Overlay;
 use crate::ui::{Icon, ModalAt, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::ops::Range;
+use thesio_core::paths::is_pdf;
 
 /// How many documents Recently viewed lists.
 const RECENT: usize = 20;
@@ -127,8 +128,6 @@ pub(crate) fn summary_text(text: String, mut hits: Vec<Range<usize>>, width: f32
     StyledText::new(text).with_runs(runs)
 }
 
-pub(crate) fn entry_icon(_: &Entry) -> Div { doc_icon() }
-
 /// A page without an emoji: the monochrome page glyph (the sidebar's), in
 /// a 24 slot.
 pub(crate) fn doc_icon() -> Div {
@@ -208,7 +207,7 @@ fn hit_info(title: String, summary: Option<(String, Vec<Range<usize>>)>, detail:
 }
 
 /// A result's title (13pt semibold, hits in the link colour), summary and extra line.
-pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, width: f32, window: &Window) -> Div {
+fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, window: &Window) -> Div {
     let title = display_title(&e.title);
     let title_hit = find_ci(&title, q);
     div()
@@ -228,7 +227,7 @@ pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range
                 .text_ellipsis()
                 .child(ui_text(title).hit(title_hit, Theme::link())),
         )
-        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, width, window))))
+        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, INFO_W, window))))
         .child(extra_line(e))
 }
 
@@ -253,7 +252,7 @@ impl Workspace {
     /// thread: results fill in when it is done.
     fn index_papers(&mut self, cx: &mut Context<Self>) {
         if self.indexing_papers { return; }
-        let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| e.id.ends_with(".pdf"))
+        let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| is_pdf(&e.id))
             .filter_map(|e| Some((e.id.clone(), self.store.borrow().path(&e.id).ok()?)))
             .filter(|(id, path)| stamp(path).is_some_and(|now| self.paper_index.get(id).is_none_or(|known| known.stamp != now))).collect();
         if papers.is_empty() { return; }
@@ -351,20 +350,20 @@ impl Workspace {
 
     fn search_row(&self, hit: &Hit, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (glyph, info) = match hit {
-            Hit::Doc(e) => (entry_icon(e), result_info(e, q, snippet(&thesio_core::bibliography::without_block(&e.body), q), INFO_W, window)),
+            Hit::Doc(e) => (doc_icon(), result_info(e, q, snippet(&thesio_core::bibliography::without_block(&e.body), q), window)),
             Hit::Source(row) => {
-                let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
                 let detail = ["Source", row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
-                (kind_icon(Icon::Library), hit_info(title, None, detail, q, window))
+                (kind_icon(Icon::Library), hit_info(row.label().to_string(), None, detail, q, window))
             }
-            Hit::Highlight(_, title, highlight) => {
+            Hit::Highlight(id, title, highlight) => {
                 let text = if highlight.comment.is_empty() { highlight.quote.clone() } else { format!("{}\n{}", highlight.quote, highlight.comment) };
-                let page = if highlight.label.is_empty() { (highlight.page + 1).to_string() } else { highlight.label.clone() };
-                (kind_icon(Icon::Quote), hit_info(title.clone(), snippet(&text, q), format!("Highlight · page {page}"), q, window))
+                let place = match self.highlight_page(id, highlight) {
+                    page if page.is_empty() => "before the first page".to_string(),
+                    page => format!("page {page}"),
+                };
+                (kind_icon(Icon::Quote), hit_info(title.clone(), snippet(&text, q), format!("Highlight · {place}"), q, window))
             }
         };
-        // Result indices match keyboard selection.
-        let row = ix;
         div()
             .id(("search-hit", ix))
             .flex_none()
@@ -376,14 +375,14 @@ impl Workspace {
             .items_center()
             .rounded(px(ROW_RADIUS))
             .cursor_pointer()
-            .when(self.search_sel == Some(row), |d| d.bg(Theme::fill_hover()))
+            .when(self.search_sel == Some(ix), |d| d.bg(Theme::fill_hover()))
             .on_hover(cx.listener(move |w, hovered: &bool, _, cx| {
-                if *hovered && w.search_sel != Some(row) {
-                    w.search_sel = Some(row);
+                if *hovered && w.search_sel != Some(ix) {
+                    w.search_sel = Some(ix);
                     cx.notify();
                 }
             }))
-            .on_click(cx.listener(move |w, _, window, cx| w.pick_search(row, window, cx)))
+            .on_click(cx.listener(move |w, _, window, cx| w.pick_search(ix, window, cx)))
             .child(glyph)
             .child(info)
     }

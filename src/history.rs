@@ -7,8 +7,10 @@ use crate::library::Library;
 use crate::theme::{self, Theme, craft};
 use crate::overlay::Overlay;
 use crate::ui::{ModalAt, ToastKind, dialog, format_visit, list_line, modal, primary_button, secondary_button, ui_para, ui_text};
+use anyhow::Context as _;
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::diff::{DiffLine, LineKind, diff};
+use thesio_core::history::Versions;
 use thesio_core::paths::base_name;
 
 const WIDTH: f32 = 960.;
@@ -17,9 +19,14 @@ const LIST_W: f32 = 220.;
 const LINE_H: f32 = 19.;
 const SIGN_W: f32 = 16.;
 
+/// What a History dialog is about.
+enum Target {
+    Document(String),
+    Library,
+}
+
 pub struct History {
-    /// The library rather than the open document.
-    library: bool,
+    target: Target,
     versions: Vec<u64>,
     selected: usize,
     diff: Vec<DiffLine>,
@@ -35,18 +42,25 @@ impl Workspace {
 
     pub(crate) fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
-        if !self.flush(cx) { return; }
-        let versions = self.store.borrow().versions(&id).map_or(vec![], |versions| versions.list());
-        self.open_overlay(Overlay::History(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) }), window, cx);
-        self.show_version(0, cx);
+        if self.flush(cx) { self.open_versions(Target::Document(id), window, cx); }
     }
 
     pub(crate) fn open_library_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_inspector(cx);
-        let Some(library) = &self.citations.library else { return };
-        let versions = library.versions().list();
-        self.open_overlay(Overlay::History(History { library: true, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) }), window, cx);
+        if self.citations.library.is_some() { self.open_versions(Target::Library, window, cx); }
+    }
+
+    fn open_versions(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        let versions = self.versions_of(&target).map_or(vec![], |versions| versions.list());
+        self.open_overlay(Overlay::History(History { target, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) }), window, cx);
         self.show_version(0, cx);
+    }
+
+    fn versions_of(&self, target: &Target) -> anyhow::Result<Versions> {
+        match target {
+            Target::Document(id) => self.store.borrow().versions(id),
+            Target::Library => self.citations.library.as_ref().map(Library::versions).context("The library could not be read"),
+        }
     }
 
     fn history(&self) -> Option<&History> {
@@ -65,18 +79,14 @@ impl Workspace {
 
     /// What the dialog compares against.
     fn history_text(&self, cx: &App) -> Option<String> {
-        match self.history()?.library {
-            true => self.citations.library.as_ref().map(Library::text),
-            false => self.text_of(self.current.as_ref()?, cx).ok(),
+        match &self.history()?.target {
+            Target::Document(id) => self.text_of(id, cx).ok(),
+            Target::Library => self.citations.library.as_ref().map(Library::text),
         }
     }
 
     fn version_text(&self, time: u64) -> anyhow::Result<String> {
-        match (self.history().is_some_and(|history| history.library), &self.citations.library, &self.current) {
-            (true, Some(library), _) => library.versions().read(time),
-            (false, _, Some(id)) => self.store.borrow().versions(id)?.read(time),
-            _ => anyhow::bail!("Nothing is open"),
-        }
+        self.versions_of(&self.history().context("No history is open")?.target)?.read(time)
     }
 
     fn show_version(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -102,21 +112,29 @@ impl Workspace {
     /// the editor can undo it.
     fn restore_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(history) = self.history() else { return };
-        let library = history.library;
         let Some(time) = history.versions.get(history.selected).copied() else { return };
+        let document = match &history.target {
+            Target::Document(id) => Some(id.clone()),
+            Target::Library => None,
+        };
         let text = match self.version_text(time) {
             Ok(text) => text,
             Err(e) => return self.show_toast_kind(ToastKind::Error, &e.to_string(), cx),
         };
-        if library {
-            if let Err(e) = self.citations.library.as_mut().map_or(Ok(()), |library| library.restore(&text)) {
-                return self.show_toast_kind(ToastKind::Error, &format!("Could not restore the library: {e}"), cx);
+        match document {
+            None => {
+                if let Err(e) = self.citations.library.as_mut().map_or(Ok(()), |library| library.restore(&text)) {
+                    return self.show_toast_kind(ToastKind::Error, &format!("Could not restore the library: {e}"), cx);
+                }
+                self.library_restored(&text, window, cx);
             }
-            self.library_restored(&text, window, cx);
-        } else {
-            let (Some(id), Some(current)) = (self.current.clone(), self.history_text(cx)) else { return };
-            self.keep_version(&id, &current, true, cx);
-            if let Err(e) = self.write_document(&id, &text, Edit::Undoable, cx) { self.show_toast_kind(ToastKind::Error, &format!("Could not save {id}: {e}"), cx); }
+            Some(id) => {
+                let Some(current) = self.history_text(cx) else { return };
+                self.keep_version(&id, &current, true, cx);
+                if let Err(e) = self.write_document(&id, &text, Edit::Undoable, cx) {
+                    return self.show_toast_kind(ToastKind::Error, &format!("Could not save {id}: {e}"), cx);
+                }
+            }
         }
         self.close_overlay(window, cx);
         self.show_toast(&format!("Restored the version from {}", format_visit(time)), cx);
@@ -156,7 +174,10 @@ impl Workspace {
             })).flex_1().min_h_0();
             div().flex_1().min_w_0().flex().flex_col().py(px(8.)).child(changes).into_any_element()
         };
-        let title = if history.library { "the Library".to_string() } else { self.current.as_deref().map_or("", base_name).to_string() };
+        let title = match &history.target {
+            Target::Document(id) => base_name(id),
+            Target::Library => "the Library",
+        };
         let can_restore = !history.diff.is_empty();
         let panel = dialog("history").w(px(WIDTH)).h(px(HEIGHT)).flex().flex_col()
             .child(div().flex_none().px(px(20.)).py(px(14.)).border_b_1().border_color(list_line()).flex().flex_col().gap(px(2.))

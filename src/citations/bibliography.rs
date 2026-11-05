@@ -29,14 +29,16 @@ impl Workspace {
     pub(crate) fn sync_bibliographies(&mut self, cx: &mut Context<Self>) {
         let Some(library) = &self.citations.library else { return };
         let documents: Vec<String> = self.entries.iter().filter(|e| e.typst && bibliography::block_range(&e.body).is_some()).map(|e| e.id.clone()).collect();
-        let mut updates = vec![];
+        let (mut updates, mut failed) = (vec![], vec![]);
         for id in documents {
             let keys: BTreeSet<String> = self.cited_in(&id, cx).into_iter().filter(|k| library.contains(k)).collect();
-            let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.text_of(&id, cx)) else { continue };
-            if let Some(updated) = bibliography::sync_block(&text, &yaml) {
-                updates.push((id, updated));
+            match library.subset(&keys).and_then(|yaml| Ok(bibliography::sync_block(&self.text_of(&id, cx)?, &yaml))) {
+                Ok(Some(updated)) => updates.push((id, updated)),
+                Ok(None) => {}
+                Err(e) => failed.push(format!("Could not update the bibliography in {id}: {e:#}")),
             }
         }
+        self.show_warnings(&failed, cx);
         for (id, text) in updates {
             if let Err(e) = self.write_document(&id, &text, Edit::Generated, cx) {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the bibliography in {id}: {e}"), cx);
@@ -51,7 +53,7 @@ impl Workspace {
     /// Switches the open document's bibliography as one undoable edit.
     pub(crate) fn set_bibliography(&mut self, target: Mode, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
-        let Ok(text) = self.text_of(&id, cx) else { return };
+        let Some(text) = self.read_document(&id, cx) else { return };
         let text = bibliography::remove(&text, &id);
         let text = match target {
             Mode::Embedded => bibliography::embed(&text, ""),
@@ -80,7 +82,7 @@ impl Workspace {
     /// Gives the open file's bibliography a citation style.
     pub(crate) fn set_citation_style(&mut self, style: &str, cx: &mut Context<Self>) {
         let Some((doc, _)) = self.style_owner(cx) else { return };
-        let Some(updated) = self.text_of(&doc, cx).ok().and_then(|text| bibliography::set_style(&text, style)) else { return };
+        let Some(updated) = self.read_document(&doc, cx).and_then(|text| bibliography::set_style(&text, style)) else { return };
         if let Err(e) = self.write_document(&doc, &updated, Edit::Undoable, cx) {
             self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
         }
@@ -95,11 +97,12 @@ impl Workspace {
     /// Embeds a bibliography in `id`'s top-level document unless the document
     /// or any file above it already has one.
     pub(crate) fn ensure_bibliography(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.bibliography_mode(cx) != Mode::None { return; }
+        let Some(text) = self.read_document(id, cx) else { return };
+        if bibliography::mode(&text, id) != Mode::None { return; }
         let documents = self.documents(cx);
         if documents.includers(id).iter().any(|doc| self.text_of(doc, cx).is_ok_and(|text| bibliography::mode(&text, doc) != Mode::None)) { return; }
         let top = documents.top_document(id);
-        let Ok(text) = self.text_of(&top, cx) else { return };
+        let Some(text) = self.read_document(&top, cx) else { return };
         if let Err(e) = self.write_document(&top, &bibliography::embed(&text, ""), Edit::Generated, cx) {
             self.show_toast_kind(ToastKind::Error, &format!("Could not add a bibliography to {top}: {e}"), cx);
         }
@@ -131,7 +134,7 @@ impl Workspace {
     pub(crate) fn rename_citations(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
         let mut changed = 0;
         for id in self.entries.iter().filter(|e| e.typst).map(|e| e.id.clone()).collect::<Vec<_>>() {
-            let Ok(text) = self.text_of(&id, cx) else { continue };
+            let Some(text) = self.read_document(&id, cx) else { continue };
             let Some(updated) = rename_citation(&text, old, new) else { continue };
             if let Err(e) = self.write_document(&id, &updated, Edit::Undoable, cx) {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the citation in {id}: {e}"), cx);

@@ -2,7 +2,6 @@
 
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::paper_file;
 use crate::native_pdf::Highlight;
 use crate::overlay::Overlay;
 use crate::source::SourceEditor;
@@ -35,12 +34,11 @@ impl Workspace {
 
     pub(crate) fn open_quote(&mut self, highlight: Highlight, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.papers.current.clone() else { return };
-        let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
-        let Some(key) = row.map(|row| row.key) else {
+        let Some(key) = self.paper_row(&id).map(|row| row.key) else {
             return self.show_toast_kind(ToastKind::Error, "Link this paper to a source to quote it", cx);
         };
         self.papers.pdf.release_keys();
-        let page = self.highlight_page(&highlight);
+        let page = self.highlight_page(&id, &highlight);
         let text = clean_quote(&highlight.quote);
         let text_field = cx.new(|cx| {
             let mut f = TextField::new("Quotation", cx);

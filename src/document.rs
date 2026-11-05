@@ -26,6 +26,11 @@ impl Workspace {
         }
     }
 
+    /// `text_of`, with a toast when it fails.
+    pub(crate) fn read_document(&mut self, id: &str, cx: &mut Context<Self>) -> Option<String> {
+        self.text_of(id, cx).map_err(|e| self.show_toast_kind(ToastKind::Error, &format!("{e:#}"), cx)).ok()
+    }
+
     /// Gives `text` to the editors showing `id`.
     pub(crate) fn show_text(&mut self, id: &str, text: &str, edit: Edit, cx: &mut Context<Self>) {
         let open = self.editor.clone().filter(|_| self.current.as_deref() == Some(id));
@@ -118,9 +123,11 @@ impl Workspace {
         !self.unsaved
     }
 
-    /// Everything that waits for a save: the Library's panel and the open document.
+    /// Everything that waits for a save: the Library's panel, a paper's notes,
+    /// and the open document.
     pub(crate) fn save_all(&mut self, cx: &mut Context<Self>) -> bool {
         self.save_inspector(cx);
+        self.flush_notes(cx);
         self.flush(cx)
     }
 

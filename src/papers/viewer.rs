@@ -70,15 +70,16 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn highlight_page(&self, highlight: &Highlight) -> String {
-        let offset = self.papers.current.as_ref().and_then(|id| self.entries.iter().find(|e| e.id == *id)).and_then(|e| e.meta.page_offset);
+    /// The page of a highlight in paper `id`, as printed.
+    pub(crate) fn highlight_page(&self, id: &str, highlight: &Highlight) -> String {
+        let offset = self.entries.iter().find(|e| e.id == id).and_then(|e| e.meta.page_offset);
         printed_page(&highlight.label, highlight.page, offset.unwrap_or(0))
     }
 
     pub(crate) fn render_highlight(&self, index: usize, highlight: Highlight, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.papers.panel.comment.as_ref().filter(|(target, _, _)| *target == highlight).map(|(_, field, _)| field.clone());
         let (open, edit, delete, quote) = (highlight.clone(), highlight.clone(), highlight.clone(), highlight.clone());
-        let page = match self.highlight_page(&highlight) {
+        let page = match self.highlight_page(self.papers.current.as_deref().unwrap_or_default(), &highlight) {
             page if page.is_empty() => "Before the first page".to_string(),
             page => format!("Page {page}"),
         };

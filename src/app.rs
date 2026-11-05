@@ -266,7 +266,7 @@ impl Workspace {
 
     /// Shows `id`, once the open document is safely saved.
     pub fn open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let paper = id.ends_with(".pdf") && crate::native_pdf::supported();
+        let paper = crate::papers::opens_in_viewer(id);
         if self.view != View::Doc && !paper { self.set_view(View::Doc, cx); }
         if self.current.as_deref() == Some(id) {
             return;
@@ -281,7 +281,7 @@ impl Workspace {
     /// Replaces the open document with `id`, which holds nothing unsaved.
     fn load_document(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_overlay(cx);
-        if id.ends_with(".pdf") && crate::native_pdf::supported() {
+        if crate::papers::opens_in_viewer(id) {
             return self.open_paper(id, window, cx);
         }
         let loaded = self.store.borrow().load(id);
@@ -538,7 +538,7 @@ impl Workspace {
 
     /// Asks where to save, then compiles the document's current text to a PDF.
     pub fn export_pdf(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Ok(text) = self.text_of(id, cx) else { return };
+        let Some(text) = self.read_document(id, cx) else { return };
         let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(crate::store::UNTITLED, |e| e.title.as_str()));
         let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
         let picked = crate::system::pick_new_path(&root, &name, cx);

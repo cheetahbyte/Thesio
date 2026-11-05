@@ -1,8 +1,9 @@
 //! The source picker: cites, or chooses the source for a paper.
 
+use super::table::DEFAULT_SORT;
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::{PAPERS_DIR, Row, paper_file};
+use crate::library::{Row, paper_file, paper_named};
 use crate::overlay::Overlay;
 use crate::theme::Theme;
 use crate::ui::{ModalAt, dialog, modal, plain_button, search_well, ui_text};
@@ -74,7 +75,7 @@ impl Workspace {
 
     pub(crate) fn picker_rows(&self, picker: &CitePicker, cx: &App) -> Vec<Row> {
         let query = picker.field.read(cx).text().trim().to_lowercase();
-        let mut rows = self.visible_rows(&query);
+        let mut rows = self.visible_rows(&query, DEFAULT_SORT);
         // A source holds one paper.
         if !matches!(picker.purpose, PickFor::Cite) { rows.retain(|row| !self.has_paper(&row.key)); }
         rows.truncate(PICKER_ROWS);
@@ -88,7 +89,7 @@ impl Workspace {
             let key = row.key.clone();
             div().id(("cite-row", i)).px(px(12.)).py(px(6.)).rounded(px(8.)).cursor_pointer().flex().flex_col()
                 .when(i == picker.selected, |d| d.bg(Theme::fill_hover_strong()))
-                .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(if row.title.is_empty() { row.key.clone() } else { row.title.clone() })))
+                .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(row.label().to_string())))
                 .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(Theme::text_caption()).child(format!("{} · {} · @{}", row.authors, row.year, row.key)))
                 .on_click(cx.listener(move |w, _, window, cx| w.pick_source(&key, window, cx)))
         }).collect::<Vec<_>>();
@@ -102,7 +103,7 @@ impl Workspace {
             .when_some(unlinked, |d, path| d.child(div().flex().child(plain_button("picker-unlinked", "Add Without a Source").on_click(cx.listener(move |w, _, window, cx| {
                 w.close_overlay(window, cx);
                 let name = path.file_stem().map_or("paper".into(), |name| name.to_string_lossy().into_owned());
-                w.attach_paper(&path, &format!("{PAPERS_DIR}/{name}.pdf"), cx);
+                w.attach_paper(&path, &paper_named(&name), cx);
             })))));
         modal("cite-scrim", ModalAt::Top, true, panel, cx)
     }

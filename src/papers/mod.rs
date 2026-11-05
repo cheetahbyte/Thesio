@@ -6,7 +6,7 @@ mod sources;
 pub(crate) mod viewer;
 
 use crate::app::{View, Workspace};
-use crate::library::{PAPERS_DIR, note_file, paper_file};
+use crate::library::{self, PAPERS_DIR, Row, note_file, paper_file};
 use crate::ui::ToastKind;
 use gpui::*;
 use std::cell::Cell;
@@ -14,7 +14,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use thesio_core::lookup;
-use thesio_core::paths::base_name;
+use thesio_core::paths::{PDF_HEADER, base_name, is_pdf};
+
+/// Whether `id` opens in the app's own viewer. Any PDF in the vault does.
+pub(crate) fn opens_in_viewer(id: &str) -> bool { is_pdf(id) && crate::native_pdf::supported() }
 
 /// The open paper and the viewer, and the downloads under way.
 #[derive(Default)]
@@ -32,7 +35,7 @@ pub struct Papers {
 impl Workspace {
     /// The ids of the papers in the vault.
     pub(crate) fn paper_ids(&self) -> BTreeSet<String> {
-        self.entries.iter().filter(|e| !e.folder && e.parent.as_deref() == Some(PAPERS_DIR)).map(|e| e.id.clone()).collect()
+        self.entries.iter().filter(|e| !e.folder && e.parent.as_deref() == Some(PAPERS_DIR) && is_pdf(&e.id)).map(|e| e.id.clone()).collect()
     }
 
     pub(crate) fn has_paper(&self, key: &str) -> bool {
@@ -53,10 +56,15 @@ impl Workspace {
         if let Ok(path) = self.store.borrow().path(id) { crate::system::open_with_system(&path, cx); }
     }
 
+    /// The source a paper belongs to.
+    pub(crate) fn paper_row(&self, id: &str) -> Option<Row> {
+        let rows = self.citations.library.as_ref()?.rows();
+        library::row_of_paper(&rows, id).cloned()
+    }
+
     /// The name a paper goes by: its source's title, or its file name.
     pub(crate) fn paper_title(&self, id: &str) -> String {
-        let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
-        row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| base_name(id).to_string())
+        self.paper_row(id).map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| base_name(id).to_string())
     }
 
     pub(crate) fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
@@ -74,7 +82,7 @@ impl Workspace {
             std::io::Read::read_exact(&mut file, &mut head)?;
             Ok(head)
         });
-        if !result.is_ok_and(|head| head == *b"%PDF-") {
+        if !result.is_ok_and(|head| head == *PDF_HEADER) {
             return self.show_toast_kind(ToastKind::Error, "That file is not a PDF", cx);
         }
         let result = self.store.borrow_mut().attach(path, id);

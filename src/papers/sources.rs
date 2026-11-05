@@ -4,7 +4,7 @@ use crate::app::Workspace;
 use crate::sidebar::RowMenu;
 use crate::citations::picker::PickFor;
 use crate::citations::table::{CELL_X, Col, ROW_H, TABLE_X, column, column_spec};
-use crate::library::{Library, Row, paper_file};
+use crate::library::{Library, Row, row_of_paper};
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme};
 use crate::ui::{Icon, TipExt, TitleBarExt, list_header_text, list_line, page_header, primary_icon_button, ui_text};
@@ -14,8 +14,8 @@ use thesio_core::paths::{base_name, natural_cmp};
 impl Workspace {
     pub(crate) fn render_sources(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.citations.library.as_ref().map_or(vec![], Library::rows);
-        let mut papers: Vec<(String, Option<Row>, String)> = self.paper_ids().into_iter().filter(|id| id.ends_with(".pdf")).map(|id| {
-            let row = rows.iter().find(|row| paper_file(&row.key) == id).cloned();
+        let mut papers: Vec<(String, Option<Row>, String)> = self.paper_ids().into_iter().map(|id| {
+            let row = row_of_paper(&rows, &id).cloned();
             let title = row.as_ref().map(|row| row.title.clone()).filter(|title| !title.is_empty())
                 .unwrap_or_else(|| base_name(&id).to_string());
             (id, row, title)
