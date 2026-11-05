@@ -4,7 +4,7 @@
 use crate::theme::Theme;
 use gpui::{prelude::FluentBuilder, *};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thesio_core::compiler::{Compiler, Diagnostic, render_changed};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
@@ -36,6 +36,8 @@ pub struct Preview {
     open_path: String,
     /// The document to compile: the open file, or the one that includes it.
     main: String,
+    /// How long the last good compile took, rendering included.
+    took: Option<Duration>,
 }
 
 impl EventEmitter<PreviewEvent> for Preview {}
@@ -51,6 +53,7 @@ impl Preview {
             width: Arc::new(Mutex::new(0.)),
             open_path: path,
             main,
+            took: None,
         }
     }
 
@@ -72,6 +75,7 @@ impl Preview {
             if stale { return; }
             let result = cx.background_spawn(async move {
                 let mut compiler = compiler.lock().unwrap();
+                let started = Instant::now();
                 compiler.set_buffer(&path, text)?;
                 let compilation = compiler.compile(&main)?;
                 let pages = compilation.document.as_ref().map(|document| {
@@ -85,7 +89,7 @@ impl Preview {
                     }).collect::<Vec<_>>();
                     (rendered, sizes)
                 });
-                anyhow::Ok((pages, compilation.diagnostics))
+                anyhow::Ok((pages, compilation.diagnostics, started.elapsed()))
             }).await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation == generation { this.finish(result, cx); }
@@ -93,12 +97,13 @@ impl Preview {
         }).detach();
     }
 
-    fn finish(&mut self, result: anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32)>)>, Vec<Diagnostic>)>, cx: &mut Context<Self>) {
-        let (pages, diagnostics) = match result {
+    fn finish(&mut self, result: anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32)>)>, Vec<Diagnostic>, Duration)>, cx: &mut Context<Self>) {
+        let (pages, diagnostics, took) = match result {
             Ok(result) => result,
-            Err(error) => (None, vec![Diagnostic { error: true, message: format!("{error:#}"), hints: vec![], path: None, range: None, line: None }]),
+            Err(error) => (None, vec![Diagnostic { error: true, message: format!("{error:#}"), hints: vec![], path: None, range: None, line: None }], Duration::ZERO),
         };
         self.diagnostics = diagnostics;
+        self.took = pages.is_some().then_some(took);
         // A failed compile keeps the last good pages on screen.
         if let Some((rendered, sizes)) = pages {
             let mut old = std::mem::take(&mut self.pages);
@@ -110,6 +115,11 @@ impl Preview {
         }
         cx.notify();
     }
+}
+
+fn format_took(took: Duration) -> String {
+    let ms = took.as_millis();
+    if ms < 1000 { format!("{ms} ms") } else { format!("{:.1} s", took.as_secs_f32()) }
 }
 
 impl Render for Preview {
@@ -131,8 +141,10 @@ impl Render for Preview {
                 .on_click(cx.listener(move |_, _, _, cx| if let Some(offset) = target { cx.emit(PreviewEvent::Jump(offset)); }))
         }).collect::<Vec<_>>();
         div().relative().size_full().flex().flex_col().bg(Theme::sidebar_hover())
-            .child(div().id("preview-pages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
-                .flex().flex_col().items_center().gap(px(PAGE_GAP)).p(px(PAD)).children(pages))
+            .child(div().relative().flex_1().min_h_0()
+                .child(div().id("preview-pages").size_full().overflow_y_scroll().track_scroll(&self.scroll)
+                    .flex().flex_col().items_center().gap(px(PAGE_GAP)).p(px(PAD)).children(pages))
+                .children(self.took.map(|took| div().absolute().right(px(12.)).bottom(px(8.)).text_size(px(11.)).line_height(px(14.)).text_color(Theme::text_caption()).child(format_took(took)))))
             .when(!problems.is_empty(), |d| d.child(div().id("preview-problems").flex_none().max_h(px(160.)).overflow_y_scroll().py(px(6.)).bg(Theme::bg_body()).children(problems)))
             .child(canvas(move |bounds, _, cx| {
                 let mut stored = width.lock().unwrap();

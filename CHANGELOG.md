@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show how long the last compile took in the corner of the preview.
 - Turn Home into an overview of the vault: recent documents, favorites, counts, and sources not cited yet.
 - Remove the Shortcuts page from Settings. Shortcuts keep working, and keys saved earlier still apply.
 - Draw indent lines under open folders in the sidebar.
