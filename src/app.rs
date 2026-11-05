@@ -6,6 +6,7 @@ use crate::confirm::Confirm;
 use crate::document::Edit;
 use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
+use crate::session::DocumentSession;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::display_title;
@@ -174,6 +175,8 @@ pub struct Workspace {
     pub entries: Vec<Entry>,
     pub current: Option<String>,
     pub editor: Option<Entity<SourceEditor>>,
+    /// The open document's compiles, which `preview` shows.
+    pub session: Option<Entity<DocumentSession>>,
     pub preview: Option<Entity<Preview>>,
     pub citations: crate::citations::Citations,
     pub search: Entity<TextField>,
@@ -288,6 +291,7 @@ impl Workspace {
             entries,
             current: None,
             editor: None,
+            session: None,
             preview: None,
             citations,
             search,
@@ -388,13 +392,17 @@ impl Workspace {
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.borrow().root().to_path_buf();
         let main = self.top_document(id, cx);
-        let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string(), main)));
-        if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
+        let session = typst.then(|| cx.new(|_| DocumentSession::with_pages(root, id.to_string(), main)));
+        let preview = session.as_ref().map(|session| cx.new(|cx| Preview::new(session.clone(), cx)));
+        if let Some(session) = &session {
+            editor.update(cx, |editor, _| editor.set_session(session.clone()));
+            session.update(cx, |session, cx| session.set_text(text, cx));
+        }
         self.editor_subs = vec![
             cx.subscribe_in(&editor, window, |this, editor, event: &SourceEvent, window, cx| match event {
                 SourceEvent::Changed => {
                     let text = editor.read(cx).buffer.text().to_string();
-                    if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
+                    if let Some(session) = &this.session { session.update(cx, |session, cx| session.set_text(text, cx)); }
                     this.schedule_save(window, cx);
                 }
                 SourceEvent::Caret => {
@@ -429,6 +437,7 @@ impl Workspace {
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not record opening {id}: {e}"), cx),
         }
         self.editor = Some(editor);
+        self.session = session;
         self.preview = preview;
         self.current = Some(id.to_string());
         self.keep_version(id, &opened_text, true, cx);
@@ -449,7 +458,7 @@ impl Workspace {
             self.current = Some(path.clone());
             let main = self.top_document(&path, cx);
             self.outline_root = paths::is_document(&path).then(|| main.clone());
-            if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
+            if let Some(session) = &self.session { session.update(cx, |session, _| session.set_path(path, main)); }
         }
         self.papers.panel.path_changed(old, new);
         self.paper_index = std::mem::take(&mut self.paper_index).into_iter().map(|(id, paper)| (paths::moved(&id, old, new).unwrap_or(id), paper)).collect();
@@ -586,6 +595,7 @@ impl Workspace {
             self.unsaved = false;
             self.current = None;
             self.editor = None;
+            self.session = None;
             self.preview = None;
             self.editor_subs.clear();
         }

@@ -2,12 +2,14 @@
 //! wrapped, with the selection and caret painted by each row.
 
 use crate::library::Row;
+use crate::session::DocumentSession;
 use crate::theme::{self, MONO_FONT, Theme, c, craft};
 use crate::ui::{MENU_PAD_Y, ROW_RADIUS, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 use thesio_core::buffer::{Buffer, EditKind};
 use thesio_core::bibliography;
+use thesio_core::compiler::Compilation;
 use thesio_core::references::{citation_at, note_link_at};
 use thesio_core::syntax::{SyntaxTag, highlights};
 
@@ -147,6 +149,9 @@ pub struct SourceEditor {
     completion: Option<Completion>,
     /// The `@` whose popup was accepted or dismissed: it stays closed there.
     settled: Option<usize>,
+    /// This text's compiles. Paper notes have none yet: `DocumentSession::without_pages`
+    /// makes one, with the note as its own main file.
+    session: Option<Entity<DocumentSession>>,
 }
 
 impl EventEmitter<SourceEvent> for SourceEditor {}
@@ -160,7 +165,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { notes: vec![], listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
+        let mut editor = Self { notes: vec![], listed: buffer.text().to_string(), reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None, session: None };
         editor.refold();
         editor
     }
@@ -195,6 +200,14 @@ impl SourceEditor {
     }
 
     pub fn focus(&self, window: &mut Window) { window.focus(&self.focus); }
+
+    pub fn set_session(&mut self, session: Entity<DocumentSession>) { self.session = Some(session); }
+
+    /// The newest compile of this text, for autocomplete, hover, and diagnostics.
+    #[expect(dead_code, reason = "the first reader is Typst autocomplete")]
+    pub fn compilation(&self, cx: &App) -> Option<Arc<Compilation>> {
+        self.session.as_ref()?.read(cx).newest().cloned()
+    }
 
     /// Moves the caret, as when a diagnostic is clicked.
     pub fn go_to(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {

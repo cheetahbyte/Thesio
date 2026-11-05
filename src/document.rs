@@ -46,7 +46,7 @@ impl Workspace {
         if open { self.unsaved = true; }
         self.commit(id, text)?;
         if open { self.saved(); }
-        if !open || edit == Edit::Generated { self.refresh_preview(cx); }
+        if !open || edit == Edit::Generated { self.recompile(cx); }
         cx.notify();
         Ok(())
     }
@@ -65,10 +65,10 @@ impl Workspace {
         self.unsaved = false;
     }
 
-    fn refresh_preview(&mut self, cx: &mut Context<Self>) {
-        let (Some(editor), Some(preview)) = (self.editor.clone(), self.preview.clone()) else { return };
+    fn recompile(&mut self, cx: &mut Context<Self>) {
+        let (Some(editor), Some(session)) = (self.editor.clone(), self.session.clone()) else { return };
         let text = editor.read(cx).buffer.text().to_string();
-        preview.update(cx, |p, cx| p.update(text, cx));
+        session.update(cx, |session, cx| session.set_text(text, cx));
     }
 
     /// Writes the open document again after text changed without an edit.

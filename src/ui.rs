@@ -284,6 +284,17 @@ pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
         .active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
 }
 
+/// A count with thousands set apart: 18,420.
+pub fn format_count(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) { out.push(','); }
+        out.push(digit);
+    }
+    out
+}
+
 /// Toolbar buttons that belong together.
 pub fn toolbar_group() -> Div {
     div().flex_none().flex().items_center().gap(px(2.))

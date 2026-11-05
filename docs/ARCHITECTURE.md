@@ -22,7 +22,8 @@ main.rs: window
     source.rs: SourceEditor, the open file's text
       buffer.rs: text, selection, undo [core]
       syntax.rs: highlighting from Typst's parser [core]
-    preview.rs: Preview, the rendered pages and diagnostics
+    preview.rs: Preview, the view of the pages and diagnostics
+    session.rs: DocumentSession, one document's compiles and its newest result
       compiler.rs: the Typst World, PDF export, page images [core]
 ```
 
@@ -52,9 +53,10 @@ main.rs: window
 
 1. `SourceEditor` turns keys, mouse events, and input-method text into `Buffer` edits.
 2. It recomputes highlights and emits `SourceEvent::Changed`.
-3. `Workspace` passes the text to `Preview` and schedules a save 500 ms later.
-4. `Preview` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `preview::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
+3. `Workspace` passes the text to the `DocumentSession` and schedules a save 500 ms later.
+4. `DocumentSession` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `session::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
 5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
+6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last. The editor holds the same session and reads its newest result from `SourceEditor::compilation`. An editor with no `Preview`, such as paper notes, can get a session from `DocumentSession::without_pages`, which compiles and renders no pages.
 
 A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document.
 

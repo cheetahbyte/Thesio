@@ -48,13 +48,13 @@ impl Workspace {
 
     /// Words by file, with the open file marked.
     pub(crate) fn render_word_count(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let words = self.preview.as_ref()?.read(cx).words.clone();
+        let words = self.session.as_ref()?.read(cx).words().to_vec();
         let total: usize = words.iter().map(|(_, words)| words).sum();
         let row = |name: String, count: usize, strong: bool| {
             div().h(px(28.)).flex().items_center().gap(px(16.)).text_size(px(13.))
                 .when(strong, |d| d.font_weight(FontWeight::SEMIBOLD))
                 .child(div().flex_1().min_w_0().truncate().child(crate::ui::ui_text(name)))
-                .child(div().flex_none().text_color(Theme::text_caption()).child(crate::preview::format_count(count)))
+                .child(div().flex_none().text_color(Theme::text_caption()).child(crate::ui::format_count(count)))
         };
         let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current.as_ref() == Some(path))).collect::<Vec<_>>();
         let panel = crate::ui::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()

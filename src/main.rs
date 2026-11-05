@@ -31,6 +31,7 @@ mod papers;
 mod preferences;
 mod preview;
 mod search;
+mod session;
 mod sidebar;
 mod source;
 mod settings;
@@ -95,7 +96,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
 
 fn main() {
     startup::mark("main");
-    preview::prepare();
+    session::prepare();
     let scripted = std::env::var_os("THESIO_SCRIPT").is_some();
     // No single-instance guard: copies may share a library (builds tested
     // side by side). `Store` rereads an index another copy rewrote before
