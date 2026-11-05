@@ -14,11 +14,12 @@ Thesio/
 │   ├── trash.json         Trash key to Trashed
 │   ├── settings.json      Window state and open folders
 │   ├── preferences.json   Appearance
-│   └── shortcuts.json     Custom shortcuts
+│   ├── shortcuts.json     Custom shortcuts
+│   └── history/<id>/<time>.typ  Earlier versions of a file, named by Unix time
 └── .trash/<key>/<name>    Deleted files and folders
 ```
 
-Items whose names start with a dot are hidden from the sidebar. Deleting `.thesio/` loses pins, stars, and the Trash index, but no documents.
+Items whose names start with a dot are hidden from the sidebar. Deleting `.thesio/` loses pins, stars, version history, and the Trash index, but no documents.
 
 ## Meta
 

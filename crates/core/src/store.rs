@@ -348,6 +348,32 @@ impl Store {
         write_atomic(&self.path(id)?, text.as_bytes())
     }
 
+    fn history_dir(&self, id: &str) -> Result<PathBuf> {
+        self.path(&format!("{STATE_DIR}/history/{id}"))
+    }
+
+    /// Keeps `text` as a version of `id`, unless nothing changed.
+    pub fn snapshot(&self, id: &str, text: &str) -> Result<bool> {
+        crate::history::save(&self.history_dir(id)?, text, crate::time::now())
+    }
+
+    /// The times of `id`'s versions, newest first.
+    pub fn versions(&self, id: &str) -> Vec<u64> {
+        self.history_dir(id).map_or(vec![], |dir| crate::history::list(&dir))
+    }
+
+    pub fn version(&self, id: &str, time: u64) -> Result<String> {
+        crate::history::read(&self.history_dir(id)?, time)
+    }
+
+    /// A file's versions follow it. Losing them must not fail the move.
+    fn move_history(&self, old: &str, new: &str) {
+        let (Ok(from), Ok(to)) = (self.history_dir(old), self.history_dir(new)) else { return };
+        if !from.exists() { return; }
+        if let Some(parent) = to.parent() { let _ = std::fs::create_dir_all(parent); }
+        if let Err(e) = std::fs::rename(from, to) { eprintln!("Could not move the history of {old}: {e}"); }
+    }
+
     /// A free name for `stem` in `parent`.
     fn free_id(&self, parent: Option<&str>, stem: &str, extension: Option<&str>) -> Result<String> {
         let name = |n: u32| {
@@ -390,6 +416,7 @@ impl Store {
         // A change of case alone names the same file on case-insensitive disks.
         anyhow::ensure!(old.to_lowercase() == new.to_lowercase() || !target.try_exists()?, "{new} already exists");
         std::fs::rename(self.path(old)?, target)?;
+        self.move_history(old, new);
         let prefix = format!("{old}/");
         let moved: Vec<String> = self.index.keys().filter(|k| *k == old || k.starts_with(&prefix)).cloned().collect();
         for key in moved {

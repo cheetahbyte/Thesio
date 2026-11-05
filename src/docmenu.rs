@@ -126,6 +126,10 @@ impl Workspace {
                 .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star_id, cx))))
             .when(typst, |d| d.child(divider())
                 .child(menu_item("dm-copy", Icon::Copy, "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
+                .child(menu_item("dm-history", Icon::Restore, "Version History…").on_click(cx.listener(|w, _, _, cx| {
+                    w.close_doc_menu(cx);
+                    w.open_history(cx);
+                })))
                 .child(menu_item("dm-pdf", Icon::Export, "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
                     w.close_doc_menu(cx);
                     w.export_pdf(&pdf_id, cx);

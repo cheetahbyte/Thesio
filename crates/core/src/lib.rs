@@ -3,6 +3,7 @@
 
 pub mod buffer;
 pub mod compiler;
+pub mod history;
 pub mod library;
 pub mod lookup;
 pub mod quote;

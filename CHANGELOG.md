@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep earlier versions of each document automatically, and compare or restore them from Version History in its "…" menu.
 - Add an Outline to the sidebar: the headings of the whole document in reading order, through its included files, with the current one marked. Click one to go there.
 - Keep the preview near the caret: it scrolls when the caret's place is out of view.
 - Click text in the preview to go to its source, opening the chapter it came from.

@@ -13,7 +13,7 @@ use thesio_core::references::{Heading, outline};
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -212,6 +212,10 @@ pub struct Workspace {
     pub editor: Option<Entity<SourceEditor>>,
     pub preview: Option<Entity<Preview>>,
     pub citations: crate::citations::Citations,
+    /// The Version History dialog.
+    pub history: Option<crate::history::History>,
+    /// When each file last became a version, this session.
+    pub last_version: HashMap<String, u64>,
     pub search: Entity<TextField>,
     /// Keyboard highlight inside search results.
     pub search_sel: Option<usize>,
@@ -336,6 +340,8 @@ impl Workspace {
             editor: None,
             preview: None,
             citations,
+            history: None,
+            last_version: HashMap::new(),
             search,
             search_sel: None,
             sidebar_open: true,
@@ -444,6 +450,7 @@ impl Workspace {
             }
         };
         let typst = id.ends_with(".typ");
+        let opened_text = text.clone();
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.root();
         let main = self.top_document(id);
@@ -486,6 +493,7 @@ impl Workspace {
         self.editor = Some(editor);
         self.preview = preview;
         self.current = Some(id.to_string());
+        self.keep_version(id, &opened_text, true, cx);
         self.outline_root = typst.then(|| self.top_document(id));
         self.refresh_outline(cx);
         self.reveal_in_tree(id);
@@ -858,6 +866,7 @@ impl Workspace {
             return true;
         };
         let text = ed.read(cx).buffer.text().to_string();
+        let saved_text = text.clone();
         match self.store.save(&id, &text) {
             Ok(()) => {
                 if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
@@ -866,6 +875,7 @@ impl Workspace {
                 }
                 self.status = SaveStatus::Saved;
                 self.unsaved = false;
+                self.keep_version(&id, &saved_text, false, cx);
                 self.sort();
                 self.sync_bibliographies(cx);
                 self.refresh_outline(cx);
@@ -1179,6 +1189,7 @@ impl Render for Workspace {
         let library_row_menu = self.render_library_row_menu(cx);
         let tag_editor = self.render_tag_editor(window, cx);
         let type_menu = self.render_inspector_type_menu(cx);
+        let history = self.render_history(cx);
         let tag_menu = self.render_tag_menu(window, cx);
         let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
@@ -1236,6 +1247,11 @@ impl Render for Workspace {
             // Esc leaves Selection mode (closing its menu or confirmation first), even from the editor.
             .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
                 // Esc cancels a confirmation dialog.
+                if ev.keystroke.key == "escape" && w.history.is_some() {
+                    w.close_history(cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key == "escape" && w.confirm.is_some() {
                     w.confirm = None;
                     w.after_save = None;
@@ -1276,6 +1292,7 @@ impl Render for Workspace {
             .children(library_row_menu)
             .children(tag_editor)
             .children(type_menu)
+            .children(history)
             .children(tag_menu)
             .children(column_drag)
             .children(search)

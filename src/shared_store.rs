@@ -25,6 +25,9 @@ impl SharedStore {
     pub fn save_settings(&self, s: &Settings) -> Result<()> { self.0.borrow().save_settings(s) }
     pub fn attach(&mut self, from: &Path, id: &str) -> Result<()> { self.0.borrow_mut().attach(from, id) }
     pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> { self.0.borrow_mut().rename(id, title) }
+    pub fn snapshot(&self, id: &str, text: &str) -> Result<bool> { self.0.borrow().snapshot(id, text) }
+    pub fn versions(&self, id: &str) -> Vec<u64> { self.0.borrow().versions(id) }
+    pub fn version(&self, id: &str, time: u64) -> Result<String> { self.0.borrow().version(id, time) }
     pub fn touch(&mut self, id: &str) -> Result<()> { self.0.borrow_mut().touch(id) }
     pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> { self.0.borrow_mut().set_parent(id, parent) }
     pub fn set_starred(&mut self, id: &str, on: bool) -> Result<u64> { self.0.borrow_mut().set_starred(id, on) }

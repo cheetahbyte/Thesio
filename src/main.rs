@@ -9,6 +9,7 @@ mod citations;
 mod clipboard;
 mod devtools;
 mod docmenu;
+mod history;
 mod home;
 mod icon;
 mod input;
