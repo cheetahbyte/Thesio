@@ -299,10 +299,6 @@ impl Store {
         Ok(id)
     }
 
-    pub fn size_of(&self, id: &str) -> u64 {
-        self.path(id).ok().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len())
-    }
-
     /// Moves `old` to `new`, carrying app state, including for a folder's files,
     /// and updates the paths in vault documents.
     fn relocate(&mut self, old: &str, new: &str) -> Result<Moved> {

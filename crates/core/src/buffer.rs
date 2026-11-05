@@ -28,7 +28,6 @@ pub struct Buffer {
     undo: Vec<Edit>,
     redo: Vec<Edit>,
     last: Option<(EditKind, Instant)>,
-    generation: u64,
 }
 
 impl Default for Buffer {
@@ -37,14 +36,12 @@ impl Default for Buffer {
 
 impl Buffer {
     pub fn new(text: impl Into<String>) -> Self {
-        let mut buffer = Self { text: text.into(), line_starts: vec![], sel: 0..0, reversed: false, undo: vec![], redo: vec![], last: None, generation: 0 };
+        let mut buffer = Self { text: text.into(), line_starts: vec![], sel: 0..0, reversed: false, undo: vec![], redo: vec![], last: None };
         buffer.index_lines();
         buffer
     }
 
     pub fn text(&self) -> &str { &self.text }
-    /// Changes whenever the text does.
-    pub fn generation(&self) -> u64 { self.generation }
     pub fn caret(&self) -> usize { if self.reversed { self.sel.start } else { self.sel.end } }
     pub fn line_count(&self) -> usize { self.line_starts.len() }
 
@@ -105,7 +102,6 @@ impl Buffer {
         self.index_lines();
         self.sel = sel_after.clone();
         self.reversed = false;
-        self.generation += 1;
         self.redo.clear();
         let recent = self.last.is_some_and(|(k, t)| k == kind && kind != EditKind::Other && now - t < COALESCE);
         self.last = Some((kind, now));
@@ -132,7 +128,6 @@ impl Buffer {
         self.index_lines();
         self.sel = caret..caret;
         self.reversed = false;
-        self.generation += 1;
         self.last = None;
     }
 
@@ -149,8 +144,7 @@ impl Buffer {
             self.index_lines();
             self.sel = sel.clone();
             self.reversed = false;
-            self.generation += 1;
-            self.last = None;
+                self.last = None;
             if back { self.redo.push(edit); } else { self.undo.push(edit); }
             return true;
         }
