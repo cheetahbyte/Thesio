@@ -144,6 +144,67 @@ pub fn cited_keys(text: &str) -> Vec<String> {
     keys
 }
 
+/// `text` with every citation of `old` changed to `new`, or `None` without any.
+pub fn rename_citation(text: &str, old: &str, new: &str) -> Option<String> {
+    let source = Source::detached(text);
+    let mut starts = vec![];
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        let target = match node.kind() {
+            SyntaxKind::Ref => ast::Ref::from_untyped(node.get()).map(|reference| reference.target().to_string()),
+            SyntaxKind::Label if node.parent().is_some_and(|args| args.kind() == SyntaxKind::Args && args.parent().and_then(callee).as_deref() == Some("cite")) => {
+                ast::Label::from_untyped(node.get()).map(|label| label.get().to_string())
+            }
+            _ => None,
+        };
+        // Past the `@` or `<`.
+        if target.as_deref() == Some(old) { starts.push(node.offset() + 1); }
+    });
+    if starts.is_empty() { return None; }
+    let mut out = text.to_string();
+    for start in starts.into_iter().rev() { out.replace_range(start..start + old.len(), new); }
+    Some(out)
+}
+
+/// The arguments of the call starting at `start`.
+fn call_args<'a>(root: &'a LinkedNode<'a>, start: usize) -> Option<LinkedNode<'a>> {
+    let leaf = root.leaf_at(start + 1, Side::After)?;
+    let call = std::iter::successors(Some(leaf), |node| node.parent().cloned()).find(|node| node.kind() == SyntaxKind::FuncCall)?;
+    call.children().find(|child| child.kind() == SyntaxKind::Args)
+}
+
+/// The string given for a call's `style` argument.
+fn style_value<'a>(args: &LinkedNode<'a>) -> Option<LinkedNode<'a>> {
+    let named = args.children().filter(|child| child.kind() == SyntaxKind::Named)
+        .find(|child| child.children().next().is_some_and(|name| name.get().full_text() == "style"))?;
+    named.children().find(|child| child.kind() == SyntaxKind::Str)
+}
+
+/// The `style` a document's `#bibliography` asks for.
+pub fn bibliography_style(text: &str, file: &str) -> Option<String> {
+    let call = bibliography_call(text, file)?;
+    let source = Source::detached(text);
+    let root = LinkedNode::new(source.root());
+    let value = style_value(&call_args(&root, call.range.start)?)?;
+    ast::Str::from_untyped(value.get()).map(|value| value.get().to_string())
+}
+
+/// `text` with its `#bibliography` using `style`.
+pub fn set_bibliography_style(text: &str, file: &str, style: &str) -> Option<String> {
+    let call = bibliography_call(text, file)?;
+    let source = Source::detached(text);
+    let root = LinkedNode::new(source.root());
+    let args = call_args(&root, call.range.start)?;
+    let literal = format!("\"{style}\"");
+    if let Some(value) = style_value(&args) {
+        return Some(format!("{}{literal}{}", &text[..value.range().start], &text[value.range().end..]));
+    }
+    // Before the closing parenthesis, which a trailing comma may precede.
+    let close = args.range().end - 1;
+    let head = text[..close].trim_end();
+    let separator = if head.ends_with('(') { "" } else if head.ends_with(',') { " " } else { ", " };
+    Some(format!("{head}{separator}style: {literal}{}", &text[close..]))
+}
+
 /// The `@key` being written at `caret`, `@` included. An `@` after a word is an
 /// email address, and raw text, strings, comments, and math hold no citations.
 pub fn citation_at(text: &str, caret: usize) -> Option<Range<usize>> {

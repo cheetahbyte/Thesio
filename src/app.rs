@@ -179,6 +179,8 @@ pub enum Confirm {
     DeleteEntries(Vec<String>),
     /// Library → change the inspected entry to a type without a parent.
     ChangeSourceType(&'static thesio_core::source_type::SourceType),
+    /// Library → remove a tag from every entry.
+    DeleteTag(String),
     /// The open document could not be written before it was to be replaced
     /// (another document, New, Quit): Retry / Discard changes, then carry on.
     SaveFailed,
@@ -227,6 +229,8 @@ pub struct Workspace {
     pub files_menu: Option<Point<Pixels>>,
     /// Header "…" menu.
     pub doc_menu: bool,
+    /// The citation style menu.
+    pub style_menu: bool,
     pub list_scroll: ScrollHandle,
     pub search_scroll: ScrollHandle,
     /// Selection mode: checked documents in My documents, in check order.
@@ -336,6 +340,7 @@ impl Workspace {
             rename: None,
             files_menu: None,
             doc_menu: false,
+            style_menu: false,
             list_scroll: ScrollHandle::new(),
             search_scroll: ScrollHandle::new(),
             batch: None,
@@ -1074,6 +1079,7 @@ impl Render for Workspace {
         let resize_overlay = self.render_resize_overlay(cx);
         let search = self.render_search(window, cx);
         let doc_menu = self.render_doc_menu(window, cx);
+        let style_menu = self.render_style_menu(window, cx);
         let confirm = self.render_confirm(cx);
         let trash_menu = self.render_trash_menu(cx);
         let toast = self.render_toast(window);
@@ -1116,6 +1122,7 @@ impl Render for Workspace {
         let library_row_menu = self.render_library_row_menu(cx);
         let tag_editor = self.render_tag_editor(window, cx);
         let type_menu = self.render_inspector_type_menu(cx);
+        let tag_menu = self.render_tag_menu(window, cx);
         let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
@@ -1162,8 +1169,9 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     return;
                 }
-                if ev.keystroke.key == "escape" && w.doc_menu {
+                if ev.keystroke.key == "escape" && (w.doc_menu || w.style_menu) {
                     w.doc_menu = false;
+                    w.style_menu = false;
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -1200,6 +1208,7 @@ impl Render for Workspace {
             .children(row_menu)
             .children(files_menu)
             .children(doc_menu)
+            .children(style_menu)
             .children(trash_menu)
             .children(confirm)
             .children(move_dlg)
@@ -1210,6 +1219,7 @@ impl Render for Workspace {
             .children(library_row_menu)
             .children(tag_editor)
             .children(type_menu)
+            .children(tag_menu)
             .children(column_drag)
             .children(search)
             .children(resize_overlay)

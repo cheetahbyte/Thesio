@@ -1,7 +1,7 @@
 //! The header "…" menu: move, pin, star, duplicate, export, and delete.
 
 use crate::app::Workspace;
-use crate::library::Mode;
+use crate::library::{CITATION_STYLES, Mode};
 use crate::theme::{self, Theme};
 use crate::ui::{Icon, popover};
 use gpui::{prelude::FluentBuilder, *};
@@ -62,6 +62,27 @@ impl Workspace {
         }
     }
 
+    pub(crate) fn render_style_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.style_menu { return None; }
+        let (_, current) = self.style_owner(cx)?;
+        let rows = CITATION_STYLES.iter().enumerate().map(|(i, (label, name))| {
+            crate::ui::menu_row(("style-row", i))
+                .child(div().w(px(16.)).flex_none().when(*name == current, |d| d.child(crate::ui::menu_glyph(Icon::Check, 14.))))
+                .child(crate::ui::menu_label(*label))
+                .on_click(cx.listener(move |w, _, _, cx| w.set_citation_style(name, cx)))
+        }).collect::<Vec<_>>();
+        let menu = popover().id("style-menu").occlude().w(px(MENU_W + 40.)).py(px(PAD))
+            .on_mouse_down_out(cx.listener(|w, _, _, cx| {
+                w.style_menu = false;
+                cx.notify();
+            }))
+            .children(rows);
+        let btn = self.more_btn_bounds.get();
+        let right = btn.map_or(window.viewport_size().width - px(120.), |b| b.right());
+        let top = btn.map_or(px(60.), |b| b.bottom() + px(MENU_GAP));
+        Some(deferred(anchored().anchor(Corner::TopRight).position(point(right, top)).child(menu)).with_priority(2).into_any_element())
+    }
+
     pub(crate) fn render_doc_menu(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if !self.doc_menu {
             return vec![];
@@ -73,6 +94,7 @@ impl Workspace {
         let typst = entry.is_some_and(|e| e.typst);
         let mode = self.bibliography_mode(cx);
         let block_shown = self.editor.as_ref().is_some_and(|e| e.read(cx).block_shown);
+        let style = self.style_owner(cx).map(|(_, style)| style);
         let bibliography = |id: &'static str, ic: Icon, label: &'static str, target: Mode| {
             menu_item(id, ic, label).on_click(cx.listener(move |w, _, _, cx| {
                 w.close_doc_menu(cx);
@@ -105,6 +127,14 @@ impl Workspace {
                     w.close_doc_menu(cx);
                     w.export_pdf(&pdf_id, cx);
                 })))
+                .when_some(style, |d, style| {
+                    let label = CITATION_STYLES.iter().find(|(_, name)| *name == style).map_or(style.as_str(), |(label, _)| label);
+                    d.child(divider()).child(menu_item("dm-style", Icon::Quote, format!("Citation Style: {label}")).on_click(cx.listener(|w, _, _, cx| {
+                        w.doc_menu = false;
+                        w.style_menu = true;
+                        cx.notify();
+                    })))
+                })
                 .when(mode != Mode::Custom, |d| d.child(divider())
                     .child(menu_item("dm-cite", Icon::Quote, "Insert citation").on_click(cx.listener(|w, _, window, cx| {
                         w.close_doc_menu(cx);

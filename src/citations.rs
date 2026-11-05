@@ -16,7 +16,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use thesio_core::references::{cited_keys, included_files};
+use thesio_core::references::{bibliography_style, cited_keys, included_files, rename_citation, set_bibliography_style};
 
 const ROW_H: f32 = 32.;
 /// Rows inset their cells, so cell text lines up with the page title.
@@ -143,6 +143,10 @@ pub struct Citations {
     scroll: UniformListScrollHandle,
     tag_filter: Option<String>,
     tag_editor: Option<TagEditor>,
+    /// A filter chip's menu: its tag and where it was opened.
+    tag_menu: Option<(String, Point<Pixels>)>,
+    /// The tag being renamed, with its field and where it opened.
+    tag_rename: Option<(String, Entity<TextField>, Point<Pixels>, Subscription)>,
     /// Widths of resized columns, by column name.
     widths: BTreeMap<String, f32>,
     column_drag: Option<ColumnDrag>,
@@ -177,7 +181,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), inspector: None, details_hidden: crate::settings::prefs().library_details_hidden, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), inspector: None, details_hidden: crate::settings::prefs().library_details_hidden, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, tag_menu: None, tag_rename: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
     }
 }
 
@@ -304,6 +308,53 @@ impl Workspace {
         cx.notify();
     }
 
+    fn open_tag_rename(&mut self, tag: String, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new("Tag name", cx);
+            f.set_text(&tag, cx);
+            f
+        });
+        let sub = cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| match ev {
+            TextFieldEvent::Submit => w.finish_tag_rename(window, cx),
+            TextFieldEvent::Cancel => {
+                w.citations.tag_rename = None;
+                window.focus(&w.citations.focus);
+                cx.notify();
+            }
+            _ => {}
+        });
+        window.focus(&field.focus_handle(cx));
+        self.citations.tag_rename = Some((tag, field, position, sub));
+        cx.notify();
+    }
+
+    fn finish_tag_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((old, field, ..)) = self.citations.tag_rename.take() else { return };
+        let new = field.read(cx).text.trim().to_string();
+        window.focus(&self.citations.focus);
+        let Some(library) = &mut self.citations.library else { return };
+        if new != old {
+            match library.rename_tag(&old, &new) {
+                Ok(()) => if self.citations.tag_filter.as_ref() == Some(&old) {
+                    self.citations.tag_filter = library.tags().into_iter().map(|(tag, _)| tag).find(|tag| tag.eq_ignore_ascii_case(&new));
+                },
+                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename the tag: {e}"), cx),
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn delete_tag(&mut self, tag: &str, cx: &mut Context<Self>) {
+        let Some(library) = &mut self.citations.library else { return };
+        if let Err(e) = library.delete_tag(tag) { self.show_toast_kind(ToastKind::Error, &format!("Could not delete the tag: {e}"), cx); }
+        cx.notify();
+    }
+
+    /// How many entries carry `tag`.
+    pub(crate) fn tag_count(&self, tag: &str) -> usize {
+        self.citations.library.as_ref().map_or(0, |library| library.tags().into_iter().find(|(name, _)| name == tag).map_or(0, |(_, count)| count))
+    }
+
     /// Applies `tag` to the entries in the tag editor. False if it was refused.
     fn set_tag(&mut self, tag: &str, on: bool, cx: &mut Context<Self>) -> bool {
         let Some(keys) = self.citations.tag_editor.as_ref().map(|editor| editor.keys.clone()) else { return false };
@@ -396,6 +447,49 @@ impl Workspace {
         };
         editor.update(cx, |e, cx| e.reload(&text, cx));
         self.flush(cx);
+    }
+
+    /// The document holding the open file's bibliography, and its style. A
+    /// chapter's bibliography is usually in the document that includes it.
+    pub(crate) fn style_owner(&self, cx: &App) -> Option<(String, String)> {
+        let id = self.current.clone()?;
+        [id.clone(), self.top_document(&id)].into_iter().find_map(|doc| {
+            let text = self.text_of_saved(&doc, cx)?;
+            let mode = library::mode(&text, &doc);
+            (mode != Mode::None).then(|| {
+                let style = bibliography_style(&text, &doc).unwrap_or_else(|| library::DEFAULT_STYLE.to_string());
+                (doc, style)
+            })
+        })
+    }
+
+    /// A document's text without saving: the open editor's copy, or the file.
+    fn text_of_saved(&self, id: &str, cx: &App) -> Option<String> {
+        match (&self.current, &self.editor) {
+            (Some(current), Some(editor)) if current == id => Some(editor.read(cx).buffer.text().to_string()),
+            _ => self.store.load(id).ok(),
+        }
+    }
+
+    /// Gives the open file's bibliography a citation style.
+    pub(crate) fn set_citation_style(&mut self, style: &str, cx: &mut Context<Self>) {
+        self.style_menu = false;
+        let Some((doc, _)) = self.style_owner(cx) else { return cx.notify() };
+        let Some(updated) = self.text_of_saved(&doc, cx).and_then(|text| set_bibliography_style(&text, &doc, style)) else { return };
+        if self.current.as_deref() == Some(doc.as_str()) && let Some(editor) = self.editor.clone() {
+            editor.update(cx, |e, cx| e.reload(&updated, cx));
+            self.flush(cx);
+        } else {
+            if let Err(e) = self.store.save(&doc, &updated) {
+                return self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
+            }
+            if let Some(entry) = self.entries.iter_mut().find(|e| e.id == doc) { entry.body = updated; }
+            if let (Some(editor), Some(preview)) = (self.editor.clone(), self.preview.clone()) {
+                let text = editor.read(cx).buffer.text().to_string();
+                preview.update(cx, |p, cx| p.update(text, cx));
+            }
+        }
+        cx.notify();
     }
 
     /// The documents that include `id`, directly or through other files.
@@ -649,6 +743,8 @@ impl Workspace {
         let error = result.as_ref().err().map(|e| { let e = e.to_string(); e.split_once(" is not a valid library: ").map_or(e.clone(), |(_, why)| why.to_string()) });
         if let Some(inspector) = &mut self.citations.inspector { inspector.error = error; }
         if matches!(result, Ok(true)) {
+            // Before the refresh: bibliographies list what documents cite.
+            if new_key != key { self.rename_citations(&key, &new_key, cx); }
             self.refresh_after_library_change(cx);
             if new_key != key {
                 self.select_only(&new_key);
@@ -658,6 +754,30 @@ impl Workspace {
             if found_by_new_id { self.fetch_papers(vec![new_key], cx); }
         }
         cx.notify();
+    }
+
+    /// Follows a key change through every document that cites it.
+    fn rename_citations(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
+        let mut changed = 0;
+        for id in self.entries.iter().filter(|e| e.typst).map(|e| e.id.clone()).collect::<Vec<_>>() {
+            let open = self.editor.clone().filter(|_| self.current.as_deref() == Some(id.as_str()));
+            let text = match &open {
+                Some(editor) => editor.read(cx).buffer.text().to_string(),
+                None => self.store.load(&id).unwrap_or_default(),
+            };
+            let Some(updated) = rename_citation(&text, old, new) else { continue };
+            if let Err(e) = self.store.save(&id, &updated) {
+                self.show_toast_kind(ToastKind::Error, &format!("Could not update the citation in {id}: {e}"), cx);
+                continue;
+            }
+            if let Some(editor) = &open { editor.update(cx, |e, cx| e.reload(&updated, cx)); }
+            changed += 1;
+        }
+        match changed {
+            0 => {}
+            1 => self.show_toast("Updated the citation in 1 document", cx),
+            n => self.show_toast(&format!("Updated citations in {n} documents"), cx),
+        }
     }
 
     /// Changes the type, asking first if that would lose data.
@@ -920,13 +1040,17 @@ impl Workspace {
                     .active(|s| s.bg(Theme::fill_pressed()))
                     .child(label)
                     .child(div().text_color(Theme::text_placeholder()).child(count.to_string()))
+                    .when_some(filter.clone(), |d, tag| d.on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
+                        w.citations.tag_menu = Some((tag.clone(), ev.position));
+                        cx.notify();
+                    })))
                     .on_click(cx.listener(move |w, _, _, cx| {
                         w.citations.tag_filter = filter.clone();
                         cx.notify();
                     }))
             };
             let filter = self.citations.tag_filter.clone();
-            page = page.child(div().flex_none().mx(px(TABLE_X)).px(px(4.)).pb(px(6.)).flex().flex_wrap().gap(px(2.))
+            page = page.child(div().flex_none().mx(px(TABLE_X)).px(px(4.)).pt(px(8.)).pb(px(6.)).flex().flex_wrap().gap(px(2.))
                 .child(chip("tag-all".into(), "All".to_string(), total, None, filter.is_none()))
                 .children(tags.iter().enumerate().map(|(i, (tag, count))| chip(("tag", i).into(), tag.clone(), *count, Some(tag.clone()), filter.as_ref() == Some(tag)))));
         }
@@ -1282,6 +1406,30 @@ impl Workspace {
                     w.confirm = Some(Confirm::DeleteEntries(delete.clone()));
                     cx.notify();
                 })));
+        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+    }
+
+    pub(crate) fn render_tag_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.view != View::Library { return None; }
+        if let Some((_, field, position, _)) = &self.citations.tag_rename {
+            let panel = popover().id("tag-rename").occlude().w(px(220.)).p(px(8.))
+                .on_mouse_down_out(cx.listener(|w, _, window, cx| w.finish_tag_rename(window, cx)))
+                .child(field_well(field, window, cx));
+            return Some(deferred(anchored().position(*position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element());
+        }
+        let (tag, position) = self.citations.tag_menu.clone()?;
+        let (rename, delete) = (tag.clone(), tag);
+        let menu = popover().id("tag-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
+            .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.tag_menu = None; cx.notify(); }))
+            .child(menu_row("tag-menu-rename").child(menu_glyph(Icon::Edit, 16.)).child(menu_label("Rename…")).on_click(cx.listener(move |w, _, window, cx| {
+                w.citations.tag_menu = None;
+                w.open_tag_rename(rename.clone(), position, window, cx);
+            })))
+            .child(menu_row("tag-menu-delete").text_color(Theme::danger()).child(icon(Icon::Delete, 16., Theme::danger())).child(menu_label("Delete")).on_click(cx.listener(move |w, _, _, cx| {
+                w.citations.tag_menu = None;
+                w.confirm = Some(Confirm::DeleteTag(delete.clone()));
+                cx.notify();
+            })));
         Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
     }
 

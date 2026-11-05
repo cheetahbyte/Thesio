@@ -86,7 +86,7 @@ pub static SOURCE_TYPES: &[SourceType] = &[
     kind!("Blog Post", "Article", Some("Blog"), [TITLE, AUTHORS, container("Blog"), DATE, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Newspaper Article", "Article", Some("Newspaper"), [TITLE, AUTHORS, container("Newspaper"), DATE, PLACE, PAGES, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Encyclopedia Entry", "Entry", Some("Reference"), [TITLE, AUTHORS, container("Encyclopedia"), EDITORS, DATE, PUBLISHER, PLACE, EDITION, VOLUME, PAGES, ISBN, URL, ACCESSED, LANGUAGE, NOTE]),
-    kind!("Software or Dataset", "Repository", None, [TITLE, AUTHORS, field("Version", "", Slot::Serial("version")), DATE, field("Publisher", "GitHub", Slot::Publisher), DOI, URL, ACCESSED, ABSTRACT, NOTE]),
+    kind!("Software, Data", "Repository", None, [TITLE, AUTHORS, field("Version", "", Slot::Serial("version")), DATE, field("Publisher", "GitHub", Slot::Publisher), DOI, URL, ACCESSED, ABSTRACT, NOTE]),
     kind!("Video", "Video", None, [TITLE, field("Director", "", Slot::Persons("author")), DATE, PUBLISHER, RUNTIME, DOI, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Audio", "Audio", None, [TITLE, AUTHORS, DATE, PUBLISHER, RUNTIME, DOI, URL, ACCESSED, LANGUAGE, ABSTRACT, NOTE]),
     kind!("Patent", "Patent", None, [TITLE, field("Inventors", "", Slot::Persons("author")), field("Patent Number", "", Slot::Serial("serial")), field("Assignee", "", Slot::Own("organization")), DATE, URL, ACCESSED, ABSTRACT, NOTE]),

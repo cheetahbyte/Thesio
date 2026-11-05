@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rename or delete a tag across the Library by right-clicking it in the filter bar. Renaming to a tag in use merges the two.
+- Choose a citation style for a document from its "…" menu. A chapter changes the style of the document that includes it.
+- Update citations in every document when a citation key changes.
 - Import more from BibLaTeX and Zotero: keywords become tags, language is kept, each entry gets its source type, and a known DOI, ISBN, or arXiv ID counts as a duplicate.
 - Export every field the Library shows that BibLaTeX can hold, such as editors, ISBN, edition, and abstract.
 - Save an edit in the Library panel when the app quits.

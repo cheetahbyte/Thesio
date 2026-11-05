@@ -292,6 +292,11 @@ impl Workspace {
                 (title, format!("This removes {it} from the library and cannot be undone. {effect}"), "Delete", true)
             }
             Confirm::ChangeSourceType(kind) => (format!("Change to {}?", kind.label), "This removes the publication it appeared in, along with that publication's details. It cannot be undone.".to_string(), "Change", true),
+            Confirm::DeleteTag(tag) => {
+                let count = self.tag_count(tag);
+                let entries = if count == 1 { "1 entry".to_string() } else { format!("{count} entries") };
+                (format!("Delete the tag {tag}?"), format!("This removes it from {entries}. The entries stay in the library."), "Delete", true)
+            }
             Confirm::SaveFailed => (
                 "Could not save document".to_string(),
                 format!("{}. Retry, or cancel and export a copy using More → Export as PDF. Discarding changes will lose your unsaved work.", self.save_error()),
@@ -338,6 +343,7 @@ impl Workspace {
                             Confirm::Restore(id) => w.restore_doc(&id, cx),
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
                             Confirm::DeleteEntries(keys) => w.delete_entries(&keys, cx),
+                            Confirm::DeleteTag(tag) => w.delete_tag(&tag, cx),
                             Confirm::ChangeSourceType(kind) => w.set_source_type(kind, window, cx),
                             Confirm::SaveFailed => w.resolve_save_failed(true, window, cx),
                         }

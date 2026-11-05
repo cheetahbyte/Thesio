@@ -59,7 +59,7 @@ pub enum Mode {
     Embedded,
     /// `#bibliography` pointing at `library.yaml`.
     Linked,
-    /// A `#bibliography` the user wrote; Thesio leaves it alone.
+    /// A `#bibliography` the user wrote; Thesio changes it only on request.
     Custom,
 }
 
@@ -239,6 +239,34 @@ impl Library {
         }).collect();
         self.commit(entries)?;
         Ok(true)
+    }
+
+    /// Renames a tag on every entry. Renaming to a tag in use merges the two.
+    pub fn rename_tag(&mut self, old: &str, new: &str) -> Result<()> {
+        let new = new.trim();
+        anyhow::ensure!(!new.is_empty(), "Enter a tag");
+        anyhow::ensure!(!new.contains(','), "Tags cannot contain commas");
+        let new = self.tags().into_iter().map(|(name, _)| name).find(|name| name != old && name.eq_ignore_ascii_case(new)).unwrap_or_else(|| new.to_string());
+        self.change_tag(old, Some(&new))
+    }
+
+    pub fn delete_tag(&mut self, tag: &str) -> Result<()> {
+        self.change_tag(tag, None)
+    }
+
+    fn change_tag(&mut self, old: &str, new: Option<&str>) -> Result<()> {
+        let mut entries = self.entries.clone();
+        for entry in entries.values_mut() {
+            let tags = tags_of(entry);
+            if !tags.iter().any(|tag| tag == old) { continue; }
+            let mut next: Vec<String> = vec![];
+            for tag in tags.iter().flat_map(|tag| if tag == old { new.map(str::to_string) } else { Some(tag.clone()) }) {
+                if !next.contains(&tag) { next.push(tag); }
+            }
+            let Some(map) = entry.as_mapping_mut() else { continue };
+            set(map, TAGS_FIELD, (!next.is_empty()).then(|| Value::Sequence(next.into_iter().map(Value::from).collect())));
+        }
+        self.commit(entries)
     }
 
     pub fn delete_entries(&mut self, keys: &[String]) -> Result<()> {
@@ -509,6 +537,22 @@ pub fn remove(text: &str, file: &str) -> String {
 
 pub const BLOCK_MARKER: &str = BLOCK_START;
 
+/// The citation styles offered per document: a label and Typst's name for it.
+pub const CITATION_STYLES: [(&str, &str); 10] = [
+    ("IEEE", "ieee"),
+    ("APA", "apa"),
+    ("Chicago (Author-Date)", "chicago-author-date"),
+    ("Chicago (Notes)", "chicago-notes"),
+    ("MLA", "mla"),
+    ("Harvard", "harvard-cite-them-right"),
+    ("Vancouver", "vancouver"),
+    ("Nature", "nature"),
+    ("ACM", "association-for-computing-machinery"),
+    ("Springer", "springer-basic"),
+];
+/// What Typst uses for a `#bibliography` without a `style`.
+pub const DEFAULT_STYLE: &str = "ieee";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,13 +588,59 @@ mod tests {
         assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (7, 0));
         assert_eq!(kinds(&library), [
             ("arx2021", "Preprint"), ("chap2020", "Book Section"), ("knuth1984", "Book"), ("parry2022", "Journal Article"),
-            ("phd2020", "Thesis"), ("sw2022", "Software or Dataset"), ("web2024", "Web Page"),
+            ("phd2020", "Thesis"), ("sw2022", "Software, Data"), ("web2024", "Web Page"),
         ].map(|(key, label)| (key.to_string(), label)));
         let tags: Vec<String> = library.tags().into_iter().map(|(tag, _)| tag).collect();
         assert_eq!(tags, ["flaky tests", "testing"]);
         assert_eq!(source_type::read(&library.entries["parry2022"], Slot::Own("language")), "en");
         assert_eq!(source_type::read(&library.entries["chap2020"], Slot::Publisher), "Pub");
         assert_eq!(library.import_biblatex(ZOTERO).unwrap(), (0, 7));
+    }
+
+    #[test]
+    fn a_renamed_tag_merges_into_one_in_use() {
+        let mut library = library("tags");
+        library.import_biblatex("@book{a, title = {A}, keywords = {old, keep}}\n@book{b, title = {B}, keywords = {old, merged}}\n@book{c, title = {C}, keywords = {merged}}").unwrap();
+        library.rename_tag("old", "fresh").unwrap();
+        assert_eq!(tags_of(&library.entries["a"]), ["fresh", "keep"]);
+        library.rename_tag("fresh", "MERGED").unwrap();
+        assert_eq!(library.tags(), [("keep".to_string(), 1), ("merged".to_string(), 3)]);
+        assert_eq!(tags_of(&library.entries["b"]), ["merged"]);
+        library.delete_tag("merged").unwrap();
+        assert_eq!(library.tags(), [("keep".to_string(), 1)]);
+        assert!(library.entries["c"].get("tags").is_none());
+    }
+
+    #[test]
+    fn every_offered_style_exists() {
+        for (_, style) in CITATION_STYLES { assert!(hayagriva::archive::ArchivedStyle::by_name(style).is_some(), "{style}"); }
+    }
+
+    #[test]
+    fn a_block_keeps_its_style_when_the_library_changes() {
+        let text = embed("Text\n", "a:\n  type: Book\n");
+        let styled = references::set_bibliography_style(&text, "doc.typ", "apa").unwrap();
+        assert_eq!(references::bibliography_style(&styled, "doc.typ").as_deref(), Some("apa"));
+        let synced = sync_block(&styled, "b:\n  type: Book\n").unwrap();
+        assert_eq!(references::bibliography_style(&synced, "doc.typ").as_deref(), Some("apa"));
+        assert!(synced.contains("b:\n"));
+        let again = references::set_bibliography_style(&synced, "doc.typ", "mla").unwrap();
+        assert_eq!(references::bibliography_style(&again, "doc.typ").as_deref(), Some("mla"));
+        assert_eq!(mode(&again, "doc.typ"), Mode::Embedded);
+    }
+
+    #[test]
+    fn a_written_bibliography_keeps_its_other_arguments() {
+        let text = "#bibliography(\"/refs.bib\", title: [Literatur], style: \"ieee\")\n";
+        assert_eq!(references::set_bibliography_style(text, "doc.typ", "apa").unwrap(), "#bibliography(\"/refs.bib\", title: [Literatur], style: \"apa\")\n");
+        assert_eq!(references::set_bibliography_style("#bibliography(\"a.bib\",)", "doc.typ", "apa").unwrap(), "#bibliography(\"a.bib\", style: \"apa\")");
+    }
+
+    #[test]
+    fn renaming_a_key_changes_only_its_citations() {
+        let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
+        assert_eq!(references::rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");
+        assert_eq!(references::rename_citation("nothing here", "old", "new"), None);
     }
 
     #[test]
