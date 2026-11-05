@@ -814,6 +814,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Takes in a library version: the panel, documents, and open file follow it.
+    pub(crate) fn library_restored(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.citations.inspector = None;
+        self.citations.selected.clear();
+        self.refresh_after_library_change(cx);
+        if self.current.as_deref() == Some(library::LIBRARY_FILE) && let Some(editor) = self.editor.clone() {
+            editor.update(cx, |e, cx| e.reload(text, cx));
+        }
+    }
+
     fn refresh_after_library_change(&mut self, cx: &mut Context<Self>) {
         self.entries = self.store.list();
         self.sort();
@@ -1495,6 +1505,10 @@ impl Workspace {
             .child(item("library-export", Icon::Export, "Export BibLaTeX…").on_click(cx.listener(|w, _, _, cx| {
                 w.citations.menu = false;
                 w.export_bib(cx);
+            })))
+            .child(item("library-history", Icon::Restore, "Version History…").on_click(cx.listener(|w, _, _, cx| {
+                w.citations.menu = false;
+                w.open_library_history(cx);
             })))
             .child(item("library-find-papers", Icon::Search, "Find Missing Papers").on_click(cx.listener(|w, _, _, cx| {
                 w.citations.menu = false;

@@ -3,6 +3,7 @@
 //! field the form does not show. Also the generated bibliography block that
 //! carries a document's cited entries inside the document itself.
 
+use crate::history;
 use crate::lookup::{Identifier, PaperIds};
 use crate::references::{self, BibliographyCall};
 use crate::source_type::{self, Field, Slot, SourceType};
@@ -124,10 +125,50 @@ impl Library {
         Ok(Self { path, entries, parsed })
     }
 
+    fn history_dir(&self) -> PathBuf {
+        history::dir(self.path.parent().unwrap_or(Path::new("")), LIBRARY_FILE)
+    }
+
+    /// The file as it stands.
+    pub fn text(&self) -> String {
+        std::fs::read_to_string(&self.path).unwrap_or_default()
+    }
+
+    /// The times of the library's versions, newest first.
+    pub fn versions(&self) -> Vec<u64> {
+        history::list(&self.history_dir())
+    }
+
+    pub fn version(&self, time: u64) -> Result<String> {
+        history::read(&self.history_dir(), time)
+    }
+
+    /// Keeps the file as it stands before a change. A run of quick edits keeps
+    /// the state before the first, unless `now`.
+    fn keep_version(&self, now: bool) -> Result<()> {
+        let text = self.text();
+        let dir = self.history_dir();
+        let time = crate::time::now();
+        let recent = history::list(&dir).first().is_some_and(|last| time.saturating_sub(*last) < history::INTERVAL);
+        if text.is_empty() || (recent && !now) { return Ok(()); }
+        history::save(&dir, &text, time).map(|_| ())
+    }
+
+    /// Puts a version back, keeping what it replaces. It is checked first, so
+    /// a version that does not parse changes nothing.
+    pub fn restore(&mut self, text: &str) -> Result<()> {
+        let next = Self::parse(self.path.clone(), text)?;
+        self.keep_version(true)?;
+        write_atomic(&self.path, text.as_bytes())?;
+        *self = next;
+        Ok(())
+    }
+
     /// Validates `entries` with Hayagriva, then writes them.
     fn commit(&mut self, entries: Mapping) -> Result<()> {
         let text = if entries.is_empty() { String::new() } else { serde_yaml::to_string(&entries)? };
         let next = Self::parse(self.path.clone(), &text)?;
+        self.keep_version(false)?;
         write_atomic(&self.path, text.as_bytes())?;
         *self = next;
         Ok(())
@@ -654,6 +695,23 @@ mod tests {
         let text = "See @old, @older[p. 2], @old[p. 1] and #cite(<old>). <old>\n`@old` // @old\n";
         assert_eq!(references::rename_citation(text, "old", "new").unwrap(), "See @new, @older[p. 2], @new[p. 1] and #cite(<new>). <old>\n`@old` // @old\n");
         assert_eq!(references::rename_citation("nothing here", "old", "new"), None);
+    }
+
+    #[test]
+    fn a_deleted_entry_can_come_back_from_a_version() {
+        let mut library = library("versions");
+        library.import_biblatex(ZOTERO).unwrap();
+        let _ = std::fs::remove_dir_all(library.history_dir());
+        let before = library.text();
+        library.delete_entries(&["knuth1984".to_string()]).unwrap();
+        assert!(!library.contains("knuth1984"));
+        let versions = library.versions();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(library.version(versions[0]).unwrap(), before);
+        assert!(library.restore("not: [valid").is_err());
+        assert!(!library.contains("knuth1984"), "a bad version changes nothing");
+        library.restore(&before).unwrap();
+        assert!(library.contains("knuth1984"));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! changed since each, and restoring one.
 
 use crate::app::Workspace;
+use crate::library::Library;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_line, primary_button, scrim, secondary_button};
 use crate::ui::{ToastKind, format_visit, ui_para, ui_text};
@@ -15,6 +16,8 @@ const LINE_H: f32 = 19.;
 const SIGN_W: f32 = 16.;
 
 pub struct History {
+    /// The library rather than the open document.
+    library: bool,
     versions: Vec<u64>,
     selected: usize,
     diff: Vec<DiffLine>,
@@ -36,20 +39,40 @@ impl Workspace {
         let Some(id) = self.current.clone() else { return };
         if !self.flush(cx) { return; }
         let versions = self.store.versions(&id);
-        self.history = Some(History { versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
+        self.history = Some(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
         self.show_version(0, cx);
     }
 
-    fn open_text(&self, cx: &App) -> Option<String> {
-        self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string())
+    pub(crate) fn open_library_history(&mut self, cx: &mut Context<Self>) {
+        self.save_inspector(cx);
+        let Some(library) = &self.citations.library else { return };
+        let versions = library.versions();
+        self.history = Some(History { library: true, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
+        self.show_version(0, cx);
+    }
+
+    /// What the dialog compares against.
+    fn history_text(&self, cx: &App) -> Option<String> {
+        match self.history.as_ref()?.library {
+            true => self.citations.library.as_ref().map(Library::text),
+            false => self.editor.as_ref().map(|editor| editor.read(cx).buffer.text().to_string()),
+        }
+    }
+
+    fn version_text(&self, time: u64) -> anyhow::Result<String> {
+        match (self.history.as_ref().is_some_and(|history| history.library), &self.citations.library, &self.current) {
+            (true, Some(library), _) => library.version(time),
+            (false, _, Some(id)) => self.store.version(id, time),
+            _ => anyhow::bail!("Nothing is open"),
+        }
     }
 
     fn show_version(&mut self, index: usize, cx: &mut Context<Self>) {
-        let (Some(id), Some(current)) = (self.current.clone(), self.open_text(cx)) else { return };
+        let Some(current) = self.history_text(cx) else { return };
         let Some(history) = &mut self.history else { return };
         let Some(time) = history.versions.get(index).copied() else { return };
         history.selected = index;
-        match self.store.version(&id, time) {
+        match self.version_text(time) {
             Ok(text) => {
                 // Read as: what restoring this version would change.
                 let lines = diff(&current, &text);
@@ -71,15 +94,24 @@ impl Workspace {
     /// Brings a version back. What it replaces becomes a version first, and
     /// the editor can undo it.
     fn restore_version(&mut self, cx: &mut Context<Self>) {
-        let (Some(id), Some(current), Some(editor)) = (self.current.clone(), self.open_text(cx), self.editor.clone()) else { return };
-        let Some(time) = self.history.as_ref().and_then(|history| history.versions.get(history.selected).copied()) else { return };
-        let text = match self.store.version(&id, time) {
+        let Some(history) = &self.history else { return };
+        let library = history.library;
+        let Some(time) = history.versions.get(history.selected).copied() else { return };
+        let text = match self.version_text(time) {
             Ok(text) => text,
             Err(e) => return self.show_toast_kind(ToastKind::Error, &e.to_string(), cx),
         };
-        self.keep_version(&id, &current, true, cx);
-        editor.update(cx, |e, cx| e.reload(&text, cx));
-        self.flush(cx);
+        if library {
+            if let Err(e) = self.citations.library.as_mut().map_or(Ok(()), |library| library.restore(&text)) {
+                return self.show_toast_kind(ToastKind::Error, &format!("Could not restore the library: {e}"), cx);
+            }
+            self.library_restored(&text, cx);
+        } else {
+            let (Some(id), Some(current), Some(editor)) = (self.current.clone(), self.history_text(cx), self.editor.clone()) else { return };
+            self.keep_version(&id, &current, true, cx);
+            editor.update(cx, |e, cx| e.reload(&text, cx));
+            self.flush(cx);
+        }
         self.history = None;
         self.show_toast(&format!("Restored the version from {}", format_visit(time)), cx);
         cx.notify();
@@ -119,7 +151,7 @@ impl Workspace {
             })).flex_1().min_h_0();
             div().flex_1().min_w_0().flex().flex_col().py(px(8.)).child(changes).into_any_element()
         };
-        let title = self.current.as_deref().map_or("", |id| id.rsplit('/').next().unwrap_or(id)).to_string();
+        let title = if history.library { "the Library".to_string() } else { self.current.as_deref().map_or("", |id| id.rsplit('/').next().unwrap_or(id)).to_string() };
         let can_restore = !history.diff.is_empty();
         let panel = dialog("history").w(px(WIDTH)).h(px(HEIGHT)).flex().flex_col()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

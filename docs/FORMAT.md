@@ -15,7 +15,7 @@ Thesio/
 │   ├── settings.json      Window state and open folders
 │   ├── preferences.json   Appearance
 │   ├── shortcuts.json     Custom shortcuts
-│   └── history/<id>/<time>.typ  Earlier versions of a file, named by Unix time
+│   └── history/<id>/<time>.<ext>  Earlier versions of a file, named by Unix time
 └── .trash/<key>/<name>    Deleted files and folders
 ```
 

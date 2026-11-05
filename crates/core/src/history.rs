@@ -1,9 +1,9 @@
 //! Earlier versions of a document, as plain files in `.thesio/history/<id>/`,
 //! each named for the second it was taken. Readable and recoverable by hand.
 
-use crate::store::write_atomic;
+use crate::store::{STATE_DIR, write_atomic};
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The least time between versions taken while writing, in seconds.
 pub const INTERVAL: u64 = 5 * 60;
@@ -23,8 +23,19 @@ pub fn list(dir: &Path) -> Vec<u64> {
     times
 }
 
+/// A version's file, with the extension of the file it is a version of.
+fn version_file(dir: &Path, time: u64) -> PathBuf {
+    let extension = dir.extension().and_then(|extension| extension.to_str()).unwrap_or("txt");
+    dir.join(format!("{time}.{extension}"))
+}
+
 pub fn read(dir: &Path, time: u64) -> Result<String> {
-    std::fs::read_to_string(dir.join(format!("{time}.typ"))).with_context(|| format!("Could not read the version from {time}"))
+    std::fs::read_to_string(version_file(dir, time)).with_context(|| format!("Could not read the version from {time}"))
+}
+
+/// Where the versions of a file live. `id` must be a checked vault path.
+pub fn dir(root: &Path, id: &str) -> PathBuf {
+    root.join(STATE_DIR).join("history").join(id)
 }
 
 /// Keeps `text` as a version unless the newest one already holds it.
@@ -32,7 +43,7 @@ pub fn save(dir: &Path, text: &str, now: u64) -> Result<bool> {
     let times = list(dir);
     if times.first().is_some_and(|time| read(dir, *time).is_ok_and(|newest| newest == text)) { return Ok(false); }
     std::fs::create_dir_all(dir)?;
-    write_atomic(&dir.join(format!("{now}.typ")), text.as_bytes())?;
+    write_atomic(&version_file(dir, now), text.as_bytes())?;
     prune(dir, now);
     Ok(true)
 }
@@ -45,7 +56,7 @@ fn prune(dir: &Path, now: u64) {
         if i == 0 || age < DAY { continue; }
         let day = time / DAY;
         let keep = age < DAILY_DAYS * DAY && kept_day != Some(day);
-        if keep { kept_day = Some(day); } else { let _ = std::fs::remove_file(dir.join(format!("{time}.typ"))); }
+        if keep { kept_day = Some(day); } else { let _ = std::fs::remove_file(version_file(dir, time)); }
     }
 }
 

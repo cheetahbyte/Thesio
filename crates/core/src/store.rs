@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::time::{now, now_ms};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const STATE_DIR: &str = ".thesio";
+pub(crate) const STATE_DIR: &str = ".thesio";
 const TRASH_DIR: &str = ".trash";
 const EXTENSION: &str = "typ";
 pub const UNTITLED: &str = "Untitled";
@@ -349,7 +349,8 @@ impl Store {
     }
 
     fn history_dir(&self, id: &str) -> Result<PathBuf> {
-        self.path(&format!("{STATE_DIR}/history/{id}"))
+        self.path(id)?;
+        Ok(crate::history::dir(&self.root, id))
     }
 
     /// Keeps `text` as a version of `id`, unless nothing changed.
