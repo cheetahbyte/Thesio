@@ -35,8 +35,8 @@ const COLS: [(Col, &str, Option<f32>); 6] = [
     (Col::Title, "Title", None),
     (Col::Authors, "Authors", Some(200.)),
     (Col::Year, "Year", Some(64.)),
-    (Col::Kind, "Type", Some(96.)),
-    (Col::Tags, "Tags", Some(140.)),
+    (Col::Kind, "Type", Some(132.)),
+    (Col::Tags, "Tags", Some(120.)),
     (Col::Key, "Key", Some(150.)),
 ];
 
@@ -124,6 +124,8 @@ pub struct Citations {
     search: Entity<TextField>,
     sort: (Col, bool),
     inspector: Option<Inspector>,
+    /// The user closed the details panel.
+    details_hidden: bool,
     picker: Option<CitePicker>,
     lookup: Option<Lookup>,
     /// The toolbar's Import and Export menu.
@@ -175,7 +177,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), inspector: None, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), inspector: None, details_hidden: crate::settings::prefs().library_details_hidden, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
     }
 }
 
@@ -557,9 +559,18 @@ impl Workspace {
             }
         };
         if self.view != View::Library { self.show_view(View::Library, cx); }
+        if self.citations.details_hidden { self.set_details_hidden(false, window, cx); }
         self.select_only(&key);
         self.sync_inspector(window, cx);
         if let Some((_, field)) = self.citations.inspector.as_ref().and_then(|inspector| inspector.fields.first()) { window.focus(&field.focus_handle(cx)); }
+        cx.notify();
+    }
+
+    fn set_details_hidden(&mut self, hidden: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.citations.details_hidden = hidden;
+        self.sync_inspector(window, cx);
+        if hidden { window.focus(&self.citations.focus); }
+        self.set_pref(|p| p.library_details_hidden = hidden, cx);
         cx.notify();
     }
 
@@ -567,7 +578,7 @@ impl Workspace {
     fn sync_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected_in(&self.library_rows(cx));
         let wanted = match selected.as_slice() {
-            [key] => Some(key.clone()),
+            [key] if !self.citations.details_hidden => Some(key.clone()),
             _ => None,
         };
         if self.citations.inspector.as_ref().map(|inspector| &inspector.key) == wanted.as_ref() { return; }
@@ -867,6 +878,8 @@ impl Workspace {
         let header = page_header(self, "Library", (total > 0).then_some(total), 26., cx)
             .child(div().id("library-search").no_drag().w(px(220.)).mr(px(8.)).child(search_well(&self.citations.search, window, cx)))
             .when(can_edit, |d| d
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).no_drag().tip(if self.citations.details_hidden { "Show details" } else { "Hide details" }, None)
+                    .on_click(cx.listener(|w, _, window, cx| w.set_details_hidden(!w.citations.details_hidden, window, cx)))))
                 .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("Import and export", None)
                     .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
@@ -955,23 +968,28 @@ impl Workspace {
         }
         let can_cite = self.can_cite();
         let selected = self.citations.selected.clone();
+        // As on macOS: the accent while the table has the keyboard, gray once it moves on.
+        let active = self.citations.focus.is_focused(window);
         let papers = self.paper_ids();
         let table = uniform_list("library-rows", count, cx.processor(move |_: &mut Workspace, range: std::ops::Range<usize>, _, cx| {
             range.map(|i| {
                 let row = &rows[i];
                 let (open, cite, menu) = (row.key.clone(), row.key.clone(), row.key.clone());
+                let on = selected.contains(&row.key);
+                let accent = on && active;
                 let cells = columns.iter().map(|(col, _, width)| {
                     let paper = *col == Col::Title && papers.contains(&paper_file(&row.key));
                     div().when_some(*width, |d, w| d.w(px(w)).flex_none())
                         .when(width.is_none(), |d| d.flex_1().min_w_0())
                         .pr(px(CELL_X)).flex().items_center().gap(px(6.)).text_size(px(13.))
                         .when(*col == Col::Key, |d| d.font_family(theme::MONO_FONT).text_size(px(12.)))
-                        .text_color(if *col == Col::Title { Theme::text() } else { Theme::text_caption() })
+                        .text_color(if accent { gpui::white() } else if *col == Col::Title { Theme::text() } else { Theme::text_caption() })
                         .child(div().min_w_0().truncate().child(ui_text(cell(row, *col).to_string())))
-                        .when(paper, |d| d.child(icon(Icon::Paper, 13., Theme::text_placeholder())))
+                        .when(paper, |d| d.child(icon(Icon::Paper, 13., if accent { gpui::white() } else { Theme::text_placeholder() })))
                 }).collect::<Vec<_>>();
                 div().id(("library-row", i)).group("library-row").w_full().h(px(ROW_H)).px(px(CELL_X)).flex().items_center().cursor_pointer().rounded(px(crate::ui::ROW_RADIUS))
-                    .when(selected.contains(&row.key), |d| d.bg(Theme::sidebar_selected()))
+                    .when(i % 2 == 1, |d| d.bg(Theme::fill_group()))
+                    .when(on, |d| d.bg(if active { Theme::primary() } else { Theme::sidebar_selected() }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
                         window.focus(&w.citations.focus);
                         if !w.citations.selected.contains(&menu) { w.select_only(&menu); }
@@ -982,6 +1000,7 @@ impl Workspace {
                     .child(div().w(px(CITE_W)).flex_none().flex().justify_end().when(can_cite, |d| d.child(
                         div().id(("library-cite", i)).px(px(8.)).h(px(22.)).flex().items_center().rounded(px(5.)).text_size(px(12.))
                             .border_1().border_color(Theme::line_border())
+                            .when(accent, |d| d.text_color(gpui::white()).border_color(gpui::white().opacity(0.5)))
                             .opacity(0.).group_hover("library-row", |s| s.opacity(1.))
                             .active(|s| s.bg(Theme::fill_pressed()))
                             .child("Cite")
@@ -1354,7 +1373,7 @@ impl Workspace {
                 if let Some(inspector) = &mut w.citations.inspector { inspector.type_menu = Some(ev.position()); }
                 cx.notify();
             }));
-        Some(div().id("inspector").w(px(INSPECTOR_W)).flex_none().h_full().border_l_1().border_color(list_line()).px(px(12.)).pb(px(16.)).overflow_y_scroll().flex().flex_col()
+        Some(div().id("inspector").w(px(INSPECTOR_W)).flex_none().h_full().bg(Theme::fill_group()).border_l_1().border_color(list_line()).px(px(12.)).pb(px(16.)).overflow_y_scroll().flex().flex_col()
             .child(row("Type".into(), type_button.into_any_element()))
             .children(inspector.fields.iter().map(|(field, entity)| row(field.label.into(), entity.clone().into_any_element())))
             .child(row("Citation Key".into(), inspector.key_field.clone().into_any_element()))

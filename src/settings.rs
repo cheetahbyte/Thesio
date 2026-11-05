@@ -29,10 +29,12 @@ pub struct Preferences {
     pub unpaywall_email: String,
     /// Library column widths by column name, where they were resized.
     pub library_columns: std::collections::BTreeMap<String, f32>,
+    /// Keep the Library's details panel closed.
+    pub library_details_hidden: bool,
 }
 
 impl Default for Preferences {
-    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_files: true, unpaywall_email: String::new(), library_columns: Default::default() } }
+    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_files: true, unpaywall_email: String::new(), library_columns: Default::default(), library_details_hidden: false } }
 }
 
 

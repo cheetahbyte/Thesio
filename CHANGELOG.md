@@ -4,7 +4,8 @@
 
 - Restyle the sidebar after Finder: chevrons sit at the end of the line, and the hover buttons are gone. Right-click the list for New document, New folder, and Select documents, or a row for its actions.
 - Choose from 19 source types in the Library, such as Journal Article, Book, Thesis, and Web Page. Each shows the fields that type has.
-- Edit sources in a panel beside the table instead of a dialog. Changes save when you leave a field.
+- Edit sources in a panel beside the table instead of a dialog. Changes save when you leave a field, and the toolbar shows or hides the panel.
+- Stripe the Library's rows, and mark the selection in the accent color while the table has the keyboard.
 - Tag sources in the Library: right-click for Tags…, filter by tag above the table, and search by tag. Tags are saved in `library.yaml` and exported to BibLaTeX as `keywords`.
 - Select several Library rows with shift, ⌘, or the arrow keys, then tag or delete them together. A click now selects a row and shows it in the panel; double-click or Return moves the caret there.
 - Resize the Library's columns by dragging their edges.

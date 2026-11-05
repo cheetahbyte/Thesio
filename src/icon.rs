@@ -59,6 +59,7 @@ icons! {
     Show "eye" "eye",
     PanelToggle "sidebar.right" "panel-left-close",
     SidebarToggle "sidebar.left" "panel-left-close",
+    Details "sidebar.right" "panel-right",
     Star "star" "star",
     Storage "internaldrive" "storage",
     Unpin "pin.slash" "pin-off",
