@@ -219,6 +219,9 @@ pub struct Workspace {
     pub search: Entity<TextField>,
     /// Keyboard highlight inside search results.
     pub search_sel: Option<usize>,
+    /// Highlights by paper, for search.
+    pub paper_index: HashMap<String, crate::search::IndexedPaper>,
+    pub indexing_papers: bool,
     pub sidebar_open: bool,
     /// Dragged width (300 by default, 268 to min(800, window − 540)).
     pub sidebar_width: f32,
@@ -348,6 +351,8 @@ impl Workspace {
             last_version: HashMap::new(),
             search,
             search_sel: None,
+            paper_index: HashMap::new(),
+            indexing_papers: false,
             sidebar_open: true,
             sidebar_width,
             sidebar_drag: false,

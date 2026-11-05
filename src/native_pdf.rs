@@ -36,12 +36,21 @@ pub struct Highlight {
 }
 
 #[derive(Default)]
-pub struct PdfPane { pane: RefCell<Option<Pane>>, highlights: RefCell<Vec<Highlight>>, opened: Cell<bool> }
+pub struct PdfPane { pane: RefCell<Option<Pane>>, highlights: RefCell<Vec<Highlight>>, opened: Cell<bool>, pending: RefCell<Option<Highlight>> }
 struct Pane { view: *mut Object, gpui: *mut Object, path: PathBuf }
 
 impl PdfPane {
     /// Shows `path` over `bounds`. False when PDFKit cannot read it.
     pub fn show(&self, path: &Path, bounds: Bounds<Pixels>, covered: bool, window: &Window) -> bool {
+        let shown = self.place(path, bounds, covered, window);
+        if shown && let Some(highlight) = self.pending.take() { self.go_to(&highlight); }
+        shown
+    }
+
+    /// Goes to a highlight of the paper being opened, once it is on screen.
+    pub fn go_to_when_open(&self, highlight: Highlight) { *self.pending.borrow_mut() = Some(highlight); }
+
+    fn place(&self, path: &Path, bounds: Bounds<Pixels>, covered: bool, window: &Window) -> bool {
         let Ok(handle) = HasWindowHandle::window_handle(window) else { return false };
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return false };
         let gpui = handle.ns_view.as_ptr() as *mut Object;
@@ -165,6 +174,49 @@ fn text_of(string: *mut Object) -> String {
     }
 }
 
+/// A document's highlights in page order.
+unsafe fn document_highlights(document: *mut Object) -> Vec<Highlight> {
+    let mut out = vec![];
+    unsafe {
+        let pages: usize = msg_send![document, pageCount];
+        for number in 0..pages {
+            let page: *mut Object = msg_send![document, pageAtIndex: number];
+            let label: *mut Object = msg_send![page, label];
+            let label = Some(text_of(label)).filter(|label| *label != (number + 1).to_string()).unwrap_or_default();
+            let annotations: *mut Object = msg_send![page, annotations];
+            let count: usize = msg_send![annotations, count];
+            for index in 0..count {
+                let annotation: *mut Object = msg_send![annotations, objectAtIndex: index];
+                let kind: *mut Object = msg_send![annotation, type];
+                if text_of(kind) != "Highlight" { continue; }
+                let contents: *mut Object = msg_send![annotation, contents];
+                out.push(Highlight { page: number, index, label: label.clone(), quote: quote_of(annotation, page), comment: text_of(contents) });
+            }
+        }
+    }
+    out
+}
+
+/// The highlights in the PDF at `path`, without showing it. Safe off the main
+/// thread: the document is its own, and the pool drains what PDFKit autoreleases.
+pub fn read_highlights(path: &Path) -> Vec<Highlight> {
+    let Some(path) = path.to_str().and_then(|path| std::ffi::CString::new(path).ok()) else { return vec![] };
+    unsafe {
+        let pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+        let text: *mut Object = msg_send![class!(NSString), stringWithUTF8String: path.as_ptr()];
+        let url: *mut Object = msg_send![class!(NSURL), fileURLWithPath: text];
+        let document: *mut Object = msg_send![class!(PDFDocument), alloc];
+        let document: *mut Object = msg_send![document, initWithURL: url];
+        let out = if document.is_null() { vec![] } else {
+            let out = document_highlights(document);
+            let _: () = msg_send![document, release];
+            out
+        };
+        let _: () = msg_send![pool, drain];
+        out
+    }
+}
+
 /// The rectangle of quad `points[at..at + 4]`, in page space.
 unsafe fn quad_rect(points: *mut Object, at: usize, origin: CGPoint) -> CGRect {
     let corner = |index: usize| -> CGPoint { unsafe {
@@ -189,26 +241,7 @@ impl Pane {
     }
 
     fn highlights(&self) -> Vec<Highlight> {
-        let mut out = vec![];
-        unsafe {
-            let document = self.document();
-            let pages: usize = msg_send![document, pageCount];
-            for number in 0..pages {
-                let page: *mut Object = msg_send![document, pageAtIndex: number];
-                let label: *mut Object = msg_send![page, label];
-                let label = Some(text_of(label)).filter(|label| *label != (number + 1).to_string()).unwrap_or_default();
-                let annotations: *mut Object = msg_send![page, annotations];
-                let count: usize = msg_send![annotations, count];
-                for index in 0..count {
-                    let annotation: *mut Object = msg_send![annotations, objectAtIndex: index];
-                    let kind: *mut Object = msg_send![annotation, type];
-                    if text_of(kind) != "Highlight" { continue; }
-                    let contents: *mut Object = msg_send![annotation, contents];
-                    out.push(Highlight { page: number, index, label: label.clone(), quote: quote_of(annotation, page), comment: text_of(contents) });
-                }
-            }
-        }
-        out
+        unsafe { document_highlights(self.document()) }
     }
 
     unsafe fn highlight_selection(&self) -> bool {

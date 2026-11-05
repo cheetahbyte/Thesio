@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Search sources and PDF highlights along with documents. Enter opens a source in the Library, or a paper at the highlight.
 - Compile on a thread with a large stack. A document embedding a PDF with colour profiles could crash a debug build, and other builds had less margin than they should.
 - Link notes: type `[[` to pick a document, which writes a plain Typst `#link`. ⌘-click it in the editor or click it in the preview to open it, and see what links to a document under Linked From in the sidebar. Links follow files that move.
 - Show which documents cite a source in the Library's panel, and go to the first citation on click.

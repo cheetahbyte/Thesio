@@ -645,7 +645,7 @@ impl Workspace {
 
     /// Shows `key` in the inspector and puts the caret in its first field, or
     /// without a key, adds a blank entry to fill in.
-    fn open_entry(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_entry(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let key = match key {
             Some(key) => key,
             None => {

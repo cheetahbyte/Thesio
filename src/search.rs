@@ -4,6 +4,9 @@
 //! times. Radius 16, quiet row fills, monochrome page glyphs.
 
 use crate::app::Workspace;
+use crate::citations::matches;
+use crate::library::Row;
+use crate::native_pdf::{Highlight, read_highlights};
 use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
@@ -21,6 +24,26 @@ const SUMMARY_SEP: &str = "\u{a0}\u{a0}\u{a0}";
 /// Text column of a row: 540 − list padding 4 / 4 + 6 (scrollbar gutter)
 /// − row padding 12 / 8 − icon 24 + 10.
 const INFO_W: f32 = 472.;
+
+/// A search result.
+#[derive(Clone)]
+pub enum Hit {
+    Doc(Entry),
+    Source(Row),
+    /// A paper's id and title, and the highlight.
+    Highlight(String, String, Highlight),
+}
+
+/// A paper's highlights, read once for each state of its file.
+pub struct IndexedPaper {
+    stamp: (std::time::SystemTime, u64),
+    highlights: Vec<Highlight>,
+}
+
+fn stamp(path: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
 
 /// Case-insensitive match position in `hay`, in `hay`'s own byte offsets.
 pub(crate) fn find_ci(hay: &str, needle_lower: &str) -> Option<Range<usize>> {
@@ -172,6 +195,21 @@ pub(crate) fn extra_line(e: &Entry) -> Div {
         .children(extra)
 }
 
+/// The icon of a result that is not a document.
+fn kind_icon(glyph: Icon) -> Div {
+    div().flex_none().size(px(24.)).mr(px(10.)).flex().items_center().justify_center().child(icon(glyph, 18., Theme::text_placeholder()))
+}
+
+/// A source or highlight: a title, maybe a summary, and what it is.
+fn hit_info(title: String, summary: Option<(String, Vec<Range<usize>>)>, detail: String, q: &str, window: &Window) -> Div {
+    let title_hit = find_ci(&title, q);
+    div().flex_1().min_w_0().flex().flex_col().overflow_hidden()
+        .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::text()).overflow_hidden().whitespace_nowrap().text_ellipsis()
+            .child(ui_text(title).hit(title_hit, Theme::link())))
+        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, INFO_W, window))))
+        .child(div().mt(px(2.)).h(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(12.)).line_height(px(20.)).text_color(Theme::text_caption()).child(detail))
+}
+
 /// A result's title (13pt semibold, hits in the link colour), summary and extra line.
 pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, width: f32, window: &Window) -> Div {
     let title = display_title(&e.title);
@@ -201,6 +239,7 @@ impl Workspace {
     pub(crate) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search_open = true;
         self.search_sel = Some(0);
+        self.index_papers(cx);
         self.row_menu = None;
         self.doc_menu = false;
         let search = self.search.clone();
@@ -226,17 +265,46 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Reads the highlights of papers that are new or changed, off the main
+    /// thread: results fill in when it is done.
+    fn index_papers(&mut self, cx: &mut Context<Self>) {
+        if self.indexing_papers { return; }
+        let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| e.id.ends_with(".pdf"))
+            .filter_map(|e| Some((e.id.clone(), self.store.path(&e.id).ok()?)))
+            .filter(|(id, path)| stamp(path).is_some_and(|now| self.paper_index.get(id).is_none_or(|known| known.stamp != now))).collect();
+        if papers.is_empty() { return; }
+        self.indexing_papers = true;
+        let work = cx.background_spawn(async move {
+            papers.into_iter().filter_map(|(id, path)| Some((id, IndexedPaper { stamp: stamp(&path)?, highlights: read_highlights(&path) }))).collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let found = work.await;
+            let _ = this.update(cx, |w, cx| {
+                w.paper_index.extend(found);
+                w.indexing_papers = false;
+                cx.notify();
+            });
+        }).detach();
+    }
+
     /// First result is selected; an empty result list has no selection.
     pub(crate) fn default_search_sel(&self, cx: &App) -> Option<usize> {
         (!self.search_results(cx).is_empty()).then_some(0)
     }
 
     pub(crate) fn pick_search(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.search_results(cx).get(row).map(|e| e.id.clone()) else { return };
+        let Some(hit) = self.search_results(cx).into_iter().nth(row) else { return };
         self.close_search(window, cx);
-        self.open(&id, window, cx);
-        if let Some(ed) = &self.editor {
-            ed.read(cx).focus(window);
+        match hit {
+            Hit::Doc(entry) => {
+                self.open(&entry.id, window, cx);
+                if let Some(ed) = &self.editor { ed.read(cx).focus(window); }
+            }
+            Hit::Source(row) => self.open_entry(Some(row.key), window, cx),
+            Hit::Highlight(id, _, highlight) => {
+                self.pdf.go_to_when_open(highlight);
+                self.open_paper(&id, cx);
+            }
         }
     }
 
@@ -254,8 +322,24 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Documents, then sources, then highlights; with no query, Recently viewed.
+    pub fn search_results(&self, cx: &App) -> Vec<Hit> {
+        let q = self.query(cx);
+        let mut hits: Vec<Hit> = self.document_results(cx).into_iter().cloned().map(Hit::Doc).collect();
+        if q.is_empty() { return hits; }
+        let rows = self.citations.library.as_ref().map_or(vec![], crate::library::Library::rows);
+        hits.extend(rows.into_iter().filter(|row| matches(row, &q)).map(Hit::Source));
+        let mut papers: Vec<_> = self.paper_index.iter().collect();
+        papers.sort_by(|a, b| a.0.cmp(b.0));
+        for (id, paper) in papers {
+            let found = paper.highlights.iter().filter(|h| h.quote.to_lowercase().contains(&q) || h.comment.to_lowercase().contains(&q));
+            hits.extend(found.map(|highlight| Hit::Highlight(id.clone(), self.paper_title(id), highlight.clone())));
+        }
+        hits
+    }
+
     /// Title hits first, then body hits; with no query, Recently viewed.
-    pub fn search_results(&self, cx: &App) -> Vec<&Entry> {
+    fn document_results(&self, cx: &App) -> Vec<&Entry> {
         let q = self.query(cx);
         if q.is_empty() {
             let mut recent: Vec<&Entry> = self.entries.iter().filter(|e| e.typst).collect();
@@ -281,8 +365,20 @@ impl Workspace {
         hits.into_iter().map(|(_, e)| e).collect()
     }
 
-    fn search_row(&self, e: &Entry, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let summary = snippet(&crate::library::without_block(&e.body), q);
+    fn search_row(&self, hit: &Hit, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (glyph, info) = match hit {
+            Hit::Doc(e) => (entry_icon(e), result_info(e, q, snippet(&crate::library::without_block(&e.body), q), INFO_W, window)),
+            Hit::Source(row) => {
+                let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
+                let detail = ["Source", row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+                (kind_icon(Icon::Library), hit_info(title, None, detail, q, window))
+            }
+            Hit::Highlight(_, title, highlight) => {
+                let text = if highlight.comment.is_empty() { highlight.quote.clone() } else { format!("{}\n{}", highlight.quote, highlight.comment) };
+                let page = if highlight.label.is_empty() { (highlight.page + 1).to_string() } else { highlight.label.clone() };
+                (kind_icon(Icon::Quote), hit_info(title.clone(), snippet(&text, q), format!("Highlight · page {page}"), q, window))
+            }
+        };
         // Result indices match keyboard selection.
         let row = ix;
         div()
@@ -304,8 +400,8 @@ impl Workspace {
                 }
             }))
             .on_click(cx.listener(move |w, _, window, cx| w.pick_search(row, window, cx)))
-            .child(entry_icon(e))
-            .child(result_info(e, q, summary, INFO_W, window))
+            .child(glyph)
+            .child(info)
     }
 
     pub(crate) fn render_search(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -314,7 +410,7 @@ impl Workspace {
         }
         let q = self.query(cx);
         let has_text = !self.search.read(cx).text.is_empty();
-        let results: Vec<Entry> = self.search_results(cx).into_iter().cloned().collect();
+        let results = self.search_results(cx);
         let vh = f32::from(window.viewport_size().height);
 
         let input = div()

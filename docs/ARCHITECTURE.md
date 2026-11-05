@@ -53,6 +53,10 @@ A failed save keeps the changes pending, shows the error in the top bar, and ask
 
 A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates the open document, so its editor and undo history survive. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
 
+## Search
+
+The search dialog lists documents, then sources, then PDF highlights. Highlights live inside each PDF, so `search.rs` reads them with PDFKit when the dialog opens, off the main thread, and keeps them by file time and size. Results fill in once that finishes. Text in a PDF that is not highlighted is not searched.
+
 ## Version history
 
 `history.rs` keeps versions as plain files in `.thesio/history/<id>/`: one when a file opens, then at most one every five minutes as it saves, and none if nothing changed. Every version stays for a day, then one a day for 90 days, and a file's newest version always stays. `Store::relocate` moves a file's versions with it. Restoring keeps the current text as a version first and goes through the editor, so it can be undone. `Library::commit` keeps `library.yaml` the same way before it writes, so a run of quick edits leaves the state before the first, and a version that no longer parses cannot be restored.
