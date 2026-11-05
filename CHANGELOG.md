@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep working when undo or redo changes text before an open completion popup. Text with multi-byte characters crashed the app and lost unsaved edits.
+- Replace a typed `:` or `.` when accepting a label, so `@fig:` gives `@fig:plot` and not `@fig:plot:`.
+- Show an underline's message right after typing a typo. A popup with nothing to offer used to block it until the caret moved.
+- Offer file paths with ⌃Space in an unclosed string above other text, not only on the last line of the file.
 - Drag images into the editor, or paste an image or an image file. The image is copied to `images/` beside the document, and a `#figure` goes in at the caret with the path relative to the document and the caret in an empty caption. Several images make several figures, and Tab moves between their captions. PNG, JPEG, GIF, WebP, SVG, and PDF work. A file with the same content is reused and no existing file is replaced. Pasted bitmaps are saved as PNG. Undo removes the figure and leaves the copied file.
 - Underline compile errors in red and warnings in amber in the editor, on the exact text, in paper notes too. Pointing at an underline shows the message and hints. Underlines follow your typing and stay until the new result arrives, and a chapter's errors show in the chapter when it is open. The list under the preview stays.
 - Land on the right place when clicking a diagnostic in the list while newer text compiles.

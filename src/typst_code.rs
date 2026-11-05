@@ -38,7 +38,7 @@ impl Provider for TypstCode {
             _ if self.starts.opens(text, word) => word,
             Reach::Typed => return None,
             Reach::Asked => word,
-            Reach::Open(start) => Some(start).filter(|start| *start <= caret && continues_completion(&text[*start..caret]))?,
+            Reach::Open(start) => Some(start).filter(|start| text.get(*start..caret).is_some_and(continues_completion))?,
         };
         Some(Found { range: start..caret, query: text[start..caret].to_string() })
     }
@@ -78,6 +78,11 @@ mod tests {
         assert_eq!(found("#image(\"figures/pl", Reach::Open(8)), Some((8..18, "figures/pl".to_string())));
         assert_eq!(found("#he ", Reach::Open(1)), None);
         assert_eq!(found("ab", Reach::Open(9)), None, "the caret left it behind");
+    }
+
+    #[test]
+    fn a_popup_start_inside_a_character_ends_the_popup() {
+        assert_eq!(found("日本語", Reach::Open(1)), None);
     }
 
     #[test]

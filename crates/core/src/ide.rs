@@ -84,14 +84,18 @@ fn kind_rank(kind: &CompletionKind) -> u8 {
 /// What has to follow `caret` for the parser to read an unfinished call or
 /// string. It takes a `(` nobody closed for an error, and `typst_ide` finds no
 /// call there to offer parameters for, while the editor closes nothing itself.
+/// A string nobody closed runs to the next quote or the end of the file, so
+/// one that leaves the caret's line counts as ending at the caret.
 fn closing_at(text: &str, caret: usize) -> &'static str {
     let source = Source::detached(text);
     let root = LinkedNode::new(source.root());
-    let (mut string, mut call) = (false, false);
+    let string = root.leaf_at(caret, Side::Before).is_some_and(|leaf| {
+        let range = leaf.range();
+        leaf.leaf_text().starts_with('"') && range.start < caret && caret <= range.end && (leaf.kind().is_error() || text[caret..range.end].contains('\n'))
+    });
+    let mut call = false;
     crate::typst_source::walk(&root, &mut |node| {
-        if !node.kind().is_error() { return; }
-        string = string || node.range().end == caret && node.leaf_text().starts_with('"');
-        call = call || node.offset() < caret && node.leaf_text() == "(";
+        call = call || node.kind().is_error() && node.offset() < caret && node.leaf_text() == "(";
     });
     match (string, call) {
         (true, true) => "\")",
@@ -346,6 +350,21 @@ mod tests {
         let compilation = compiled("open-string", &[("main.typ", "Text.\n"), ("figures/plot.png", ""), ("lib.typ", "")]);
         assert_eq!(complete(&compilation, "#image(\"fig|", true)[0].insert.text, "\"figures/plot.png\"");
         assert_eq!(complete(&compilation, "#import \"li|", true)[0].insert.text, "\"lib.typ\"");
+    }
+
+    #[test]
+    fn a_string_nobody_closed_is_completed_with_text_below_it() {
+        let compilation = compiled("open-string-below", &[("main.typ", "Text.\n"), ("figures/plot.png", "")]);
+        for text in ["#image(\"fig|\n\nMore text below.\n", "#image(\"|\n\nMore\n", "= H\n#image(\"fig|\n= Next\nSome \"quoted\" text\n"] {
+            assert_eq!(titles(&complete(&compilation, text, true)), ["figures/plot.png"], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_string_closed_on_its_line_stays_as_it_is() {
+        assert_eq!(closing_at("#image(\"fig\")\nMore \"quoted\"\n", 10), "");
+        assert_eq!(closing_at("#image(\"fig\")\nMore\n", 12), "");
+        assert_eq!(closing_at("#image(\"fig\n\nMore\n", 10), "\")");
     }
 
     #[test]

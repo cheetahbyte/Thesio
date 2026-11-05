@@ -166,7 +166,8 @@ pub fn citation_at(text: &str, caret: usize) -> Option<Range<usize>> {
     let root = LinkedNode::new(source.root());
     let leaf = root.leaf_at(at + 1, Side::Before)?;
     // Typst only lexes `@` as a reference once a key follows it.
-    (matches!(leaf.kind(), SyntaxKind::RefMarker | SyntaxKind::Text) && in_plain_text(&leaf)).then(|| at..at + text[at..end].trim_end_matches(['.', ':']).len())
+    // A dot or colon after the key is prose, unless it is already part of what is typed.
+    (matches!(leaf.kind(), SyntaxKind::RefMarker | SyntaxKind::Text) && in_plain_text(&leaf)).then(|| at..(at + text[at..end].trim_end_matches(['.', ':']).len()).max(caret))
 }
 
 #[cfg(test)]
@@ -213,6 +214,14 @@ mod tests {
         assert_eq!(citation_at("a@fla", 5), None);
         assert_eq!(citation_at("`@fla`", 5), None);
         assert_eq!(citation_at("// @fla", 7), None);
+    }
+
+    #[test]
+    fn a_citation_ends_at_the_caret_or_before_the_prose_after_it() {
+        assert_eq!(citation_at("See @fig:", 9), Some(4..9));
+        assert_eq!(citation_at("See @fig.", 9), Some(4..9));
+        assert_eq!(citation_at("See @fig: then", 8), Some(4..8));
+        assert_eq!(citation_at("See @fig:plot. Then", 8), Some(4..13));
     }
 
     #[test]

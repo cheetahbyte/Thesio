@@ -422,6 +422,8 @@ impl SourceEditor {
     /// with them the way back to the caret.
     fn text_changed(&mut self, change: Change) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
+        // An undo or a reload before the popup moves the text its offsets and items point at.
+        if self.completion.as_ref().is_some_and(|open| change.range.start < open.range.start) { self.completion = None; }
         self.refold();
         self.decorations.retain_mut(|decoration| stretch(&mut decoration.range, &change.range, change.new_len));
         self.stops.retain_mut(|stop| follow(stop, &change.range, change.new_len));
@@ -524,6 +526,9 @@ impl SourceEditor {
         cx.notify();
     }
 
+    /// A popup with no items draws nothing and stays open for typing to bring them back.
+    fn completion_shown(&self) -> bool { self.completion.as_ref().is_some_and(|open| !open.items.is_empty()) }
+
     /// Where the row holding `offset` was last painted, in window coordinates.
     fn painted_at(&self, offset: usize) -> Option<Point<Pixels>> {
         let line = self.buffer.line_of(offset);
@@ -566,7 +571,7 @@ impl SourceEditor {
     /// Follows the pointer: on a new word or underline it waits, then says what
     /// the underline means or asks what the word is.
     fn point_at(&mut self, at: Option<usize>, cx: &mut Context<Self>) {
-        let Some(at) = at.filter(|_| self.session.is_some() && self.completion.is_none()) else { return self.stop_pointing(cx) };
+        let Some(at) = at.filter(|_| self.session.is_some() && !self.completion_shown()) else { return self.stop_pointing(cx) };
         let place = self.folded.as_ref().filter(|fold| fold.holds(at)).map_or(at..at + 1, |fold| fold.bytes.clone());
         let problems: Vec<Decoration> = self.decorations.iter().rev().filter(|decoration| decoration.meets(&place)).cloned().collect();
         let problem = !problems.is_empty();
@@ -622,7 +627,7 @@ impl SourceEditor {
     }
 
     fn render_hover(&self) -> Option<AnyElement> {
-        let pointed = self.pointed.as_ref().filter(|_| self.completion.is_none())?;
+        let pointed = self.pointed.as_ref().filter(|_| !self.completion_shown())?;
         let shown = pointed.shown.as_ref()?;
         let at = self.painted_at(pointed.anchor)?;
         let body = div().text_size(px(12.)).line_height(px(17.));
