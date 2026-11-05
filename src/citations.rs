@@ -10,18 +10,18 @@ use thesio_core::lookup::{self, Identifier};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, row_hover, scrim, secondary_button};
-use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_icon, ui_text};
+use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use thesio_core::references::{cited_keys, included_files};
 
-const ROW_H: f32 = 36.;
+const ROW_H: f32 = 32.;
 /// Rows inset their hover fill, so cell text lines up with the page title.
 const TABLE_X: f32 = 14.;
 const CELL_X: f32 = 12.;
 const CITE_W: f32 = 56.;
-const ADD_W: f32 = 70.;
+const ADD_W: f32 = 68.;
 /// Rows of the entry form, grouped; the numbers count `EntryForm::fields`.
 const FORM_GROUPS: [usize; 4] = [2, 3, 4, 2];
 const PICKER_ROWS: usize = 8;
@@ -49,9 +49,8 @@ fn cell(row: &Row, col: Col) -> &str {
 
 /// A borderless dialog action, beside the buttons but quieter than them.
 fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
-    div().id(id).flex_none().h(px(crate::ui::BUTTON_H)).px(px(10.)).flex().items_center().rounded(px(crate::ui::BUTTON_RADIUS)).cursor_pointer()
-        .text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::MEDIUM).text_color(Theme::primary())
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(label)
+    div().id(id).flex_none().h(px(crate::ui::BUTTON_H)).px(px(4.)).flex().items_center().rounded(px(crate::ui::BUTTON_RADIUS)).cursor_pointer()
+        .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).hover(|s| s.opacity(0.8)).child(label)
 }
 
 pub(crate) fn matches(row: &Row, query: &str) -> bool {
@@ -359,7 +358,7 @@ impl Workspace {
         rows
     }
 
-    pub(crate) fn render_cite_picker(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_cite_picker(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.citations.picker.as_ref()?;
         let rows = self.picker_rows(cx);
         let empty = rows.is_empty();
@@ -376,7 +375,7 @@ impl Workspace {
         let unlinked = if let PickFor::Attach(path) = &picker.purpose { Some(path.clone()) } else { None };
         let panel = dialog("cite-picker").w(px(520.)).p(px(12.)).flex().flex_col().gap(px(8.))
             .children(hint)
-            .child(search_well(picker.field.clone().into()))
+            .child(search_well(&picker.field, window, cx))
             .when(empty, |d| d.child(div().px(px(12.)).py(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child("No matching entries")))
             .children(list)
             .when_some(unlinked, |d, path| d.child(div().flex().child(plain_button("picker-unlinked", "Add Without a Source").on_click(cx.listener(move |w, _, window, cx| {
@@ -567,14 +566,14 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn render_lookup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_lookup(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let lookup = self.citations.lookup.as_ref()?;
         let problems = lookup.problems.iter().map(|p| div().text_size(px(13.)).line_height(px(18.)).text_color(theme::c(craft::R400)).child(p.clone())).collect::<Vec<_>>();
         let panel = dialog("lookup").w(px(480.)).p(px(20.)).flex().flex_col().gap(px(10.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Add by identifier"))
             .child(div().text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child("Enter one or more DOIs, arXiv IDs, PMIDs, or ISBNs. Each is sent to doi.org, NCBI, or Open Library, and Thesio looks for an open-access PDF through arXiv and Unpaywall."))
-            .child(field_well().child(lookup.field.clone()))
+            .child(field_well(&lookup.field, window, cx))
             .children(problems)
             .child(div().mt(px(8.)).flex().items_center().gap(px(8.))
                 .child(plain_button("lookup-manual", "Enter Manually…").on_click(cx.listener(|w, _, window, cx| {
@@ -645,16 +644,16 @@ impl Workspace {
         }).detach();
     }
 
-    pub(crate) fn render_library(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_library(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let query = self.citations.search.read(cx).text.trim().to_lowercase();
         let rows = self.visible_rows(&query);
         let total = self.citations.library.as_ref().map_or(0, Library::len);
         let can_edit = self.citations.library.is_some();
         let header = page_header(self, "Library", (total > 0).then_some(total), 26., cx)
-            .child(div().id("library-search").no_drag().w(px(220.)).mr(px(4.)).child(search_well(self.citations.search.clone().into())))
+            .child(div().id("library-search").no_drag().w(px(220.)).mr(px(8.)).child(search_well(&self.citations.search, window, cx)))
             .when(can_edit, |d| d
-                .child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().mr(px(8.)).when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("Import and export", None)
-                    .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); })))
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("Import and export", None)
+                    .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
         let mut page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
         if let Some(error) = &self.citations.error {
@@ -672,7 +671,7 @@ impl Workspace {
                 .when_some(*width, |d, w| d.w(px(w)).flex_none())
                 .when(width.is_none(), |d| d.flex_1().min_w_0())
                 .pr(px(CELL_X)).flex().items_center().gap(px(4.)).text_size(px(12.)).line_height(px(24.)).cursor_pointer()
-                .font_weight(FontWeight::MEDIUM).text_color(if sorted { Theme::text() } else { list_header_text() })
+                .text_color(if sorted { Theme::text() } else { list_header_text() })
                 .child(*label)
                 .when(sorted, |d| d.child(icon(if ascending { Icon::ChevronUp } else { Icon::ChevronDown }, 10., Theme::text_caption())))
                 .on_click(cx.listener(move |w, _, _, cx| {
@@ -681,7 +680,7 @@ impl Workspace {
                     cx.notify();
                 }))
         }).collect::<Vec<_>>();
-        let table_header = div().h(px(30.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line()).children(columns).child(div().w(px(CITE_W)).flex_none());
+        let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line()).children(columns).child(div().w(px(CITE_W)).flex_none());
         let count = rows.len();
         if count == 0 {
             return page.child(table_header).child(crate::trash::empty_state(Icon::Search, "No results", "Try a different title, author, year, or key.")).into_any_element();
@@ -712,10 +711,10 @@ impl Workspace {
                     }))
                     .children(cells)
                     .child(div().w(px(CITE_W)).flex_none().flex().justify_end().when(can_cite, |d| d.child(
-                        div().id(("library-cite", i)).px(px(10.)).h(px(24.)).flex().items_center().rounded(px(6.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM)
-                            .bg(Theme::fill_hover_strong())
+                        div().id(("library-cite", i)).px(px(8.)).h(px(22.)).flex().items_center().rounded(px(5.)).text_size(px(12.))
+                            .border_1().border_color(Theme::line_border())
                             .opacity(0.).group_hover("library-row", |s| s.opacity(1.))
-                            .hover(|s| s.bg(Theme::fill_pressed()))
+                            .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
                             .child("Cite")
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |w, _, window, cx| {
@@ -895,8 +894,8 @@ impl Workspace {
             return page.child(crate::trash::empty_state(Icon::Paper, "No papers yet", "Open-access papers download here, or add a PDF yourself.")).into_any_element();
         }
         let column = |label: &'static str, width: Option<f32>| div().when_some(width, |d, w| d.w(px(w)).flex_none()).when(width.is_none(), |d| d.flex_1().min_w_0()).pr(px(CELL_X)).child(label);
-        let table_header = div().h(px(30.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line())
-            .text_size(px(12.)).line_height(px(24.)).font_weight(FontWeight::MEDIUM).text_color(list_header_text())
+        let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line())
+            .text_size(px(12.)).line_height(px(24.)).text_color(list_header_text())
             .child(column("Title", None)).child(column("Authors", Some(200.))).child(column("Year", Some(64.))).child(column("Key", Some(150.)));
         let count = papers.len();
         let table = uniform_list("source-rows", count, cx.processor(move |_: &mut Workspace, range: std::ops::Range<usize>, _, cx| {
@@ -913,8 +912,8 @@ impl Workspace {
                     .child(cell(Some(64.), text(|row| &row.year)))
                     .when(!unlinked, |d| d.child(cell(Some(150.), text(|row| &row.key)).font_family(theme::MONO_FONT).text_size(px(12.))))
                     .when(unlinked, |d| d.child(div().w(px(150.)).flex_none().flex().child(
-                        div().id(("source-link", i)).px(px(10.)).h(px(24.)).flex().items_center().rounded(px(6.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text())
-                            .bg(Theme::fill_hover_strong()).hover(|s| s.bg(Theme::fill_pressed()))
+                        div().id(("source-link", i)).px(px(8.)).h(px(22.)).flex().items_center().rounded(px(5.)).text_size(px(12.)).text_color(Theme::text())
+                            .border_1().border_color(Theme::line_border()).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
                             .child("Link to Source…")
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |w, _, window, cx| {
@@ -940,12 +939,10 @@ impl Workspace {
         if self.view != View::Library { return None; }
         let (key, position) = self.citations.row_menu.clone()?;
         let item = |id: &'static str, glyph: Icon, label: &'static str| {
-            let g = SharedString::from(id);
-            menu_row(id, g.clone()).child(menu_glyph(glyph, 16., g.clone())).child(menu_label(label, g, gpui::white()))
+            menu_row(id).child(menu_glyph(glyph, 16.)).child(menu_label(label))
         };
         let (edit, cite, copy, paper, attach, notes, delete) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
         let has_paper = self.has_paper(&paper);
-        let g = SharedString::from("entry-menu-delete");
         let menu = popover().id("entry-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
             .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.row_menu = None; cx.notify(); }))
             .child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(cx.listener(move |w, _, window, cx| {
@@ -976,9 +973,9 @@ impl Workspace {
                 cx.notify();
             })))
             .child(div().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border()))
-            .child(menu_row("entry-menu-delete", g.clone()).text_color(Theme::danger())
-                .child(icon(Icon::Delete, 16., Theme::danger()).group_hover(g.clone(), |s| s.text_color(gpui::white())))
-                .child(menu_label("Delete", g, gpui::white()))
+            .child(menu_row("entry-menu-delete").text_color(Theme::danger())
+                .child(icon(Icon::Delete, 16., Theme::danger()))
+                .child(menu_label("Delete"))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.citations.row_menu = None;
                     w.confirm = Some(Confirm::DeleteEntry(delete.clone()));
@@ -990,8 +987,7 @@ impl Workspace {
     pub(crate) fn render_library_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.citations.menu || self.view != View::Library { return None; }
         let item = |id: &'static str, glyph: Icon, label: &'static str| {
-            let g = SharedString::from(id);
-            menu_row(id, g.clone()).child(menu_glyph(glyph, 16., g.clone())).child(menu_label(label, g, gpui::white()))
+            menu_row(id).child(menu_glyph(glyph, 16.)).child(menu_label(label))
         };
         let menu = popover().id("library-menu").occlude().w(px(220.)).py(px(crate::ui::MENU_PAD_Y))
             .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.menu = false; cx.notify(); }))

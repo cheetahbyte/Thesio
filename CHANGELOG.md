@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Move the controls to a flat look of their own: hairline outlines, quiet menu highlights, and a new accent.
 - Redesign the interface: native SF Symbols on macOS, calmer buttons and fields, and grouped forms.
 - Simplify the Library toolbar: Add opens Add by Identifier, with manual entry inside it, and Import and Export move to a "…" menu.
 - Show empty and no-result states in the Library, and prose instead of Typst source on Home cards.

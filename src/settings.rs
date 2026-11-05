@@ -157,7 +157,7 @@ pub(crate) fn group(title: Option<&'static str>, rows: Vec<AnyElement>) -> Div {
     let n = rows.len();
     div().w_full().flex().flex_col().gap(px(8.))
         .children(title.map(caption))
-        .child(div().w_full().flex().flex_col().rounded(px(12.)).bg(Theme::fill_group()).overflow_hidden()
+        .child(div().w_full().flex().flex_col().rounded(px(8.)).border_1().border_color(Theme::line_border()).overflow_hidden()
             .children(rows.into_iter().enumerate().map(move |(i, r)| div().w_full().flex().flex_col().when(i + 1 < n, |d| d.border_b_1().border_color(ui::list_line())).child(r))))
 }
 
@@ -167,10 +167,10 @@ pub(crate) fn caption(t: &'static str) -> Div {
 
 /// One setting: title and an optional description on the left, the control on the right.
 fn row(title: impl Into<SharedString>, desc: Option<SharedString>, control: impl IntoElement) -> Div {
-    div().w_full().min_h(px(48.)).px(px(16.)).py(px(10.)).flex().items_center().justify_between().gap(px(24.))
+    div().w_full().min_h(px(40.)).px(px(12.)).py(px(8.)).flex().items_center().justify_between().gap(px(24.))
         .child(div().flex_1().min_w_0().flex().flex_col().gap(px(2.))
             .child(div().text_size(px(13.)).line_height(px(20.)).text_color(Theme::text()).child(title.into()))
-            .children(desc.map(|d| div().text_size(px(12.)).line_height(px(17.)).text_color(Theme::text_caption()).child(d))))
+            .children(desc.map(|d| div().text_size(px(11.)).line_height(px(15.)).text_color(Theme::text_caption()).child(d))))
         .child(div().flex_none().flex().items_center().gap(px(8.)).child(control))
 }
 
@@ -178,46 +178,46 @@ fn row(title: impl Into<SharedString>, desc: Option<SharedString>, control: impl
 
 /// A segmented control: a grey groove and a white selected pill.
 pub(crate) fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
-    div().flex_none().h(px(28.)).p(px(2.)).flex().gap(px(2.)).rounded(px(9.)).bg(Theme::fill_hover_strong())
+    div().flex_none().h(px(ui::BUTTON_H)).flex().gap(px(2.))
         .children(labels.iter().enumerate().map(|(i, label)| {
             let on = on.clone();
-            div().id((id, i)).h_full().px(px(12.)).flex().items_center().justify_center().rounded(px(7.)).cursor_pointer()
+            div().id((id, i)).h_full().px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
                 .text_size(px(13.)).line_height(px(18.))
                 // In dark mode the picked segment is lighter than the groove (macOS: #636366).
-                .when(i == selected, |d| d.bg(if theme::dark() { theme::rgbaf(0x63, 0x63, 0x66, 1.) } else { Theme::bg_body() }).shadow(theme::shadow_button()).text_color(Theme::text()))
+                .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
                 .when(i != selected, |d| d.text_color(Theme::text_caption()).hover(|s| s.text_color(Theme::text())))
                 .child(*label)
                 .on_click(cx.listener(move |w, _, _, cx| on(w, i, cx)))
         }))
 }
 
-/// An on/off switch: the accent when on, the knob at that end.
+/// An on/off switch: flat, the accent when on, the knob at that end.
 fn switch(id: &'static str, on: bool) -> Stateful<Div> {
-    div().id(id).flex_none().w(px(36.)).h(px(20.)).p(px(2.)).flex().items_center().rounded_full().cursor_pointer()
+    div().id(id).flex_none().w(px(30.)).h(px(18.)).p(px(2.)).flex().items_center().rounded_full().cursor_pointer()
         .when(on, |d| d.justify_end().bg(Theme::primary()))
         .when(!on, |d| d.bg(Theme::fill_active()))
-        .child(div().size(px(16.)).rounded_full().bg(gpui::white()).shadow(theme::shadow_button()))
+        .child(div().size(px(14.)).rounded_full().bg(gpui::white()))
 }
 
 /// A keyboard shortcut chip; `recording` shows it waiting for keys.
 pub(crate) fn keycap(id: impl Into<ElementId>, key: &str, recording: bool) -> Stateful<Div> {
-    div().id(id).flex_none().min_w(px(144.)).min_h(px(28.)).px(px(14.)).py(px(4.)).flex().items_center().justify_center().rounded(px(7.)).cursor_pointer()
+    div().id(id).flex_none().min_w(px(144.)).min_h(px(ui::BUTTON_H)).px(px(14.)).py(px(3.)).flex().items_center().justify_center().rounded(px(7.)).cursor_pointer()
         .text_size(px(12.)).line_height(px(16.))
         .when(recording, |d| d.bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::primary()).text_color(Theme::primary()).child(if key.is_empty() { "Press keys…".to_string() } else { crate::shortcuts::pretty(key) }))
-        .when(!recording, |d| d.bg(Theme::fill_hover()).border_1().border_color(transparent_black()).text_color(Theme::text()).hover(|s| s.bg(Theme::fill_hover_strong())).child(crate::shortcuts::pretty(key)))
+        .when(!recording, |d| d.bg(Theme::fill_hover()).border_1().border_color(transparent_black()).text_color(Theme::text()).child(crate::shortcuts::pretty(key)))
 }
 
 /// A small text button (Reset to default …).
 pub(crate) fn link_button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
     div().id(id).flex_none().h(px(26.)).px(px(10.)).flex().items_center().rounded(px(7.)).cursor_pointer()
-        .text_size(px(12.)).line_height(px(16.)).text_color(Theme::primary()).hover(|s| s.bg(Theme::fill_hover()))
+        .text_size(px(13.)).line_height(px(16.)).text_color(Theme::primary()).active(|s| s.bg(Theme::fill_hover()))
         .child(label)
 }
 
 pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
-    div().id(id).flex_none().h(px(28.)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
-        .bg(Theme::fill_hover_strong()).hover(|s| s.bg(Theme::fill_pressed())).active(|s| s.bg(Theme::fill_active()))
-        .text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text()).child(label)
+    div().id(id).flex_none().h(px(ui::BUTTON_H)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
+        .border_1().border_color(Theme::line_border()).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
+        .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text()).child(label)
 }
 
 impl Workspace {
@@ -306,12 +306,12 @@ impl Workspace {
         self.show_view(back, cx);
     }
 
-    pub(crate) fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let page = self.settings_page;
         let body = match page {
             Page::Appearance => self.appearance_page(cx),
             Page::Shortcuts => self.shortcut_settings(cx),
-            Page::Library => self.library_page(cx),
+            Page::Library => self.library_page(window, cx),
             Page::About => self.about_page(),
         };
         div().flex_1().min_w_0().h_full().flex().flex_col().bg(Theme::bg_body()).text_color(Theme::text()).font_family(theme::UI_FONT)
@@ -323,7 +323,7 @@ impl Workspace {
                     .child(div().w_full().max_w(px(if page == Page::Shortcuts { 760. } else { COLUMN_W })).flex().flex_col().gap(px(28.))
                         .child(div().flex().items_center().gap(px(16.))
                             .child(div().flex_1().min_w_0().px(px(4.)).text_size(px(22.)).line_height(px(28.)).font_weight(FontWeight::SEMIBOLD).child(page.title()))
-                            .when(page == Page::Shortcuts, |d| d.child(self.shortcut_actions(cx))))
+                            .when(page == Page::Shortcuts, |d| d.child(self.shortcut_actions(window, cx))))
                         .child(body))))
             .into_any_element()
     }
@@ -339,7 +339,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn library_page(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn library_page(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let root = crate::store::Store::root_dir();
         let location = if cfg!(target_os = "windows") { root.display().to_string() } else {
             dirs::home_dir().and_then(|h| root.strip_prefix(h).ok().map(|r| format!("~/{}", r.display()))).unwrap_or_else(|| root.display().to_string())
@@ -355,7 +355,7 @@ impl Workspace {
                 row("Hide library files", Some("Keeps library.yaml and the sources folder out of the sidebar. They stay in the vault.".into()),
                     switch("hide-library-files", hide_library_files).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_files = !hide_library_files, cx)))).into_any_element(),
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
-                    ui::field_well().w(px(220.)).child(self.citations.email.clone())).into_any_element(),
+                    ui::field_well(&self.citations.email, window, cx).w(px(220.))).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
                     button("open-trash", "Open").on_click(cx.listener(|w, _, _, cx| w.show_view(View::Trash, cx)))).into_any_element(),
             ]))

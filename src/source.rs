@@ -319,11 +319,11 @@ impl SourceEditor {
             let on = i == selected;
             let detail = [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
             let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
-            div().id(("completion", i)).mx(px(5.)).px(px(8.)).py(px(4.)).flex().flex_col().rounded(px(ROW_RADIUS)).cursor_pointer().overflow_hidden()
-                .when(on, |d| d.bg(Theme::menu_highlight()).text_color(gpui::white()))
+            div().id(("completion", i)).mx(px(4.)).px(px(8.)).py(px(4.)).flex().flex_col().rounded(px(ROW_RADIUS)).cursor_pointer().overflow_hidden()
+                .when(on, |d| d.bg(Theme::menu_highlight()))
                 .when(!on, |d| d.hover(|s| s.bg(Theme::fill_hover())))
                 .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(title)))
-                .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(if on { theme::rgbaf(255, 255, 255, 0.8) } else { Theme::text_caption() }).child(ui_text(detail)))
+                .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(Theme::text_caption()).child(ui_text(detail)))
                 .on_mouse_down(MouseButton::Left, |_, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();

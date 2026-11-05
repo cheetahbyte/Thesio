@@ -59,7 +59,7 @@ pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, lef
                     })),
             )
         })
-        .child(div().text_size(px(17.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
+        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
         .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
         .child(div().flex_1())
 }
@@ -88,11 +88,11 @@ impl Workspace {
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let header = page_header(self, "Trash", None, 26., cx).child(
+        let header = page_header(self, "Trash", None, 26., cx).child(crate::ui::toolbar_group().child(
             crate::ui::header_icon("trash-search", Icon::Search)
                 .tip_label("Search (⌘ + J)".into(), crate::ui::TipSide::Below)
                 .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(crate::app::FocusSearch), cx))),
-        );
+        ));
         let mut page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
         if self.trash.is_empty() {
             return page.child(empty_state(Icon::Delete, "Trash is empty", "Deleted documents stay here for a while.")).into_any_element();
@@ -190,13 +190,11 @@ impl Workspace {
 
     pub(crate) fn render_trash_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (id, pos, corner) = self.trash_menu.clone()?;
-        // The native context menu: 26pt rows, accent highlight with a white label.
         let item = |key: &'static str, ic: Icon, label: &'static str, color: Hsla| {
-            let g = SharedString::from(key);
-            crate::ui::menu_row(key, g.clone())
+            crate::ui::menu_row(key)
                 .text_color(color)
-                .child(icon(ic, 16., if color == Theme::text() { Theme::text_code() } else { color }).group_hover(g.clone(), |s| s.text_color(gpui::white())))
-                .child(menu_label(label, g, gpui::white()))
+                .child(icon(ic, 16., if color == Theme::text() { Theme::text_code() } else { color }))
+                .child(menu_label(label))
         };
         let (a, b) = (id.clone(), id);
         let menu = popover()

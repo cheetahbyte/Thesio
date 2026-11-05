@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 // `rgbaf` stays literal for shadows, scrims and controls drawn over images.
 
 static DARK: AtomicBool = AtomicBool::new(false);
+
 thread_local! {
     /// Exports and printing draw light whatever the window shows.
     static FORCE_LIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -111,7 +112,7 @@ pub fn mix(a: u32, b: u32, t: f32) -> Hsla {
 /// (`N*` neutrals, `B*` accent, `R*` / `O*` reds and oranges), so every
 /// `craft::N300` still means "border", `N600` "secondary text" and so on.
 /// Neutrals are measured greys; `B*` is built around the accent
-/// (system blue, #007AFF); `R*` / `O*` are Tailwind v4 ramps.
+/// (#4C6EF5); `R*` / `O*` are Tailwind v4 ramps.
 #[allow(dead_code)]
 pub mod craft {
     pub const N00: u32 = 0xffffff;
@@ -139,18 +140,10 @@ pub mod craft {
     pub const N900: u32 = 0x1f2225;
     pub const N950: u32 = 0x141517;
     pub const N1000: u32 = 0x000000;
-    pub const B50: u32 = 0xf0f5fe;
-    pub const B100: u32 = 0xe3edfd;
-    pub const B200: u32 = 0xc6dafc;
-    pub const B300: u32 = 0x9cc0fa;
-    pub const B350: u32 = 0x80aef9;
-    pub const B400: u32 = 0x5d99f8;
-    /// The accent: caret, primary button, menu highlight.
-    pub const B500: u32 = 0x007aff;
-    pub const B600: u32 = 0x006be0;
-    pub const B700: u32 = 0x005bbf;
-    pub const B800: u32 = 0x1d4b96;
-    pub const B900: u32 = 0x14356a;
+    /// The accent: caret, primary button.
+    pub const B500: u32 = 0x4c6ef5;
+    pub const B600: u32 = 0x4260dc;
+    pub const B700: u32 = 0x3751c0;
     pub const R50: u32 = 0xfef2f2;
     pub const R100: u32 = 0xffe2e2;
     pub const R200: u32 = 0xffc9c9;
@@ -174,17 +167,8 @@ pub mod craft {
     pub const O800: u32 = 0x7e2a0c;
     pub const O900: u32 = 0x441306;
 
-    /// The secondary accents some controls use (dialog buttons, countdown,
-    /// focus rings, success): one accent family and a green.
+    /// The secondary colours some controls use: a green and an orange.
     pub mod old {
-        pub const B50: u32 = 0xf0f5fe;
-        pub const B100: u32 = 0xe3edfd;
-        pub const B200: u32 = 0xc6dafc;
-        pub const B300: u32 = 0x9cc0fa;
-        pub const B400: u32 = 0x5d99f8;
-        pub const B500: u32 = 0x3a85f7;
-        pub const B600: u32 = 0x2f74e0;
-        pub const B700: u32 = 0x2660c0;
         pub const G500: u32 = 0x00c950;
         pub const O500: u32 = 0xfe9a00;
     }
@@ -223,11 +207,6 @@ pub fn shadow_s4_down() -> Vec<BoxShadow> {
     vec![shadow(0.05, 1., 3., 0.), shadow(0.11, 10., 28., 0.)]
 }
 
-/// Header buttons and other white pills on a white panel (back / share).
-pub fn shadow_button() -> Vec<BoxShadow> {
-    vec![shadow(0.05, 1., 1.5, 0.)]
-}
-
 pub const UI_FONT: &str = ".SystemUIFont";
 /// SF Mono.
 #[cfg(target_os = "macos")]
@@ -247,9 +226,11 @@ impl Theme {
     pub fn text_code() -> Hsla { c(craft::N800) }
     /// The link colour: the content accent (#0087FF) blended half-way to the
     /// text colour, #0F5492 measured.
-    pub fn link() -> Hsla { mix(0x0087ff, craft::N900, 0.5) }
+    pub fn link() -> Hsla { mix(craft::B500, craft::N900, 0.5) }
     pub fn primary() -> Hsla { c(craft::B500) }
     pub fn primary_500() -> Hsla { c(craft::B500) }
+    pub fn primary_hover() -> Hsla { c(craft::B600) }
+    pub fn primary_active() -> Hsla { c(craft::B700) }
     /// The note: white page.
     pub fn bg_body() -> Hsla { c(craft::N00) }
     /// Light fills inside the note (code blocks, quiet cards).
@@ -300,8 +281,8 @@ impl Theme {
     /// Captions under media and code (weight 300).
     #[allow(dead_code)]
     pub fn caption() -> Hsla { c(0x7e8287) }
-    /// Menu row highlight (native NSMenu: accent, white label).
-    pub fn menu_highlight() -> Hsla { c(craft::B500) }
+    /// Menu row highlight: quiet, so the label stays as it is.
+    pub fn menu_highlight() -> Hsla { ca(craft::N1000, 0.07) }
     /// Menus / popovers body (quick-entry & native menus).
     pub fn popover_bg() -> Hsla { c(0xfafafa) }
 }

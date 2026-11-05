@@ -8,7 +8,7 @@ use crate::native_pdf::Highlight;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::theme::Theme;
 use crate::trash::page_header;
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, toolbar_icon, ui_para};
+use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 
 const PANEL_W: f32 = 340.;
@@ -133,7 +133,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn render_highlight(&self, index: usize, highlight: Highlight, cx: &mut Context<Self>) -> AnyElement {
+    fn render_highlight(&self, index: usize, highlight: Highlight, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.paper_panel.comment.as_ref().filter(|(target, _, _)| *target == highlight).map(|(_, field, _)| field.clone());
         let (open, edit, delete) = (highlight.clone(), highlight.clone(), highlight.clone());
         let page = format!("Page {}", highlight.page + 1);
@@ -154,7 +154,7 @@ impl Workspace {
                     }))))
             .child(div().text_size(px(13.)).line_height(px(18.)).child(ui_para(highlight.quote.clone())))
             .map(|d| match editing {
-                Some(field) => d.child(field_well().mt(px(2.)).child(field)),
+                Some(field) => d.child(field_well(&field, window, cx).mt(px(2.))),
                 None => d.child(div().id(("highlight-comment", index)).text_size(px(12.)).line_height(px(17.))
                     .text_color(if highlight.comment.is_empty() { Theme::primary() } else { Theme::text_caption() })
                     .child(ui_para(if highlight.comment.is_empty() { "Add a comment".to_string() } else { highlight.comment.clone() }))
@@ -166,7 +166,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_paper_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_paper_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let tab = self.paper_panel.tab;
         let highlights = self.pdf.highlights();
         let label: &'static str = "Highlights";
@@ -175,7 +175,7 @@ impl Workspace {
             cx.notify();
         }, cx);
         let empty = highlights.is_empty();
-        let rows = highlights.into_iter().enumerate().map(|(i, highlight)| self.render_highlight(i, highlight, cx)).collect::<Vec<_>>();
+        let rows = highlights.into_iter().enumerate().map(|(i, highlight)| self.render_highlight(i, highlight, window, cx)).collect::<Vec<_>>();
         let body = match tab {
             PaperTab::Notes => div().flex_1().min_h_0().children(self.paper_panel.notes.as_ref().map(|(editor, _)| editor.clone())).into_any_element(),
             PaperTab::Highlights if empty => div().flex_1().flex().flex_col().items_center().justify_center().px(px(32.)).pb(px(64.))
@@ -198,15 +198,16 @@ impl Workspace {
         let external = id.clone();
         let hidden = self.paper_panel.hidden;
         let header = page_header(self, &title, None, 26., cx)
-            .child(toolbar_icon("paper-highlight", Icon::Highlight).no_drag().mr(px(4.)).tip_label("Highlight Selection".to_string(), TipSide::Right)
-                .on_click(cx.listener(|w, _, _, cx| w.highlight_selection(cx))))
-            .child(toolbar_icon("paper-panel", Icon::PanelToggle).no_drag().mr(px(4.)).when(!hidden, |d| d.bg(Theme::fill_hover_strong())).tip_label("Notes and Highlights".to_string(), TipSide::Right)
-                .on_click(cx.listener(|w, _, _, cx| {
-                    w.paper_panel.hidden = !w.paper_panel.hidden;
-                    cx.notify();
-                })))
-            .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
-                .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx))));
+            .child(toolbar_group()
+                .child(toolbar_icon("paper-highlight", Icon::Highlight).no_drag().tip_label("Highlight Selection".to_string(), TipSide::Right)
+                    .on_click(cx.listener(|w, _, _, cx| w.highlight_selection(cx))))
+                .child(toolbar_icon("paper-panel", Icon::PanelToggle).no_drag().when(!hidden, |d| d.bg(Theme::fill_hover_strong())).tip_label("Notes and Highlights".to_string(), TipSide::Right)
+                    .on_click(cx.listener(|w, _, _, cx| {
+                        w.paper_panel.hidden = !w.paper_panel.hidden;
+                        cx.notify();
+                    })))
+                .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
+                    .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx)))));
         let (pdf, covered, path) = (self.pdf.clone(), self.paper_covered(window), self.store.path(&id).ok());
         let failed = self.paper_failed.clone();
         let unreadable = failed.get();
@@ -215,7 +216,7 @@ impl Workspace {
             let opened = pdf.take_opened();
             if opened || !shown && !failed.replace(true) { window.on_next_frame(|window, _| window.refresh()); }
         }).absolute().size_full();
-        let panel = (!hidden).then(|| self.render_paper_panel(cx));
+        let panel = (!hidden).then(|| self.render_paper_panel(window, cx));
         div().flex_1().min_w_0().h_full().flex().flex_col().child(header)
             .child(div().flex_1().min_h_0().flex()
                 .child(div().relative().flex_1().min_w_0().h_full().flex().items_center().justify_center().bg(Theme::bg_overlay())

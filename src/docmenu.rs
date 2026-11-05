@@ -12,10 +12,9 @@ const MENU_GAP: f32 = 6.;
 const PAD: f32 = crate::ui::MENU_PAD_Y;
 
 fn menu_item(id: &'static str, ic: Icon, label: impl Into<SharedString>) -> Stateful<Div> {
-    let g = SharedString::from(id);
-    crate::ui::menu_row(id, g.clone())
-        .child(crate::ui::menu_glyph(ic, 16., g.clone()))
-        .child(div().flex_1().min_w_0().overflow_hidden().child(crate::ui::menu_label(label, g, gpui::white())))
+    crate::ui::menu_row(id)
+        .child(crate::ui::menu_glyph(ic, 16.))
+        .child(div().flex_1().min_w_0().overflow_hidden().child(crate::ui::menu_label(label)))
 }
 
 /// Native-menu separator: 1px, 5px either side, inset 13px.

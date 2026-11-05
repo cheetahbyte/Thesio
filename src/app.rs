@@ -880,7 +880,7 @@ impl Workspace {
     pub(crate) fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
         let title = crate::settings::label("Home");
-        let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(17.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
+        let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
         // page_header's left inset (26 with the sidebar, else the traffic
         // lights plus the 4 + 28 + 12 of Show sidebar), then 16 clear of the title.
         let left = if self.sidebar_open { 26. } else { theme::TRAFFIC_LIGHTS_W + 44. + if cfg!(target_os = "windows") { 32. } else { 0. } } + title_w + 16.;
@@ -889,11 +889,11 @@ impl Workspace {
         let half = (main / 2. - left).min(main / 2. - right);
         let width = (main - 320.).min(2. * half).min(360.);
         if width < 120. { return None }
-        Some(div().id("header-search").absolute().left(px((main - width) / 2.)).top(px(8.))
-            .w(px(width)).h(px(32.)).no_drag().flex().items_center().gap(px(8.)).px(px(10.))
-            .rounded(px(9.)).bg(Theme::fill_hover())
-            .cursor_pointer().hover(|s| s.bg(Theme::fill_hover_strong()))
-            .child(icon(Icon::Search, 15., Theme::text_caption()))
+        Some(div().id("header-search").absolute().left(px((main - width) / 2.)).top(px(11.))
+            .w(px(width)).h(px(crate::ui::BUTTON_H)).no_drag().flex().items_center().gap(px(6.)).px(px(9.))
+            .rounded(px(crate::ui::BUTTON_RADIUS)).border_1().border_color(Theme::line_border())
+            .cursor_pointer().hover(|s| s.bg(Theme::fill_hover()))
+            .child(icon(Icon::Search, 13., Theme::text_caption()))
             .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
             .when(width >= 200., |d| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J").replace(" + ", " "))))
             .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
@@ -1040,10 +1040,7 @@ impl Workspace {
             )
             .child(div().flex_1().min_w(px(16.)))
             .child(
-                div().gap(px(4.))
-                    .h(px(HEADER_ACTIONS_H)).flex_none()
-                    .flex()
-                    .items_center()
+                crate::ui::toolbar_group()
                     .when(self.current.is_some(), |d| {
                         d.child(
                             // No tooltip while its dropdown is open; the menu hangs
@@ -1123,16 +1120,16 @@ impl Render for Workspace {
                 )
                 .into_any_element(),
             View::Home => self.render_home(window, cx),
-            View::Library => self.render_library(cx),
+            View::Library => self.render_library(window, cx),
             View::Sources => self.render_sources(cx),
             View::Paper => self.render_paper(window, cx),
             View::Trash => self.render_trash(cx),
-            View::Settings => self.render_settings(cx),
+            View::Settings => self.render_settings(window, cx),
         };
         let move_dlg = self.render_move_dialog(cx);
         let entry_form = self.render_entry_form(cx);
-        let cite_picker = self.render_cite_picker(cx);
-        let lookup = self.render_lookup(cx);
+        let cite_picker = self.render_cite_picker(window, cx);
+        let lookup = self.render_lookup(window, cx);
         let library_menu = self.render_library_menu(window, cx);
         let library_row_menu = self.render_library_row_menu(cx);
         // Only the note stands out: a white plane flush with the window's top,

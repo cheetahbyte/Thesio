@@ -41,8 +41,8 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
         .flex()
         .items_center()
         .px(px(14.))
-        .py(px(10.))
-        .rounded(px(12.))
+        .py(px(8.))
+        .rounded(px(8.))
         .bg(crate::theme::raised(Theme::bg_body()))
         .border_1()
         .border_color(Theme::line_border())
@@ -113,12 +113,12 @@ pub fn scrim() -> Hsla {
     theme::rgbaf(0, 0, 0, if theme::dark() { 0.45 } else { 0.25 })
 }
 
-/// The modal dialog: white, radius 16, deep soft drop.
+/// The modal dialog: white, radius 12, deep soft drop.
 pub fn dialog(id: &'static str) -> Stateful<Div> {
-    div().id(id).occlude().rounded(px(16.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
+    div().id(id).occlude().rounded(px(12.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
 }
 
-/// The primary button: the accent, a white 13pt medium label, 28 tall, radius 8.
+/// The primary button: a flat accent fill, a white 13pt label.
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     colored_button(id, label, false)
 }
@@ -139,12 +139,10 @@ fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Statef
         .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
         .bg(if danger { Theme::danger() } else { Theme::primary() })
-        .shadow(theme::shadow_button())
-        .hover(move |s| s.bg(theme::c(if danger { craft::R600 } else { craft::B600 })))
-        .active(move |s| s.bg(theme::c(if danger { craft::R700 } else { craft::B700 })))
+        .hover(move |s| s.bg(if danger { theme::c(craft::R600) } else { Theme::primary_hover() }))
+        .active(move |s| s.bg(if danger { theme::c(craft::R700) } else { Theme::primary_active() }))
         .text_size(px(13.))
         .line_height(px(20.))
-        .font_weight(FontWeight::MEDIUM)
         .text_color(gpui::white())
         .child(crate::settings::label(label))
 }
@@ -163,31 +161,40 @@ pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -
         .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
         .bg(Theme::primary())
-        .shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::B600)))
-        .active(|s| s.bg(theme::c(craft::B700)))
+        .hover(|s| s.bg(Theme::primary_hover()))
+        .active(|s| s.bg(Theme::primary_active()))
         .text_size(px(13.))
         .line_height(px(20.))
-        .font_weight(FontWeight::MEDIUM)
         .text_color(gpui::white())
         .child(icon(glyph, 14., gpui::white()))
         .child(crate::settings::label(label))
 }
 
-/// A glyph-only toolbar button, the height of the buttons beside it.
+/// A glyph-only toolbar button.
 pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
-    div().id(id).flex_none().size(px(BUTTON_H)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 16., Theme::icon()))
+    div().id(id).flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
 }
 
-/// The well a text field sits in: a quiet fill, no outline.
-pub fn field_well() -> Div {
-    div().h(px(BUTTON_H)).px(px(10.)).flex().items_center().rounded(px(BUTTON_RADIUS)).bg(Theme::fill_hover()).text_size(px(13.))
+/// Toolbar buttons that belong together.
+pub fn toolbar_group() -> Div {
+    div().flex_none().flex().items_center().gap(px(2.))
 }
 
-/// A search field: the glass, then `field`.
-pub fn search_well(field: AnyView) -> Div {
-    field_well().gap(px(6.)).child(icon(Icon::Search, 14., Theme::text_placeholder())).child(div().flex_1().min_w_0().child(field))
+/// A text field: a hairline outline that takes the accent while focused.
+pub fn field_well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    well(field, window, cx).child(field.clone())
+}
+
+/// A search field: a magnifier, then `field`.
+pub fn search_well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    well(field, window, cx).gap(px(6.)).child(icon(Icon::Search, 13., Theme::text_caption())).child(div().flex_1().min_w_0().child(field.clone()))
+}
+
+fn well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    let focused = field.read(cx).is_focused(window);
+    div().h(px(BUTTON_H)).px(px(9.)).flex().items_center().rounded(px(BUTTON_RADIUS)).text_size(px(13.))
+        .border_1().border_color(if focused { Theme::primary() } else { Theme::line_border() })
 }
 
 #[cfg(test)]
@@ -198,7 +205,7 @@ mod button_tests {
     }
 }
 
-/// The secondary button: a quiet fill, so a row of them stays calm. 28 tall, radius 8.
+/// The secondary button: a hairline outline, flat.
 pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
@@ -210,12 +217,11 @@ pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> 
         .justify_center()
         .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
-        .bg(Theme::fill_hover_strong())
-        .hover(|s| s.bg(Theme::fill_pressed()))
-        .active(|s| s.bg(Theme::fill_active()))
+        .border_1()
+        .border_color(Theme::line_border())
+        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
         .text_size(px(13.))
         .line_height(px(20.))
-        .font_weight(FontWeight::MEDIUM)
         .text_color(Theme::text())
         .child(crate::settings::label(label))
 }
@@ -237,27 +243,24 @@ pub fn close_button(id: &'static str) -> Stateful<Div> {
         .child(icon(Icon::Close, 16., gpui::white()))
 }
 
-pub const BUTTON_H: f32 = 28.;
-pub const BUTTON_RADIUS: f32 = 8.;
+pub const BUTTON_H: f32 = 26.;
+pub const BUTTON_RADIUS: f32 = 6.;
+const TOOLBAR_ITEM: f32 = 28.;
 
-/// Menus and popovers round at 12 (the native menu panel); their
-/// rows at 6, 5pt in from the edge.
-pub const MENU_RADIUS: f32 = 12.;
-pub const ROW_RADIUS: f32 = 6.;
+/// Menus and popovers round at 8; their rows at 5, 4pt in from the edge.
+pub const MENU_RADIUS: f32 = 8.;
+pub const ROW_RADIUS: f32 = 5.;
 
-/// A menu row like a native menu's: 28 tall, 13pt label, 16pt glyph;
-/// hovering paints the accent. `group` names the row so its glyph
-/// ([`menu_glyph`]) and label ([`menu_label`]) can turn white with it.
-pub const MENU_ROW_H: f32 = 28.;
+/// A menu row: 26 tall, 13pt label, 16pt glyph, a quiet hover.
+pub const MENU_ROW_H: f32 = 26.;
 pub const MENU_PAD_Y: f32 = 5.;
 
-pub fn menu_row(id: impl Into<ElementId>, group: SharedString) -> Stateful<Div> {
+pub fn menu_row(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
-        .group(group)
         .flex_none()
         .h(px(MENU_ROW_H))
-        .mx(px(5.))
+        .mx(px(4.))
         .px(px(8.))
         .flex()
         .items_center()
@@ -270,26 +273,18 @@ pub fn menu_row(id: impl Into<ElementId>, group: SharedString) -> Stateful<Div> 
         .hover(|s| s.bg(Theme::menu_highlight()))
 }
 
-/// A [`crate::ui::menu_row`] label that turns `hover` (white) while its row
-/// is highlighted. GPUI fixes a text's colour when it lays the text out,
-/// before hover is known, so a hover text colour on the row never reaches
-/// the label; instead a `hover` copy lies over it and the two swap through
-/// `group_hover` opacity, which is resolved at paint.
-pub fn menu_label(label: impl Into<SharedString>, group: SharedString, hover: Hsla) -> Div {
+/// A [`crate::ui::menu_row`] label.
+pub fn menu_label(label: impl Into<SharedString>) -> Div {
     let label: SharedString = crate::settings::label(label.into()).into();
-    div()
-        .relative()
-        .whitespace_nowrap()
-        .child(div().group_hover(group.clone(), |s| s.opacity(0.)).child(label.clone()))
-        .child(div().absolute().top_0().left_0().text_color(hover).opacity(0.).group_hover(group, |s| s.opacity(1.)).child(crate::settings::label(label)))
+    div().whitespace_nowrap().child(label)
 }
 
-/// Glyph of a [`menu_row`]: secondary, white while its row is hovered.
-pub fn menu_glyph(name: Icon, size: f32, group: SharedString) -> Svg {
-    icon(name, size, Theme::text_code()).group_hover(group, |s| s.text_color(gpui::white()))
+/// Glyph of a [`menu_row`].
+pub fn menu_glyph(name: Icon, size: f32) -> Svg {
+    icon(name, size, Theme::text_code())
 }
 
-/// Tooltip bubble: the dark rounded tip (12pt white on near-black, radius 7, arrow).
+/// Tooltip bubble: a small flat tip, 11pt on the menu surface, no arrow.
 pub struct Tooltip {
     /// One or more lines.
     label: SharedString,
@@ -309,24 +304,23 @@ pub enum TipSide {
     Right,
 }
 
-const TIP_GAP: f32 = 8.;
-const TIP_ARROW: f32 = 5.;
-const TIP_PAD: f32 = 8.;
-const TIP_LINE: f32 = 18.;
-const TIP_BG: u32 = 0x2a2c2f;
-/// Tooltips stay dark in both looks (a step lighter on the dark page).
-fn tip_bg() -> Hsla { if theme::dark() { theme::rgbaf(0x3a, 0x3b, 0x3d, 1.) } else { theme::rgbaf((TIP_BG >> 16) as u8, (TIP_BG >> 8) as u8, TIP_BG as u8, 1.) } }
+const TIP_GAP: f32 = 6.;
+const TIP_PAD: f32 = 6.;
+const TIP_LINE: f32 = 14.;
+const TIP_TEXT: f32 = 11.;
 
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let lines: Vec<SharedString> = self.label.split('\n').map(|l| SharedString::from(l.to_string())).collect();
         let bubble = div()
-            .px(px(8.))
-            .py(px(4.))
-            .rounded(px(6.))
-            .bg(tip_bg())
-            .text_color(gpui::white())
-            .text_size(px(12.))
+            .px(px(6.))
+            .py(px(3.))
+            .rounded(px(5.))
+            .bg(theme::raised(Theme::popover_bg()))
+            .border_1()
+            .border_color(Theme::line_border())
+            .text_color(Theme::text())
+            .text_size(px(TIP_TEXT))
             .line_height(px(TIP_LINE))
             .font_family(theme::UI_FONT)
             .whitespace_nowrap()
@@ -336,83 +330,31 @@ impl Render for Tooltip {
         let Some(anchor) = self.anchor else {
             return div().pl(px(8.)).pt(px(10.)).child(bubble).into_any_element();
         };
-        // 10px from the trigger with an arrow pointing at it, on the preferred
-        // side unless it doesn't fit, and kept inside the window.
+        // Beside the trigger on the preferred side, unless it doesn't fit, and kept inside the window.
         let mut style = window.text_style();
         style.font_family = theme::UI_FONT.into();
         let text_w = lines
             .iter()
             .map(|l| {
                 let runs = ui_text(l.clone()).runs(&style);
-                window.text_system().shape_line(l.clone(), px(12.), &runs, None).width
+                window.text_system().shape_line(l.clone(), px(TIP_TEXT), &runs, None).width
             })
             .fold(px(0.), |a, b| a.max(b));
-        let w = text_w + px(16.);
+        let w = text_w + px(12.);
         let h = px(TIP_PAD + TIP_LINE * lines.len() as f32);
         let vp = window.viewport_size();
         let gap = px(TIP_GAP);
-        let s = px(TIP_ARROW);
-        // (bubble origin, arrow base centre, arrow direction)
-        let (x, y, arrow): (Pixels, Pixels, Box<dyn Fn(&mut PathBuilder)>) = if self.side == TipSide::Right
-            && (anchor.right() + gap + w <= vp.width || anchor.left() - gap - w < px(0.))
-        {
-            let x = anchor.right() + gap;
-            let cy = anchor.center().y;
-            let y = (cy - h / 2.).min(vp.height - h).max(px(0.));
-            let tip_y = cy.max(y + px(10.)).min(y + h - px(10.));
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(x, tip_y - s));
-                p.line_to(point(x - s * 0.88, tip_y - px(0.8)));
-                p.line_to(point(x - s * 0.88, tip_y + px(0.8)));
-                p.line_to(point(x, tip_y + s));
-            }))
-        } else if self.side == TipSide::Right {
-            let x = anchor.left() - gap - w;
-            let cy = anchor.center().y;
-            let y = (cy - h / 2.).min(vp.height - h).max(px(0.));
-            let tip_y = cy.max(y + px(10.)).min(y + h - px(10.));
-            let bx = x + w;
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(bx, tip_y - s));
-                p.line_to(point(bx + s * 0.88, tip_y - px(0.8)));
-                p.line_to(point(bx + s * 0.88, tip_y + px(0.8)));
-                p.line_to(point(bx, tip_y + s));
-            }))
+        let (x, y) = if self.side == TipSide::Right {
+            let x = if anchor.right() + gap + w <= vp.width || anchor.left() - gap - w < px(0.) { anchor.right() + gap } else { anchor.left() - gap - w };
+            (x, (anchor.center().y - h / 2.).min(vp.height - h).max(px(0.)))
         } else {
-            let cx = anchor.center().x;
-            let x = (cx - w / 2.).min(vp.width - w).max(px(0.));
             let fits_below = anchor.bottom() + gap + h <= vp.height;
             let fits_above = anchor.top() - gap - h >= px(0.);
             let below = if self.side == TipSide::Above { !fits_above } else { fits_below };
-            let y = if below { anchor.bottom() + gap } else { anchor.top() - gap - h };
-            let tip_x = cx.max(x + px(10.)).min(x + w - px(10.));
-            let (base, apex) = if below { (y, y - s) } else { (y + h, y + h + s) };
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(tip_x - s, base));
-                p.line_to(point(tip_x - px(0.8), apex + (base - apex) * 0.12));
-                p.line_to(point(tip_x + px(0.8), apex + (base - apex) * 0.12));
-                p.line_to(point(tip_x + s, base));
-            }))
+            ((anchor.center().x - w / 2.).min(vp.width - w).max(px(0.)), if below { anchor.bottom() + gap } else { anchor.top() - gap - h })
         };
         let o = self.origin;
-        let arrow = canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let mut p = PathBuilder::fill();
-                arrow(&mut p);
-                p.close();
-                if let Ok(path) = p.build() {
-                    window.paint_path(path, tip_bg());
-                }
-            },
-        )
-        .absolute()
-        .size(px(1.));
-        div()
-            .size(px(1.))
-            .child(div().absolute().left(x - o.x).top(y - o.y).child(bubble))
-            .child(arrow)
-            .into_any_element()
+        div().size(px(1.)).child(div().absolute().left(x - o.x).top(y - o.y).child(bubble)).into_any_element()
     }
 }
 
@@ -839,8 +781,5 @@ pub fn continuous_surface(radius: f32, color: Hsla) -> Div {
     }).absolute().inset_0())
 }
 
-pub fn header_icon(id: &'static str, name: Icon) -> Stateful<Div> {
-    div().id(id).no_drag().size(px(crate::app::HEADER_ACTIONS_H)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(name, 17., Theme::icon()))
-}
+pub fn header_icon(id: &'static str, name: Icon) -> Stateful<Div> { toolbar_icon(id, name).no_drag() }
 

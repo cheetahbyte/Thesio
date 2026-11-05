@@ -9,7 +9,7 @@ mod scrollbar;
 use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::Entry;
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::trash::{empty_state, list_header_text, list_line, menu_label, page_header, row_hover};
 use crate::ui::{Icon, ROW_RADIUS, TipExt, icon, menu_glyph, menu_row, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
@@ -155,7 +155,7 @@ fn card_text(body: &str) -> String {
     lines.map(|l| l.trim_start_matches('=').trim()).take(12).collect::<Vec<_>>().join("\n")
 }
 
-const CARD_RADIUS: f32 = 14.;
+const CARD_RADIUS: f32 = 10.;
 
 impl Workspace {
     fn home_entries(&self) -> Vec<Entry> {
@@ -228,30 +228,28 @@ impl Workspace {
         let search = self.header_search(window, cx);
         let narrow = search.is_none();
         let header = page_header(self, "Home", None, 26., cx).relative().children(search)
-            .when(narrow, |d| d.child(crate::ui::header_icon("home-search", Icon::Search).mr(px(4.))
-                .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
-                .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx)))))
-            .child(
-            crate::ui::header_icon("home-new", Icon::Plus)
-                .tip("New document", Some(crate::shortcuts::hint("workspace::NewDoc", "⌘ + N")))
-                .on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))).into_any_element()
-        );
+            .child(crate::ui::toolbar_group()
+                .when(narrow, |d| d.child(crate::ui::header_icon("home-search", Icon::Search)
+                    .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
+                    .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx)))))
+                .child(crate::ui::header_icon("home-new", Icon::Plus)
+                    .tip("New document", Some(crate::shortcuts::hint("workspace::NewDoc", "⌘ + N")))
+                    .on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx)))));
         // Tabs as segmented items: the current one on a quiet fill, no accent.
         let tab = |id: &'static str, label: &'static str, t: HomeTab| {
             let on = self.home.tab == t;
             div()
                 .id(id)
-                .mr(px(8.))
-                .h(px(28.))
-                .px(px(10.))
+                .h_full()
+                .px(px(12.))
                 .flex()
                 .items_center()
-                .rounded(px(9.))
+                .rounded(px(crate::ui::BUTTON_RADIUS))
                 .cursor_pointer()
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .when(on, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::text_caption()).hover(|s| s.bg(Theme::fill_hover())))
+                .when(!on, |d| d.text_color(Theme::text_caption()).hover(|s| s.text_color(Theme::text())))
                 .child(crate::settings::label(label))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.home.tab = t;
@@ -267,9 +265,9 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(6.))
+                .rounded(px(crate::ui::BUTTON_RADIUS))
                 .cursor_pointer()
-                .when(on, |d| d.bg(theme::raised(Theme::bg_body())).shadow(theme::shadow_button()))
+                .when(on, |d| d.bg(Theme::fill_hover_strong()))
                 .when(!on, |d| d.tip(tip, None))
                 .child(icon(ic, 14., if on { Theme::text_code() } else { Theme::text_caption() }))
                 .on_click(cx.listener(move |w, _, _, cx| {
@@ -287,12 +285,13 @@ impl Workspace {
             .pr(px(24.))
             .flex()
             .items_center()
-            .child(tab("home-tab-recent", "My documents", HomeTab::Recent))
-            .child(tab("home-tab-star", "Favorites", HomeTab::Starred))
+            .child(div().flex_none().h(px(crate::ui::BUTTON_H)).flex().gap(px(2.))
+                .child(tab("home-tab-recent", "My documents", HomeTab::Recent))
+                .child(tab("home-tab-star", "Favorites", HomeTab::Starred)))
             .child(div().flex_1())
             .child(
-                div().id("home-sort").relative().h(px(28.)).px(px(10.)).flex().items_center().gap(px(6.))
-                    .rounded(px(9.)).text_size(px(13.)).text_color(Theme::text_caption()).cursor_pointer()
+                div().id("home-sort").relative().h(px(crate::ui::BUTTON_H)).px(px(10.)).flex().items_center().gap(px(6.))
+                    .rounded(px(crate::ui::BUTTON_RADIUS)).text_size(px(13.)).text_color(Theme::text_caption()).cursor_pointer()
                     .hover(|s| s.bg(Theme::fill_hover())).when(self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
                     .child(icon(Icon::Sort, 14., Theme::text_caption())).child(crate::settings::label(self.home.sort.label()))
                     .child(self.home.track("home-sort"))
@@ -302,12 +301,10 @@ impl Workspace {
                 // The view switcher: one white pill, the current view on a quiet fill.
                 div()
                     .ml(px(12.))
-                    .p(px(2.))
                     .flex()
                     .flex_none()
                     .gap(px(2.))
-                    .rounded(px(8.))
-                    .bg(Theme::fill_hover_strong())
+                    .rounded(px(crate::ui::BUTTON_RADIUS))
                     .child(toggle("home-grid", Icon::Grid, self.home.grid, "Switch to grid view", true))
                     .child(toggle("home-list", Icon::List, !self.home.grid, "Switch to list view", false)),
             );
@@ -506,9 +503,9 @@ impl Workspace {
                     .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.home.sort_menu = false; cx.notify(); }));
                 for (index, order) in [HomeSort::Visited, HomeSort::Modified, HomeSort::Created, HomeSort::Title].into_iter().enumerate() {
                     let g = SharedString::from(format!("home-order-{index}"));
-                    menu = menu.child(menu_row(g.clone(), g.clone())
-                        .child(menu_label(order.label(), g.clone(), gpui::white()).flex_1())
-                        .when(self.home.sort == order, |d| d.child(menu_glyph(Icon::Check, 14., g)))
+                    menu = menu.child(menu_row(g)
+                        .child(menu_label(order.label()).flex_1())
+                        .when(self.home.sort == order, |d| d.child(menu_glyph(Icon::Check, 14.)))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             w.home.sort = order;
                             w.save_home();

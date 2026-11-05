@@ -407,7 +407,6 @@ impl Workspace {
                         .border_1()
                         .border_color(Theme::button_border())
                         .bg(crate::theme::raised(Theme::bg_body()))
-                        .shadow(theme::shadow_button())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::c(craft::N100)))
                         .text_size(px(12.))
@@ -696,14 +695,12 @@ impl Workspace {
     pub(crate) fn render_row_menu(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(m) = self.row_menu.clone() else { return vec![] };
         let Some((pinned, starred, folder, typst)) = self.entries.iter().find(|e| e.id == m.id).map(|e| (e.meta.pinned, e.meta.starred > 0, e.folder, e.typst)) else { return vec![] };
-        // The context menu: accent highlight with a white label.
         let item_c = |id: &'static str, ic: Icon, label: &'static str, color: Hsla, icon_color: Hsla| {
-            let g = SharedString::from(id);
-            crate::ui::menu_row(id, g.clone())
+            crate::ui::menu_row(id)
                 .mx(px(0.))
                 .text_color(color)
-                .child(icon(ic, 16., icon_color).group_hover(g.clone(), |s| s.text_color(gpui::white())))
-                .child(div().flex_1().min_w_0().child(crate::ui::menu_label(label, g, gpui::white())))
+                .child(icon(ic, 16., icon_color))
+                .child(div().flex_1().min_w_0().child(crate::ui::menu_label(label)))
         };
         let item = |id, ic, label| item_c(id, ic, label, Theme::text(), Theme::text_code());
         let divider = || div().mx(px(8.)).my(px(5.)).h(px(1.)).bg(Theme::line_border());
