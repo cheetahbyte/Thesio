@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop looking up papers during a BibLaTeX import. Find Missing Papers in the Library's "…" menu does that on request.
 - Stop offering a second bibliography in a chapter whose main document has one.
 - Rename or delete a tag across the Library by right-clicking it in the filter bar. Renaming to a tag in use merges the two.
 - Choose a citation style for a document from its "…" menu. A chapter changes the style of the document that includes it.

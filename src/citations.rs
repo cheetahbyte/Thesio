@@ -948,7 +948,6 @@ impl Workspace {
             let Some(paths) = paths else { return };
             let _ = this.update(cx, |w, cx| {
                 let (mut added, mut skipped) = (0, 0);
-                let before: BTreeSet<String> = w.citations.library.iter().flat_map(Library::rows).map(|row| row.key).collect();
                 for path in &paths {
                     let result = std::fs::read_to_string(path).map_err(anyhow::Error::from)
                         .and_then(|text| w.citations.library.as_mut().ok_or_else(|| anyhow::anyhow!("The library could not be read"))?.import_biblatex(&text));
@@ -961,8 +960,6 @@ impl Workspace {
                     w.refresh_after_library_change(cx);
                     let already = if skipped > 0 { format!(", {skipped} already in the library") } else { String::new() };
                     w.show_toast(&format!("Imported {added} entries{already}"), cx);
-                    let keys = w.citations.library.iter().flat_map(Library::rows).map(|row| row.key).filter(|key| !before.contains(key)).collect();
-                    w.fetch_papers(keys, cx);
                 }
                 cx.notify();
             });
@@ -1000,7 +997,7 @@ impl Workspace {
             .when(can_edit, |d| d
                 .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).no_drag().tip(if self.citations.details_hidden { "Show details" } else { "Hide details" }, None)
                     .on_click(cx.listener(|w, _, window, cx| w.set_details_hidden(!w.citations.details_hidden, window, cx)))))
-                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("Import and export", None)
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("More", None)
                     .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
         let table = self.render_library_table(&tags, rows, total, window, cx);
@@ -1498,6 +1495,12 @@ impl Workspace {
             .child(item("library-export", Icon::Export, "Export BibLaTeX…").on_click(cx.listener(|w, _, _, cx| {
                 w.citations.menu = false;
                 w.export_bib(cx);
+            })))
+            .child(item("library-find-papers", Icon::Search, "Find Missing Papers").on_click(cx.listener(|w, _, _, cx| {
+                w.citations.menu = false;
+                let keys = w.citations.library.iter().flat_map(Library::rows).map(|row| row.key).collect();
+                w.fetch_papers(keys, cx);
+                cx.notify();
             })));
         // Under the "…" button, which sits left of the Add button.
         let right = window.viewport_size().width - px(crate::ui::header_right_inset() + ADD_W);
