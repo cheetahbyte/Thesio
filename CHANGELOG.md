@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make sidebar text and icons readable on fully transparent macOS glass.
+- Fold the generated bibliography in the editor, and leave it out of Home cards and search.
+- Add entries to the Library by DOI, arXiv ID, PMID, or ISBN.
 - Add `just start` to build and run a debug version.
 
 - Add a Library page for citations, backed by Hayagriva, with BibLaTeX import and export.

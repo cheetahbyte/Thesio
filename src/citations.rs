@@ -3,7 +3,8 @@
 
 use crate::app::{Confirm, View, Workspace};
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::{self, Fields, Library, Mode, Row};
+use crate::library::{self, Added, Fields, Library, Mode, Row};
+use thesio_core::lookup::{self, Identifier};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, page_header, primary_button, row_hover, scrim, secondary_button};
@@ -55,6 +56,15 @@ pub struct CitePicker {
     _subs: Vec<Subscription>,
 }
 
+/// The Add by Identifier dialog.
+pub struct Lookup {
+    field: Entity<TextField>,
+    busy: bool,
+    /// What could not be added, one line each.
+    problems: Vec<String>,
+    _subs: Vec<Subscription>,
+}
+
 pub struct Citations {
     pub library: Option<Library>,
     /// Why `library.yaml` could not be read. Nothing writes to it meanwhile.
@@ -63,6 +73,7 @@ pub struct Citations {
     sort: (Col, bool),
     form: Option<EntryForm>,
     picker: Option<CitePicker>,
+    lookup: Option<Lookup>,
     _subs: Vec<Subscription>,
 }
 
@@ -78,7 +89,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), form: None, picker: None, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), form: None, picker: None, lookup: None, _subs: subs }
     }
 }
 
@@ -386,6 +397,110 @@ impl Workspace {
         self.sync_bibliographies(cx);
     }
 
+    fn open_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new("DOI, arXiv ID, PMID, or ISBN", cx);
+            f.placeholder_color = Theme::text_disabled();
+            f
+        });
+        let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| match ev {
+            TextFieldEvent::Submit => w.run_lookup(window, cx),
+            TextFieldEvent::Cancel => {
+                w.citations.lookup = None;
+                cx.notify();
+            }
+            _ => {}
+        })];
+        window.focus(&field.focus_handle(cx));
+        self.citations.lookup = Some(Lookup { field, busy: false, problems: vec![], _subs: subs });
+        cx.notify();
+    }
+
+    /// Fetches everything in the field, then adds what came back.
+    fn run_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dialog) = &mut self.citations.lookup else { return };
+        if dialog.busy { return; }
+        let text = dialog.field.read(cx).text.clone();
+        let parsed = lookup::identifiers(&text);
+        if parsed.is_empty() { return; }
+        dialog.busy = true;
+        dialog.problems.clear();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let fetched: Vec<(Option<Identifier>, Result<serde_yaml::Mapping, String>)> = cx.background_spawn(async move {
+                parsed.into_iter().map(|token| match token {
+                    Ok(id) => {
+                        let result = lookup::fetch(&id).map_err(|e| format!("{id}: {e}"));
+                        (Some(id), result)
+                    }
+                    Err(text) => (None, Err(format!("{text}: not a DOI, arXiv ID, PMID, or ISBN"))),
+                }).collect()
+            }).await;
+            let _ = this.update(cx, |w, cx| w.finish_lookup(fetched, cx));
+        }).detach();
+    }
+
+    fn finish_lookup(&mut self, fetched: Vec<(Option<Identifier>, Result<serde_yaml::Mapping, String>)>, cx: &mut Context<Self>) {
+        self.reload_library();
+        let (mut added, mut already) = (0, 0);
+        let mut problems = vec![];
+        for (id, result) in fetched {
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(problem) => {
+                    problems.push(problem);
+                    continue;
+                }
+            };
+            let Some(library) = &mut self.citations.library else {
+                problems.push("The library could not be read".to_string());
+                break;
+            };
+            match library.add_fetched(entry) {
+                Ok(Added::New(_)) => added += 1,
+                Ok(Added::Duplicate(_)) => already += 1,
+                Err(e) => problems.push(format!("{}: {e}", id.map_or(String::new(), |id| id.to_string()))),
+            }
+        }
+        if added > 0 { self.refresh_after_library_change(cx); }
+        let summary = match (added, already) {
+            (0, 0) => None,
+            (1, 0) => Some("Added 1 entry".to_string()),
+            (n, 0) => Some(format!("Added {n} entries")),
+            (0, 1) => Some("Already in the library".to_string()),
+            (0, k) => Some(format!("All {k} are already in the library")),
+            (n, k) => Some(format!("Added {n}, {k} already in the library")),
+        };
+        if let Some(summary) = summary { self.show_toast(&summary, cx); }
+        match &mut self.citations.lookup {
+            Some(dialog) if !problems.is_empty() => {
+                dialog.busy = false;
+                dialog.problems = problems;
+            }
+            _ => self.citations.lookup = None,
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn render_lookup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let lookup = self.citations.lookup.as_ref()?;
+        let problems = lookup.problems.iter().map(|p| div().text_size(px(13.)).line_height(px(18.)).text_color(theme::c(craft::R400)).child(p.clone())).collect::<Vec<_>>();
+        let panel = dialog("lookup").w(px(560.)).p(px(24.)).flex().flex_col().gap(px(12.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Add by identifier"))
+            .child(div().text_size(px(13.)).text_color(Theme::text_caption()).child("Enter one or more DOIs, arXiv IDs, PMIDs, or ISBNs. Each is sent to doi.org, NCBI, or Open Library."))
+            .child(div().h(px(34.)).px(px(10.)).flex().items_center().rounded(px(8.)).border_1().border_color(Theme::primary_500()).text_size(px(14.)).child(lookup.field.clone()))
+            .children(problems)
+            .child(div().mt(px(4.)).flex().items_center().justify_end().gap(px(12.))
+                .child(secondary_button("lookup-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
+                    w.citations.lookup = None;
+                    cx.notify();
+                })))
+                .when(lookup.busy, |d| d.child(div().text_size(px(13.)).text_color(Theme::text_caption()).child("Looking up…")))
+                .when(!lookup.busy, |d| d.child(primary_button("lookup-add", "Add").on_click(cx.listener(|w, _, window, cx| w.run_lookup(window, cx))))));
+        Some(deferred(div().id("lookup-scrim").absolute().inset_0().bg(scrim()).flex().items_start().justify_center().pt(px(96.)).occlude().child(panel)).with_priority(3).into_any_element())
+    }
+
     fn import_bib(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let picked = crate::devtools::take_pick();
         let prompt = picked.is_none().then(|| cx.prompt_for_paths(PathPromptOptions {
@@ -444,8 +559,9 @@ impl Workspace {
         let can_edit = self.citations.library.is_some();
         let header = page_header(self, "Library", 26., cx)
             .child(div().flex_1())
-            .child(div().id("library-search").no_drag().w(px(220.)).h(px(30.)).mr(px(8.)).px(px(10.)).flex().items_center().rounded(px(9.)).bg(Theme::fill_hover()).text_size(px(13.)).child(self.citations.search.clone()))
+            .child(div().id("library-search").no_drag().w(px(200.)).h(px(30.)).mr(px(8.)).px(px(10.)).flex().items_center().rounded(px(9.)).bg(Theme::fill_hover()).text_size(px(13.)).child(self.citations.search.clone()))
             .when(can_edit, |d| d
+                .child(secondary_button("library-lookup", "Add by ID").mr(px(8.)).tip("Add by DOI, arXiv ID, PMID, or ISBN", None).on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx))))
                 .child(secondary_button("library-import", "Import").mr(px(8.)).tip("Import a BibLaTeX file", None).on_click(cx.listener(|w, _, window, cx| w.import_bib(window, cx))))
                 .child(secondary_button("library-export", "Export").mr(px(8.)).tip("Export the library as BibLaTeX", None).on_click(cx.listener(|w, _, _, cx| w.export_bib(cx))))
                 .child(primary_button("library-add", "Add").on_click(cx.listener(|w, _, window, cx| w.open_entry(None, window, cx)))));
@@ -455,7 +571,7 @@ impl Workspace {
                 .child(format!("{error}. Fix the file to use the Library; Thesio won't change it until it can be read."))).into_any_element();
         }
         if total == 0 {
-            return page.child(crate::trash::empty_state("illus/empty-list.svg", "Add an entry or import a BibLaTeX file")).into_any_element();
+            return page.child(crate::trash::empty_state("illus/empty-list.svg", "Add an entry by identifier, or import a BibLaTeX file")).into_any_element();
         }
         let (sort_col, ascending) = self.citations.sort;
         let columns = COLS.iter().map(|(col, label, width)| {

@@ -58,6 +58,14 @@ pub enum Mode {
     Custom,
 }
 
+/// The outcome of adding a looked-up entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Added {
+    New(String),
+    /// It was in the library already, under this key.
+    Duplicate(String),
+}
+
 pub struct Library {
     path: PathBuf,
     entries: Mapping,
@@ -238,6 +246,54 @@ impl Library {
         Ok((added, skipped))
     }
 
+    /// Adds a looked-up entry under a generated key, unless an entry with the
+    /// same DOI, PMID, ISBN, or arXiv ID is here already.
+    pub fn add_fetched(&mut self, mut entry: Mapping) -> Result<Added> {
+        if let Some(key) = self.find_duplicate(&entry) { return Ok(Added::Duplicate(key)); }
+        let key = self.fresh_key(&entry);
+        if !entry.contains_key("type") { entry.insert("type".into(), "Misc".into()); }
+        let mut entries = self.entries.clone();
+        entries.insert(key.as_str().into(), Value::Mapping(entry));
+        self.commit(entries)?;
+        Ok(Added::New(key))
+    }
+
+    fn find_duplicate(&self, entry: &Mapping) -> Option<String> {
+        let numbers = |map: &Mapping| -> Vec<(String, String)> {
+            map.get("serial-number").and_then(Value::as_mapping).map_or(vec![], |serial| serial.iter().filter_map(|(kind, value)| {
+                Some((kind.as_str()?.to_lowercase(), value.as_str()?.to_lowercase()))
+            }).collect())
+        };
+        let wanted = numbers(entry);
+        self.entries.iter().find(|(_, existing)| existing.as_mapping().is_some_and(|map| numbers(map).iter().any(|n| wanted.contains(n)))).and_then(|(key, _)| key.as_str()).map(str::to_string)
+    }
+
+    /// `surname` + `year`, with a letter added when the key is taken.
+    fn fresh_key(&self, entry: &Mapping) -> String {
+        let person = match entry.get("author") {
+            Some(Value::Sequence(list)) => list.first(),
+            other => other,
+        };
+        let name = match person {
+            Some(Value::Mapping(map)) => map.get("name").and_then(Value::as_str),
+            other => other.and_then(Value::as_str),
+        };
+        let surname = name.and_then(|n| n.split(',').next()).and_then(|n| n.split_whitespace().next_back()).map_or(String::new(), ascii_key);
+        let year = entry.get("date").map(|date| match date {
+            Value::Number(n) => n.to_string(),
+            Value::String(s) => s.chars().take(4).collect(),
+            _ => String::new(),
+        }).unwrap_or_default();
+        let base = match (surname.is_empty(), year.is_empty()) {
+            (true, true) => "entry".to_string(),
+            (true, false) => format!("entry{year}"),
+            _ => format!("{surname}{year}"),
+        };
+        if !self.contains(&base) { return base; }
+        ('b'..='z').map(|letter| format!("{base}{letter}")).find(|key| !self.contains(key))
+            .unwrap_or_else(|| (2..).map(|n| format!("{base}-{n}")).find(|key| !self.contains(key)).unwrap_or(base))
+    }
+
     /// The whole library as BibLaTeX. Fields BibLaTeX has no place for are
     /// left out.
     pub fn export_biblatex(&self) -> String {
@@ -251,6 +307,32 @@ impl Library {
         let entries: Mapping = self.entries.iter().filter(|(k, _)| k.as_str().is_some_and(|k| keys.contains(k))).map(|(k, v)| (k.clone(), v.clone())).collect();
         Ok(if entries.is_empty() { String::new() } else { serde_yaml::to_string(&entries)? })
     }
+}
+
+/// Lowercase ASCII for a citation key, folding common accented letters.
+fn ascii_key(text: &str) -> String {
+    let mut key = String::new();
+    for c in text.chars().flat_map(char::to_lowercase) {
+        match c {
+            'ä' | 'æ' => key.push_str("ae"),
+            'ö' | 'œ' => key.push_str("oe"),
+            'ü' => key.push_str("ue"),
+            'ß' => key.push_str("ss"),
+            'à' | 'á' | 'â' | 'ã' | 'å' => key.push('a'),
+            'ç' | 'č' | 'ć' => key.push('c'),
+            'è' | 'é' | 'ê' | 'ë' => key.push('e'),
+            'ì' | 'í' | 'î' | 'ï' => key.push('i'),
+            'ñ' | 'ń' => key.push('n'),
+            'ò' | 'ó' | 'ô' | 'õ' | 'ø' => key.push('o'),
+            'š' | 'ś' => key.push('s'),
+            'ù' | 'ú' | 'û' => key.push('u'),
+            'ý' | 'ÿ' => key.push('y'),
+            'ž' | 'ź' => key.push('z'),
+            c if c.is_ascii_alphanumeric() => key.push(c),
+            _ => {}
+        }
+    }
+    key
 }
 
 fn biblatex_kind(entry: &hayagriva::Entry) -> &'static str {
@@ -301,7 +383,8 @@ fn biblatex_entry(entry: &hayagriva::Entry) -> String {
     format!("@{}{{{},\n{body}\n}}\n", biblatex_kind(entry), entry.key())
 }
 
-fn block_range(text: &str) -> Option<Range<usize>> {
+/// The bytes of a document's generated block, with its final newline.
+pub fn block_range(text: &str) -> Option<Range<usize>> {
     let start = text.find(BLOCK_START)?;
     let end = start + text[start..].find(BLOCK_END)? + BLOCK_END.len();
     let end = if text[end..].starts_with('\n') { end + 1 } else { end };
@@ -317,6 +400,14 @@ fn render_block(yaml: &str, options: &str) -> String {
     let data = yaml.replace('\\', "\\\\").replace('"', "\\\"");
     let data = if data.is_empty() { "{}\n".to_string() } else { data };
     format!("{BLOCK_START}{BLOCK_NOTE}\n#bibliography(bytes(\"\n{data}\"){options})\n{BLOCK_END}\n")
+}
+
+/// A document's text without its generated block, for previews and search.
+pub fn without_block(text: &str) -> String {
+    match block_range(text) {
+        Some(range) => format!("{}{}", &text[..range.start], &text[range.end..]),
+        None => text.to_string(),
+    }
 }
 
 pub fn mode(text: &str, file: &str) -> Mode {

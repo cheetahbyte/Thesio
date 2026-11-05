@@ -4,6 +4,7 @@
 pub mod buffer;
 pub mod compiler;
 pub mod library;
+pub mod lookup;
 pub mod references;
 pub mod store;
 pub mod syntax;

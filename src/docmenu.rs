@@ -73,6 +73,7 @@ impl Workspace {
         let starred = entry.is_some_and(|e| e.meta.starred > 0);
         let typst = entry.is_some_and(|e| e.typst);
         let mode = self.bibliography_mode(cx);
+        let block_shown = self.editor.as_ref().is_some_and(|e| e.read(cx).block_shown);
         let bibliography = |id: &'static str, ic: &'static str, label: &'static str, target: Mode| {
             menu_item(id, ic, label).on_click(cx.listener(move |w, _, _, cx| {
                 w.close_doc_menu(cx);
@@ -110,6 +111,10 @@ impl Workspace {
                         w.close_doc_menu(cx);
                         w.open_cite_picker(window, cx);
                     })))
+                    .when(mode == Mode::Embedded, |d| d.child(menu_item("dm-block", "eye", if block_shown { "Hide bibliography data" } else { "Show bibliography data" }).on_click(cx.listener(|w, _, _, cx| {
+                        w.close_doc_menu(cx);
+                        if let Some(editor) = &w.editor { editor.update(cx, |e, cx| e.toggle_block(cx)); }
+                    }))))
                     .when(mode != Mode::Embedded, |d| d.child(bibliography("dm-embed", "library", "Embed bibliography", Mode::Embedded)))
                     .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", "library", "Link library file", Mode::Linked)))
                     .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", "x", "Remove bibliography", Mode::None)))))

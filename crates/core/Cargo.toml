@@ -23,6 +23,7 @@ comemo = "0.5.1"
 typst-kit = { version = "0.15.1", features = ["embedded-fonts"] }
 hayagriva = { version = "0.10.1", default-features = false, features = ["biblatex"] }
 serde_yaml = "0.9"
+ureq = "3"
 
 [lints]
 workspace = true

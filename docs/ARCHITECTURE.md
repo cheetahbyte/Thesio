@@ -29,6 +29,8 @@ main.rs: window
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
+| `library.rs` | The citation library, BibLaTeX import and export, and the generated bibliography block. |
+| `lookup.rs` | Fetches entries by identifier. The only code that reaches the network. |
 | `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
 | `time.rs` | Local dates without a time zone database. |
 
@@ -60,9 +62,11 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 
 `library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting an entry asks first and says how many documents cite it.
 
+Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Keys are generated as surname and year.
+
 A document has one of three bibliography modes, read from its text (`library::mode`):
 
-- **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`.
+- **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`. The editor folds it into one row and keeps the caret out of it, and Show bibliography data in the document menu reveals it. Home cards and search ignore it.
 - **Linked:** `#bibliography("library.yaml")`, with a path relative to the document.
 - **Custom:** any other `#bibliography` call, which Thesio leaves alone.
 
@@ -79,4 +83,4 @@ The first citation in a document embeds a block unless one already covers it. A 
 - The editor has no find and replace yet.
 - Changing a citation key does not update `@key` citations that use it.
 - BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
-- Zotero import and sync are not implemented.
+- Zotero import and sync are not implemented, and ADS Bibcodes are not supported because ADS requires a personal API key.

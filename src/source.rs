@@ -5,6 +5,7 @@ use crate::theme::{MONO_FONT, Theme, c, craft};
 use gpui::*;
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 use thesio_core::buffer::{Buffer, EditKind};
+use thesio_core::library;
 use thesio_core::syntax::{SyntaxTag, highlights};
 
 const FONT_SIZE: f32 = 14.;
@@ -79,6 +80,10 @@ pub struct SourceEditor {
     selecting: bool,
     /// Column kept while moving vertically.
     goal_x: Option<Pixels>,
+    /// The generated bibliography, folded into one row, as bytes and lines.
+    folded: Option<(Range<usize>, Range<usize>)>,
+    /// The user asked to see the generated block.
+    pub block_shown: bool,
 }
 
 impl EventEmitter<SourceEvent> for SourceEditor {}
@@ -92,7 +97,36 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None }
+        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false };
+        editor.refold();
+        editor
+    }
+
+    fn refold(&mut self) {
+        let text = self.buffer.text();
+        self.folded = library::block_range(text).filter(|_| self.typst && !self.block_shown).map(|bytes| {
+            let first = self.buffer.line_of(bytes.start);
+            // At the end of the file the empty last line goes too, so nothing
+            // can be typed below the bibliography.
+            let last = if bytes.end == text.len() { self.buffer.line_count() } else { self.buffer.line_of(bytes.end) };
+            (bytes, first..last)
+        });
+    }
+
+    pub fn toggle_block(&mut self, cx: &mut Context<Self>) {
+        self.block_shown = !self.block_shown;
+        self.refold();
+        self.list.reset(self.buffer.line_count());
+        cx.notify();
+    }
+
+    /// Moves an offset out of the folded block, the way the caret was heading.
+    fn outside_fold(&self, offset: usize) -> usize {
+        let Some((bytes, _)) = &self.folded else { return offset };
+        let at_end = bytes.end == self.buffer.text().len();
+        if offset < bytes.start || (offset >= bytes.end && !at_end) { return offset; }
+        let before = bytes.start.saturating_sub(1);
+        if at_end || offset < self.buffer.caret() { before } else { bytes.end }
     }
 
     pub fn focus(&self, window: &mut Window) { window.focus(&self.focus); }
@@ -137,6 +171,7 @@ impl SourceEditor {
         let start = range.start;
         self.buffer.replace_silently(range, &text[start..new_end], caret);
         if self.typst { self.spans = highlights(self.buffer.text()); }
+        self.refold();
         self.list.reset(self.buffer.line_count());
         cx.notify();
     }
@@ -150,6 +185,7 @@ impl SourceEditor {
 
     fn changed(&mut self, cx: &mut Context<Self>) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
+        self.refold();
         self.list.reset(self.buffer.line_count());
         self.goal_x = None;
         self.reveal(cx);
@@ -162,6 +198,7 @@ impl SourceEditor {
     }
 
     fn go(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        let offset = self.outside_fold(offset);
         if extend { self.buffer.select_to(offset); } else { self.buffer.move_to(offset); }
         self.goal_x = None;
         self.reveal(cx);
@@ -203,7 +240,10 @@ impl SourceEditor {
                 return offset;
             }
         }
-        let target = if down { line + 1 } else { line.wrapping_sub(1) };
+        let mut target = if down { line + 1 } else { line.wrapping_sub(1) };
+        if let Some((_, lines)) = &self.folded && lines.contains(&target) {
+            target = if down { lines.end } else { lines.start.wrapping_sub(1) };
+        }
         if target >= self.buffer.line_count() {
             return if down { self.buffer.text().len() } else { 0 };
         }
@@ -238,7 +278,7 @@ impl SourceEditor {
 
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
-        let offset = self.offset_at(event.position);
+        let offset = self.outside_fold(self.offset_at(event.position));
         if event.click_count == 2 {
             let word = self.buffer.word_at(offset);
             self.buffer.move_to(word.start);
@@ -259,7 +299,7 @@ impl SourceEditor {
 
     fn on_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.selecting {
-            self.buffer.select_to(self.offset_at(event.position));
+            self.buffer.select_to(self.outside_fold(self.offset_at(event.position)));
             cx.notify();
         }
     }
@@ -299,6 +339,13 @@ impl SourceEditor {
     }
 
     fn render_line(&mut self, line: usize, window: &mut Window, _: &mut Context<Self>) -> AnyElement {
+        if let Some((_, lines)) = &self.folded && lines.contains(&line) {
+            if line != lines.start { return div().h(px(0.)).into_any_element(); }
+            return div().h(px(LINE_HEIGHT + 8.)).pt(px(4.)).pb(px(4.)).child(
+                div().size_full().px(px(8.)).flex().items_center().rounded(px(6.)).bg(Theme::fill_hover())
+                    .text_size(px(12.)).text_color(Theme::text_caption()).child("Bibliography, generated by Thesio")
+            ).into_any_element();
+        }
         let range = self.buffer.line_range(line);
         let sel = &self.buffer.sel;
         let selection = (!sel.is_empty() && sel.start <= range.end && sel.end > range.start)

@@ -1104,6 +1104,7 @@ impl Render for Workspace {
         let move_dlg = self.render_move_dialog(cx);
         let entry_form = self.render_entry_form(cx);
         let cite_picker = self.render_cite_picker(cx);
+        let lookup = self.render_lookup(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
         // surface beside it; the change of value is the only line between
@@ -1190,6 +1191,7 @@ impl Render for Workspace {
             .children(move_dlg)
             .children(entry_form)
             .children(cite_picker)
+            .children(lookup)
             .children(search)
             .children(resize_overlay)
             .children(toast)

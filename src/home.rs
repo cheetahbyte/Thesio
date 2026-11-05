@@ -446,7 +446,8 @@ impl Workspace {
     fn render_home_card(&self, e: &Entry, card_h: f32, cx: &mut Context<Self>) -> AnyElement {
             let id = e.id.clone();
             let id2 = e.id.clone();
-            let preview: String = e.body.lines().filter(|l| !l.trim().is_empty()).take(12).collect::<Vec<_>>().join("\n");
+            let body = crate::library::without_block(&e.body);
+            let preview: String = body.lines().filter(|l| !l.trim().is_empty()).take(12).collect::<Vec<_>>().join("\n");
             let page = div().size_full().p(px(18.)).overflow_hidden().flex().flex_col()
                 .child(div().flex_none().mb(px(8.)).min_w_0().text_size(px(14.)).line_height(px(20.)).font_weight(FontWeight::BOLD).child(display_title(&e.title)))
                 .child(div().flex_1().min_h_0().overflow_hidden().text_size(px(11.)).line_height(px(16.)).font_family(theme::MONO_FONT).text_color(Theme::text_caption()).child(preview));

@@ -4,7 +4,7 @@ Thesio is derived from [quiet.md](https://github.com/s1dashu/quiet-md) (MIT; see
 
 ## Rust dependencies
 
-The following table is generated from `cargo metadata` and contains 850 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
+The following table is generated from `cargo metadata` and contains 854 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
 
 To regenerate the table from all `cargo metadata` dependencies, run `scripts/licences.sh`.
 
@@ -704,11 +704,14 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | unsafe-libyaml | 0.2.11 | MIT |
 | unscanny | 0.1.0 | MIT OR Apache-2.0 |
 | untrusted | 0.9.0 | ISC |
+| ureq | 3.5.1 | MIT OR Apache-2.0 |
+| ureq-proto | 0.7.1 | MIT OR Apache-2.0 |
 | url | 2.5.8 | MIT OR Apache-2.0 |
 | usvg | 0.45.1 | Apache-2.0 OR MIT |
 | usvg | 0.47.0 | Apache-2.0 OR MIT |
 | utf-8 | 0.7.6 | MIT OR Apache-2.0 |
 | utf16_iter | 1.1.0 | Apache-2.0 OR MIT |
+| utf8-zero | 0.8.1 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
 | utf_types | 1.0.0 | Apache-2.0 OR MIT |
 | uuid | 1.28.0 | Apache-2.0 OR MIT |
@@ -748,6 +751,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | wayland-sys | 0.31.11 | MIT |
 | web-sys | 0.3.106 | MIT OR Apache-2.0 |
 | web-time | 1.1.0 | MIT OR Apache-2.0 |
+| webpki-roots | 1.0.11 | CDLA-Permissive-2.0 |
 | weezl | 0.1.12 | MIT OR Apache-2.0 |
 | which | 6.0.3 | MIT |
 | winapi | 0.3.9 | MIT/Apache-2.0 |

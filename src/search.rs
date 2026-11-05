@@ -271,7 +271,7 @@ impl Workspace {
                 if e.folder { return None; }
                 if e.title.to_lowercase().contains(&q) {
                     Some((0, e))
-                } else if e.body.to_lowercase().contains(&q) {
+                } else if crate::library::without_block(&e.body).to_lowercase().contains(&q) {
                     Some((1, e))
                 } else {
                     None
@@ -283,7 +283,7 @@ impl Workspace {
     }
 
     fn search_row(&self, e: &Entry, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let summary = snippet(&e.body, q);
+        let summary = snippet(&crate::library::without_block(&e.body), q);
         // Result indices match keyboard selection.
         let row = ix;
         div()
