@@ -329,8 +329,10 @@ impl Workspace {
             }
             Hit::Source(row) => self.open_entry(Some(row.key), window, cx),
             Hit::Highlight(id, _, highlight) => {
-                self.papers.pdf.go_to_when_open(highlight);
-                self.open_paper(&id, window, cx);
+                self.when_saved(window, cx, move |w, window, cx| {
+                    w.papers.pdf.go_to_when_open(highlight);
+                    w.open_paper(&id, window, cx);
+                });
             }
         }
     }

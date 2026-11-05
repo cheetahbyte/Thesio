@@ -17,12 +17,12 @@ pub enum Confirm {
     /// Library → change an entry to a type without a parent.
     ChangeSourceType { key: String, kind: &'static thesio_core::source_type::SourceType },
     DeleteTag(String),
-    /// The open document could not be written before it was to be replaced
-    /// (another document, New, Quit): Retry / Discard changes, then carry on.
+    /// The open document or a paper's notes could not be written before they
+    /// were to be replaced (another document or paper, New, Quit): Retry / Discard changes, then carry on.
     SaveFailed(AfterSave),
 }
 
-/// What to do once the open document is safely on disk (or its changes given up).
+/// What to do once the open document and notes are safely on disk (or their changes given up).
 pub type AfterSave = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
 impl Workspace {

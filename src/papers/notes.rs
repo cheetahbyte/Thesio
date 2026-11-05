@@ -10,17 +10,16 @@ use crate::source::{SourceEditor, SourceEvent};
 use crate::ui::ToastKind;
 use gpui::*;
 use std::rc::Rc;
-use std::time::Duration;
 use thesio_core::bibliography::{self, Mode};
 use thesio_core::paths::moved;
-
-const SAVE_DELAY: Duration = Duration::from_millis(500);
 
 /// The paper's notes: `id` follows the file, which appears once something is written.
 pub(crate) struct Notes {
     pub(crate) id: String,
     pub(crate) editor: Entity<SourceEditor>,
     unsaved: bool,
+    /// Why the last save failed, for the Save failed dialog.
+    error: Option<String>,
     save_task: Option<Task<()>>,
     _subscription: Subscription,
 }
@@ -37,10 +36,9 @@ impl PaperPanel {
 
 impl Workspace {
     /// Loads the notes for paper `id`, or a heading to start them with. The
-    /// file only appears once something is written.
+    /// file only appears once something is written. The panel's last notes
+    /// are gone by now: `open_paper` saves them first.
     pub(crate) fn load_paper_notes(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.flush(cx);
-        self.flush_notes(cx);
         let note = note_file(id);
         let exists = self.store.borrow().path(&note).is_ok_and(|path| path.exists());
         let loaded = self.store.borrow().load(&note);
@@ -72,7 +70,7 @@ impl Workspace {
                 SourceEvent::Completed(_) | SourceEvent::Caret | SourceEvent::Follow(_) => {}
             }
         });
-        self.papers.panel.notes = Some(Notes { id: note, editor, unsaved: false, save_task: None, _subscription: subscription });
+        self.papers.panel.notes = Some(Notes { id: note, editor, unsaved: false, error: None, save_task: None, _subscription: subscription });
         self.papers.panel.comment = None;
     }
 
@@ -82,28 +80,41 @@ impl Workspace {
     }
 
     fn schedule_notes_save(&mut self, cx: &mut Context<Self>) {
-        let task = cx.spawn(async |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let _ = this.update(cx, |w, cx| w.flush_notes(cx));
-        });
+        let task = Self::save_later(Self::flush_notes, cx);
         if let Some(notes) = &mut self.papers.panel.notes {
             notes.unsaved = true;
             notes.save_task = Some(task);
         }
     }
 
-    /// Writes the panel's notes if they changed. When that fails they stay
-    /// pending, and a later save retries them.
-    pub(crate) fn flush_notes(&mut self, cx: &mut Context<Self>) {
-        let Some(notes) = &mut self.papers.panel.notes else { return };
+    /// Writes the panel's notes if they changed. False when that failed: they
+    /// stay pending, and a later save retries them.
+    pub(crate) fn flush_notes(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(notes) = &mut self.papers.panel.notes else { return true };
         notes.save_task = None;
-        if !notes.unsaved { return; }
+        if !notes.unsaved { return true; }
         let (id, text) = (notes.id.clone(), notes.editor.read(cx).text().to_string());
-        if self.save_note(&id, &text, cx) {
+        let saved = self.save_note(&id, &text, cx);
+        if saved {
             self.keep_version(&id, &text, false, cx);
-            if let Some(notes) = &mut self.papers.panel.notes { notes.unsaved = false; }
+            if let Some(notes) = &mut self.papers.panel.notes {
+                notes.unsaved = false;
+                notes.error = None;
+            }
+        }
+        saved
+    }
+
+    /// Gives up the panel's pending notes, for Discard changes.
+    pub(crate) fn discard_notes(&mut self) {
+        if let Some(notes) = &mut self.papers.panel.notes {
+            notes.unsaved = false;
+            notes.error = None;
         }
     }
+
+    /// The error of the last failed notes save, for the Save failed dialog.
+    pub(crate) fn notes_error(&self) -> Option<&str> { self.papers.panel.notes.as_ref()?.error.as_deref() }
 
     /// Writes a notes file, which may be new. The same file may be open as a document too.
     fn write_notes(&mut self, id: &str, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
@@ -116,7 +127,15 @@ impl Workspace {
 
     fn save_note(&mut self, id: &str, text: &str, cx: &mut Context<Self>) -> bool {
         let result = self.write_notes(id, text, cx);
-        if let Err(e) = &result { self.show_toast_kind(ToastKind::Error, &format!("Could not save the notes: {e}"), cx); }
+        if let Err(e) = &result {
+            let error = format!("Could not save the notes: {e}");
+            self.show_toast_kind(ToastKind::Error, &error, cx);
+            // The editor already shows `text`, so it is pending whoever wrote it.
+            if let Some(notes) = self.papers.panel.notes.as_mut().filter(|notes| notes.id == id) {
+                notes.unsaved = true;
+                notes.error = Some(error);
+            }
+        }
         result.is_ok()
     }
 

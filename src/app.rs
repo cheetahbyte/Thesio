@@ -23,7 +23,7 @@ pub(crate) fn close_active_window(cx: &mut App) {
     });
 }
 
-/// Quit: the open document is saved first; when that fails its dialog asks
+/// Quit: the open document and notes are saved first; when that fails its dialog asks
 /// (Retry / Discard changes) and quits afterwards.
 pub(crate) fn quit(cx: &mut App) {
     let ready = cx

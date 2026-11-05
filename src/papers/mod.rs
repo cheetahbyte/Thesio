@@ -43,13 +43,17 @@ impl Workspace {
         self.entries.iter().any(|e| e.id == file)
     }
 
-    /// Shows a paper in the app, or where there is no viewer, in the system's app.
+    /// Shows a paper in the app, once the open notes are safely saved, or where
+    /// there is no viewer, in the system's app.
     pub(crate) fn open_paper(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::native_pdf::supported() { return self.open_paper_externally(id, cx); }
-        self.papers.current = Some(id.to_string());
-        self.papers.failed.set(false);
-        self.load_paper_notes(id, cx);
-        self.show_view(View::Paper, window, cx);
+        let id = id.to_string();
+        self.when_saved(window, cx, move |w, window, cx| {
+            w.papers.current = Some(id.clone());
+            w.papers.failed.set(false);
+            w.load_paper_notes(&id, cx);
+            w.show_view(View::Paper, window, cx);
+        });
     }
 
     pub(crate) fn open_paper_externally(&self, id: &str, cx: &App) {

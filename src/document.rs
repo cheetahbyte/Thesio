@@ -45,6 +45,8 @@ pub struct OpenDocument {
     _subs: Vec<Subscription>,
 }
 
+const SAVE_DELAY: Duration = Duration::from_millis(500);
+
 /// `[[note` links to the vault's other documents.
 pub struct NoteLinks(pub WeakEntity<Workspace>);
 
@@ -129,7 +131,7 @@ impl Workspace {
             SourceEvent::Changed => {
                 let text = editor.read(cx).text().to_string();
                 if let Some(session) = self.document.as_ref().and_then(|document| document.session.as_ref()) { session.update(cx, |session, cx| session.set_text(text, cx)); }
-                self.schedule_save(window, cx);
+                self.schedule_save(cx);
             }
             SourceEvent::Caret => {
                 let caret = editor.read(cx).caret();
@@ -243,11 +245,16 @@ impl Workspace {
         self.flush(cx);
     }
 
-    pub(crate) fn schedule_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let task = cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            let _ = this.update(cx, |w, cx| w.flush(cx));
-        });
+    /// Runs `save` once typing has stopped; dropping the task cancels it.
+    pub(crate) fn save_later(save: fn(&mut Self, &mut Context<Self>) -> bool, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SAVE_DELAY).await;
+            let _ = this.update(cx, save);
+        })
+    }
+
+    pub(crate) fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        let task = Self::save_later(Self::flush, cx);
         if let Some(document) = &mut self.document {
             document.status = SaveStatus::Saving;
             document.unsaved = true;
@@ -285,11 +292,11 @@ impl Workspace {
     }
 
     /// Everything that waits for a save: the Library's panel, a paper's notes,
-    /// and the open document.
+    /// and the open document. False when the notes or the document failed.
     pub(crate) fn save_all(&mut self, cx: &mut Context<Self>) -> bool {
         self.save_inspector(cx);
-        self.flush_notes(cx);
-        self.flush(cx)
+        let notes = self.flush_notes(cx);
+        self.flush(cx) && notes
     }
 
     /// Saves before something replaces the open document. False when that
@@ -314,13 +321,16 @@ impl Workspace {
 
     /// The Save failed dialog's choices: `retry` saves again, otherwise the
     /// changes are given up. Either way the held-back action runs once the
-    /// document no longer needs saving.
+    /// document and the notes no longer need saving.
     pub(crate) fn resolve_save_failed(&mut self, retry: bool, then: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         if retry {
-            if !self.flush(cx) { return self.ask_save_failed(then, window, cx); }
-        } else if let Some(document) = &mut self.document {
-            document.unsaved = false;
-            document.status = SaveStatus::Idle;
+            if !self.save_all(cx) { return self.ask_save_failed(then, window, cx); }
+        } else {
+            self.discard_notes();
+            if let Some(document) = self.document.as_mut().filter(|document| document.unsaved) {
+                document.unsaved = false;
+                document.status = SaveStatus::Idle;
+            }
         }
         then(self, window, cx);
         cx.notify();
@@ -330,7 +340,7 @@ impl Workspace {
     pub(crate) fn save_error(&self) -> String {
         match self.document.as_ref().map(|document| &document.status) {
             Some(SaveStatus::Failed(e)) => e.clone(),
-            _ => "Save failed".to_string(),
+            _ => self.notes_error().unwrap_or("Save failed").to_string(),
         }
     }
 }

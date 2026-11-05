@@ -64,7 +64,7 @@ main.rs: window
 5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
 6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last. The editor holds the same session and reads its newest result from `SourceEditor::compilation`. An editor with no `Preview`, such as paper notes, can get a session from `DocumentSession::without_pages`, which compiles and renders no pages.
 
-A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document.
+A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
 
 Text that does not come from typing goes through `Workspace::write_document`, which writes the file and updates its entry, the editors showing it, and the preview. `Workspace::text_of` reads a document, from the open editor if it is the open one. Errors other than a failed save appear as toasts.
 

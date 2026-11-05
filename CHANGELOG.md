@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Ask before losing paper notes that could not be saved. Opening another paper, closing the window, or ⌘Q now shows the Save failed dialog; opening another paper used to drop them, and ⌘Q quit without asking.
 - Keep compiling a chapter and showing its Outline when its main file is renamed or moved. If the main file goes to the Trash, the chapter compiles on its own. Both used to end in "file not found".
 - Update a `/` path after a move by the file the compiler finds, nearest the main file. It used to assume the vault root, so a project's own `/lib/a.typ` broke when `a.typ` moved, and an unrelated file at the root could change it.
 - Show the Highlight button's icon outside macOS, where its file was missing.
