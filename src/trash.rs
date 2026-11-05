@@ -278,14 +278,18 @@ impl Workspace {
             ),
             Confirm::Restore(_) => ("Restore this document?".to_string(), "The document will be restored to its original location.".to_string(), "Restore", false),
             Confirm::Purge(_) => ("Delete permanently?".to_string(), "This page and its child pages cannot be recovered after permanent deletion.".to_string(), "Delete", true),
-            Confirm::DeleteEntry(key) => {
-                let citing = self.entries.iter().filter(|e| e.typst && cited_keys(&e.body).contains(key)).count();
-                let effect = match citing {
-                    0 => "No document cites it.".to_string(),
-                    1 => "1 document cites it and will show an error.".to_string(),
-                    n => format!("{n} documents cite it and will show an error."),
+            Confirm::DeleteEntries(keys) => {
+                let citing = self.entries.iter().filter(|e| e.typst && { let cited = cited_keys(&e.body); keys.iter().any(|key| cited.contains(key)) }).count();
+                let (it, title) = match keys.as_slice() {
+                    [key] => ("it", format!("Delete {key}?")),
+                    keys => ("them", format!("Delete {} entries?", keys.len())),
                 };
-                (format!("Delete {key}?"), format!("This removes it from the library and cannot be undone. {effect}"), "Delete", true)
+                let effect = match citing {
+                    0 => format!("No document cites {it}."),
+                    1 => format!("1 document cites {it} and will show an error."),
+                    n => format!("{n} documents cite {it} and will show an error."),
+                };
+                (title, format!("This removes {it} from the library and cannot be undone. {effect}"), "Delete", true)
             }
             Confirm::SaveFailed => (
                 "Could not save document".to_string(),
@@ -332,7 +336,7 @@ impl Workspace {
                             }
                             Confirm::Restore(id) => w.restore_doc(&id, cx),
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
-                            Confirm::DeleteEntry(key) => w.delete_entry(&key, cx),
+                            Confirm::DeleteEntries(keys) => w.delete_entries(&keys, cx),
                             Confirm::SaveFailed => w.resolve_save_failed(true, window, cx),
                         }
                         cx.notify();

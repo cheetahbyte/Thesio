@@ -60,7 +60,9 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 
 ## Citations
 
-`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting an entry asks first and says how many documents cite it.
+`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting entries asks first and says how many documents cite them.
+
+Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 
 Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Keys are generated as surname and year.
 

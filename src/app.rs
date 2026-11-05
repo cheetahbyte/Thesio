@@ -175,8 +175,8 @@ pub enum Confirm {
     Restore(String),
     /// Trash → Delete permanently.
     Purge(String),
-    /// Library → delete an entry.
-    DeleteEntry(String),
+    /// Library → delete these entries.
+    DeleteEntries(Vec<String>),
     /// The open document could not be written before it was to be replaced
     /// (another document, New, Quit): Retry / Discard changes, then carry on.
     SaveFailed,
@@ -1110,6 +1110,8 @@ impl Render for Workspace {
         let quote_dialog = self.render_quote_dialog(window, cx);
         let library_menu = self.render_library_menu(window, cx);
         let library_row_menu = self.render_library_row_menu(cx);
+        let tag_editor = self.render_tag_editor(window, cx);
+        let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
         // surface beside it; the change of value is the only line between
@@ -1198,6 +1200,8 @@ impl Render for Workspace {
             .children(quote_dialog)
             .children(library_menu)
             .children(library_row_menu)
+            .children(tag_editor)
+            .children(column_drag)
             .children(search)
             .children(resize_overlay)
             .children(toast)

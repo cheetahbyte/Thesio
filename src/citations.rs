@@ -12,7 +12,8 @@ use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
 use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use std::collections::BTreeSet;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use thesio_core::references::{cited_keys, included_files};
 
@@ -21,29 +22,33 @@ const ROW_H: f32 = 32.;
 const TABLE_X: f32 = 14.;
 const CELL_X: f32 = 12.;
 const CITE_W: f32 = 56.;
+const MIN_COLUMN_W: f32 = 56.;
+const MAX_COLUMN_W: f32 = 480.;
 const ADD_W: f32 = 68.;
 /// Rows of the entry form, grouped; the numbers count `EntryForm::fields`.
 const FORM_GROUPS: [usize; 4] = [2, 3, 4, 2];
 const PICKER_ROWS: usize = 8;
 /// Fixed columns, widest to narrowest; the title takes what is left.
-const COLS: [(Col, &str, Option<f32>); 5] = [
+const COLS: [(Col, &str, Option<f32>); 6] = [
     (Col::Title, "Title", None),
     (Col::Authors, "Authors", Some(200.)),
     (Col::Year, "Year", Some(64.)),
     (Col::Kind, "Type", Some(96.)),
+    (Col::Tags, "Tags", Some(140.)),
     (Col::Key, "Key", Some(150.)),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Col { Title, Authors, Year, Kind, Key }
+pub enum Col { Title, Authors, Year, Kind, Tags, Key }
 
-fn cell(row: &Row, col: Col) -> &str {
+fn cell(row: &Row, col: Col) -> Cow<'_, str> {
     match col {
-        Col::Title => &row.title,
-        Col::Authors => &row.authors,
-        Col::Year => &row.year,
-        Col::Kind => &row.kind,
-        Col::Key => &row.key,
+        Col::Title => (&row.title).into(),
+        Col::Authors => (&row.authors).into(),
+        Col::Year => (&row.year).into(),
+        Col::Kind => (&row.kind).into(),
+        Col::Tags => row.tags.join(", ").into(),
+        Col::Key => (&row.key).into(),
     }
 }
 
@@ -54,7 +59,7 @@ fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
 }
 
 pub(crate) fn matches(row: &Row, query: &str) -> bool {
-    [&row.title, &row.authors, &row.year, &row.key].iter().any(|text| text.to_lowercase().contains(query))
+    [&row.title, &row.authors, &row.year, &row.key].into_iter().chain(&row.tags).any(|text| text.to_lowercase().contains(query))
 }
 
 /// The add and edit dialog.
@@ -63,6 +68,22 @@ pub struct EntryForm {
     fields: Vec<(&'static str, &'static str, Entity<TextField>)>,
     error: Option<String>,
     _subs: Vec<Subscription>,
+}
+
+/// The popover that tags the selected entries.
+pub struct TagEditor {
+    keys: Vec<String>,
+    field: Entity<TextField>,
+    position: Point<Pixels>,
+    _subs: Vec<Subscription>,
+}
+
+/// A column being resized: its name, and the pointer and width at the start.
+#[derive(Clone, Copy)]
+struct ColumnDrag {
+    name: &'static str,
+    start_x: Pixels,
+    start_width: f32,
 }
 
 pub struct CitePicker {
@@ -104,6 +125,20 @@ pub struct Citations {
     menu: bool,
     /// The context menu: an entry's key and where it was opened.
     row_menu: Option<(String, Point<Pixels>)>,
+    /// The selected rows, by key.
+    selected: BTreeSet<String>,
+    /// Where a shift-selection extends from.
+    anchor: Option<String>,
+    /// The row the arrow keys move from.
+    cursor: Option<String>,
+    /// Holds the keyboard for the table.
+    focus: FocusHandle,
+    scroll: UniformListScrollHandle,
+    tag_filter: Option<String>,
+    tag_editor: Option<TagEditor>,
+    /// Widths of resized columns, by column name.
+    widths: BTreeMap<String, f32>,
+    column_drag: Option<ColumnDrag>,
     /// The Unpaywall email in Settings.
     pub email: Entity<TextField>,
     /// Papers still downloading.
@@ -135,7 +170,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), form: None, picker: None, lookup: None, menu: false, row_menu: None, email, fetching: 0, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), form: None, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
     }
 }
 
@@ -158,10 +193,122 @@ impl Workspace {
         let (col, ascending) = self.citations.sort;
         let mut rows: Vec<Row> = library.rows().into_iter().filter(|r| query.is_empty() || matches(r, query)).collect();
         rows.sort_by(|a, b| {
-            let order = natural_cmp(cell(a, col), cell(b, col));
+            let order = natural_cmp(&cell(a, col), &cell(b, col));
             if ascending { order } else { order.reverse() }
         });
         rows
+    }
+
+    /// The table's rows, in order: the search and the tag filter applied.
+    fn library_rows(&self, cx: &App) -> Vec<Row> {
+        let query = self.citations.search.read(cx).text.trim().to_lowercase();
+        let mut rows = self.visible_rows(&query);
+        if let Some(tag) = &self.citations.tag_filter { rows.retain(|row| row.tags.contains(tag)); }
+        rows
+    }
+
+    /// The selected keys among `rows`, in table order. Rows a search or filter
+    /// hides stay out, so nothing acts on an entry the user cannot see.
+    fn selected_in(&self, rows: &[Row]) -> Vec<String> {
+        rows.iter().filter(|row| self.citations.selected.contains(&row.key)).map(|row| row.key.clone()).collect()
+    }
+
+    fn select_only(&mut self, key: &str) {
+        self.citations.selected = BTreeSet::from([key.to_string()]);
+        self.citations.anchor = Some(key.to_string());
+        self.citations.cursor = Some(key.to_string());
+    }
+
+    /// Selects from the anchor through `key`.
+    fn select_range(&mut self, key: &str, rows: &[Row]) {
+        let position = |key: &str| rows.iter().position(|row| row.key == key);
+        let Some(end) = position(key) else { return };
+        let start = self.citations.anchor.as_deref().and_then(position).unwrap_or(end);
+        self.citations.selected = rows[start.min(end)..=start.max(end)].iter().map(|row| row.key.clone()).collect();
+        self.citations.cursor = Some(key.to_string());
+    }
+
+    fn click_row(&mut self, key: &str, modifiers: Modifiers, cx: &mut Context<Self>) {
+        if modifiers.shift {
+            self.select_range(key, &self.library_rows(cx));
+        } else if modifiers.platform {
+            if !self.citations.selected.remove(key) { self.citations.selected.insert(key.to_string()); }
+            self.citations.anchor = Some(key.to_string());
+            self.citations.cursor = Some(key.to_string());
+        } else {
+            self.select_only(key);
+        }
+        cx.notify();
+    }
+
+    fn library_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = &event.keystroke.modifiers;
+        let rows = self.library_rows(cx);
+        match event.keystroke.key.as_str() {
+            step @ ("up" | "down") => {
+                let current = self.citations.cursor.as_deref().and_then(|key| rows.iter().position(|row| row.key == key));
+                let next = match (step, current) {
+                    ("up", Some(i)) => i.saturating_sub(1),
+                    ("down", Some(i)) => (i + 1).min(rows.len().saturating_sub(1)),
+                    _ => 0,
+                };
+                let Some(key) = rows.get(next).map(|row| row.key.clone()) else { return };
+                if keys.shift { self.select_range(&key, &rows); } else { self.select_only(&key); }
+                self.citations.scroll.scroll_to_item(next, ScrollStrategy::Top);
+            }
+            "a" if keys.platform => self.citations.selected = rows.iter().map(|row| row.key.clone()).collect(),
+            "enter" => {
+                if let [key] = self.selected_in(&rows).as_slice() { self.open_entry(Some(key.clone()), window, cx); }
+            }
+            "backspace" | "delete" => {
+                let selected = self.selected_in(&rows);
+                if !selected.is_empty() { self.confirm = Some(Confirm::DeleteEntries(selected)); }
+            }
+            "escape" => self.citations.selected.clear(),
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn open_tag_editor(&mut self, keys: Vec<String>, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new("Add a tag", cx);
+            f.placeholder_color = Theme::text_disabled();
+            f
+        });
+        let subs = vec![cx.subscribe_in(&field, window, |w, field, ev: &TextFieldEvent, window, cx| match ev {
+            TextFieldEvent::Submit => {
+                let tag = field.read(cx).text.clone();
+                if tag.trim().is_empty() { return; }
+                if w.set_tag(&tag, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+            }
+            TextFieldEvent::Cancel => w.close_tag_editor(window, cx),
+            _ => cx.notify(),
+        })];
+        window.focus(&field.focus_handle(cx));
+        self.citations.tag_editor = Some(TagEditor { keys, field, position, _subs: subs });
+        cx.notify();
+    }
+
+    fn close_tag_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.citations.tag_editor = None;
+        window.focus(&self.citations.focus);
+        cx.notify();
+    }
+
+    /// Applies `tag` to the entries in the tag editor. False if it was refused.
+    fn set_tag(&mut self, tag: &str, on: bool, cx: &mut Context<Self>) -> bool {
+        let Some(keys) = self.citations.tag_editor.as_ref().map(|editor| editor.keys.clone()) else { return false };
+        let Some(library) = &mut self.citations.library else { return false };
+        let result = library.set_tag(&keys, tag, on);
+        if let Err(e) = &result { self.show_toast_kind(ToastKind::Error, &format!("Could not change tags: {e}"), cx); }
+        cx.notify();
+        result.is_ok()
+    }
+
+    fn column_width(&self, name: &str, default: f32) -> f32 {
+        self.citations.widths.get(name).copied().unwrap_or(default)
     }
 
     /// Gives the editor the library as it is on disk now.
@@ -457,11 +604,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn delete_entry(&mut self, key: &str, cx: &mut Context<Self>) {
+    pub(crate) fn delete_entries(&mut self, keys: &[String], cx: &mut Context<Self>) {
         let Some(library) = &mut self.citations.library else { return };
-        match library.delete_entry(key) {
+        match library.delete_entries(keys) {
             Ok(()) => {
                 self.citations.form = None;
+                for key in keys { self.citations.selected.remove(key); }
                 self.refresh_after_library_change(cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not delete entry: {e}"), cx),
@@ -644,8 +792,9 @@ impl Workspace {
     }
 
     pub(crate) fn render_library(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let query = self.citations.search.read(cx).text.trim().to_lowercase();
-        let rows = self.visible_rows(&query);
+        let tags = self.citations.library.as_ref().map(Library::tags).unwrap_or_default();
+        if !tags.iter().any(|(tag, _)| self.citations.tag_filter.as_ref() == Some(tag)) { self.citations.tag_filter = None; }
+        let rows = self.library_rows(cx);
         let total = self.citations.library.as_ref().map_or(0, Library::len);
         let can_edit = self.citations.library.is_some();
         let header = page_header(self, "Library", (total > 0).then_some(total), 26., cx)
@@ -662,11 +811,32 @@ impl Workspace {
         if total == 0 {
             return page.child(crate::trash::empty_state(Icon::Library, "Your library is empty", "Add an entry by identifier, or import a BibLaTeX file.")).into_any_element();
         }
+        if !tags.is_empty() {
+            let chip = |id: ElementId, label: String, count: usize, filter: Option<String>, on: bool| {
+                div().id(id).h(px(24.)).px(px(8.)).flex().items_center().gap(px(5.)).rounded(px(5.)).cursor_pointer().text_size(px(12.))
+                    .text_color(if on { Theme::text() } else { Theme::text_caption() })
+                    .when(on, |d| d.bg(Theme::fill_active()))
+                    .active(|s| s.bg(Theme::fill_pressed()))
+                    .child(label)
+                    .child(div().text_color(Theme::text_placeholder()).child(count.to_string()))
+                    .on_click(cx.listener(move |w, _, _, cx| {
+                        w.citations.tag_filter = filter.clone();
+                        cx.notify();
+                    }))
+            };
+            let filter = self.citations.tag_filter.clone();
+            page = page.child(div().flex_none().mx(px(TABLE_X)).px(px(4.)).pb(px(6.)).flex().flex_wrap().gap(px(2.))
+                .child(chip("tag-all".into(), "All".to_string(), total, None, filter.is_none()))
+                .children(tags.iter().enumerate().map(|(i, (tag, count))| chip(("tag", i).into(), tag.clone(), *count, Some(tag.clone()), filter.as_ref() == Some(tag)))));
+        }
         let (sort_col, ascending) = self.citations.sort;
-        let columns = COLS.iter().map(|(col, label, width)| {
-            let col = *col;
+        let columns: [(Col, &'static str, Option<f32>); 6] = COLS.map(|(col, label, width)| (col, label, width.map(|w| self.column_width(label, w))));
+        let dragged = self.citations.column_drag.map(|drag| drag.name);
+        let headers = columns.iter().enumerate().map(|(i, (col, label, width))| {
+            let (col, name) = (*col, *label);
             let sorted = sort_col == col;
-            div().id(*label)
+            let start_width = *width;
+            div().id(*label).relative()
                 .when_some(*width, |d, w| d.w(px(w)).flex_none())
                 .when(width.is_none(), |d| d.flex_1().min_w_0())
                 .pr(px(CELL_X)).flex().items_center().gap(px(4.)).text_size(px(12.)).line_height(px(24.)).cursor_pointer()
@@ -678,20 +848,31 @@ impl Workspace {
                     w.citations.sort = (col, current != col || !ascending);
                     cx.notify();
                 }))
+                // Columns hang from the right edge, so a column's left edge is what moves.
+                .when_some(start_width, |d, start_width| d.child(
+                    div().id(("library-column-resize", i)).absolute().top_0().bottom_0().left(px(-(CELL_X + 4.))).w(px(9.)).cursor(CursorStyle::ResizeLeftRight)
+                        .child(div().absolute().top_0().bottom_0().left(px(4.)).w(px(1.)).when(dragged == Some(name), |d| d.bg(Theme::primary())))
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            w.citations.column_drag = Some(ColumnDrag { name, start_x: ev.position.x, start_width });
+                            cx.notify();
+                        }))
+                ))
         }).collect::<Vec<_>>();
-        let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line()).children(columns).child(div().w(px(CITE_W)).flex_none());
+        let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line()).children(headers).child(div().w(px(CITE_W)).flex_none());
         let count = rows.len();
         if count == 0 {
             return page.child(table_header).child(crate::trash::empty_state(Icon::Search, "No results", "Try a different title, author, year, or key.")).into_any_element();
         }
         let can_cite = self.can_cite();
-        let menu_key = self.citations.row_menu.as_ref().map(|(key, _)| key.clone());
+        let selected = self.citations.selected.clone();
         let papers = self.paper_ids();
         let table = uniform_list("library-rows", count, cx.processor(move |_: &mut Workspace, range: std::ops::Range<usize>, _, cx| {
             range.map(|i| {
                 let row = &rows[i];
                 let (open, cite, menu) = (row.key.clone(), row.key.clone(), row.key.clone());
-                let cells = COLS.iter().map(|(col, _, width)| {
+                let cells = columns.iter().map(|(col, _, width)| {
                     let paper = *col == Col::Title && papers.contains(&paper_file(&row.key));
                     div().when_some(*width, |d, w| d.w(px(w)).flex_none())
                         .when(width.is_none(), |d| d.flex_1().min_w_0())
@@ -702,8 +883,10 @@ impl Workspace {
                         .when(paper, |d| d.child(icon(Icon::Paper, 13., Theme::text_placeholder())))
                 }).collect::<Vec<_>>();
                 div().id(("library-row", i)).group("library-row").w_full().h(px(ROW_H)).px(px(CELL_X)).flex().items_center().cursor_pointer().rounded(px(crate::ui::ROW_RADIUS))
-                    .when(menu_key.as_deref() == Some(row.key.as_str()), |d| d.bg(Theme::fill_hover()))
-                    .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
+                    .when(selected.contains(&row.key), |d| d.bg(Theme::sidebar_selected()))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
+                        window.focus(&w.citations.focus);
+                        if !w.citations.selected.contains(&menu) { w.select_only(&menu); }
                         w.citations.row_menu = Some((menu.clone(), ev.position));
                         cx.notify();
                     }))
@@ -720,9 +903,15 @@ impl Workspace {
                                 w.insert_citation(&cite, window, cx);
                             })),
                     )))
-                    .on_click(cx.listener(move |w, _, window, cx| w.open_entry(Some(open.clone()), window, cx)))
+                    .on_click(cx.listener(move |w, ev: &ClickEvent, window, cx| {
+                        window.focus(&w.citations.focus);
+                        if ev.click_count() >= 2 && !ev.modifiers().modified() { w.open_entry(Some(open.clone()), window, cx); } else { w.click_row(&open, ev.modifiers(), cx); }
+                    }))
             }).collect()
-        })).flex_1().min_h_0().px(px(TABLE_X)).pt(px(4.));
+        })).track_scroll(self.citations.scroll.clone()).flex_1().min_h_0().px(px(TABLE_X)).pt(px(4.));
+        let table = div().id("library-table").flex_1().min_h_0().flex().flex_col().track_focus(&self.citations.focus)
+            .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| w.library_key(ev, window, cx)))
+            .child(table);
         page = page.child(table_header).child(table);
         page.into_any_element()
     }
@@ -938,47 +1127,106 @@ impl Workspace {
         let item = |id: &'static str, glyph: Icon, label: &'static str| {
             menu_row(id).child(menu_glyph(glyph, 16.)).child(menu_label(label))
         };
-        let (edit, cite, copy, paper, attach, notes, delete) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
+        let (edit, cite, copy, paper, attach, notes) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
+        let selected = self.selected_in(&self.library_rows(cx));
+        let single = selected.len() == 1;
+        let (tagged, delete) = (selected.clone(), selected);
+        let delete_label = if single { "Delete".to_string() } else { format!("Delete {} Entries", delete.len()) };
         let has_paper = self.has_paper(&paper);
         let menu = popover().id("entry-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
             .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.row_menu = None; cx.notify(); }))
-            .child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(cx.listener(move |w, _, window, cx| {
+            .when(single, |d| d.child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(cx.listener(move |w, _, window, cx| {
                 w.citations.row_menu = None;
                 w.open_entry(Some(edit.clone()), window, cx);
+            }))))
+            .child(item("entry-menu-tags", Icon::Tag, "Tags…").on_click(cx.listener(move |w, _, window, cx| {
+                w.citations.row_menu = None;
+                w.open_tag_editor(tagged.clone(), position, window, cx);
             })))
-            .when(self.can_cite(), |d| d.child(item("entry-menu-cite", Icon::Quote, "Cite").on_click(cx.listener(move |w, _, window, cx| {
+            .when(single && self.can_cite(), |d| d.child(item("entry-menu-cite", Icon::Quote, "Cite").on_click(cx.listener(move |w, _, window, cx| {
                 w.citations.row_menu = None;
                 w.insert_citation(&cite, window, cx);
             }))))
-            .child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(cx.listener(move |w, _, _, cx| {
+            .when(single, |d| d.child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(cx.listener(move |w, _, _, cx| {
                 w.citations.row_menu = None;
                 if has_paper { w.open_paper(&paper_file(&paper), cx); } else { w.fetch_papers(vec![paper.clone()], cx); }
                 cx.notify();
-            })))
-            .when(!has_paper, |d| d.child(item("entry-menu-attach", Icon::Import, "Attach Paper…").on_click(cx.listener(move |w, _, window, cx| {
+            }))))
+            .when(single && !has_paper, |d| d.child(item("entry-menu-attach", Icon::Import, "Attach Paper…").on_click(cx.listener(move |w, _, window, cx| {
                 w.citations.row_menu = None;
                 let id = paper_file(&attach);
                 w.choose_pdf(window, cx, move |w, path, _, cx| w.attach_paper(&path, &id, cx));
             }))))
-            .child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(cx.listener(move |w, _, window, cx| {
+            .when(single, |d| d.child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(cx.listener(move |w, _, window, cx| {
                 w.citations.row_menu = None;
                 w.open_source_notes(&notes, window, cx);
-            })))
-            .child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(cx.listener(move |w, _, _, cx| {
+            }))))
+            .when(single, |d| d.child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(cx.listener(move |w, _, _, cx| {
                 w.citations.row_menu = None;
                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
                 cx.notify();
-            })))
+            }))))
             .child(div().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border()))
             .child(menu_row("entry-menu-delete").text_color(Theme::danger())
                 .child(icon(Icon::Delete, 16., Theme::danger()))
-                .child(menu_label("Delete"))
+                .child(menu_label(delete_label))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.citations.row_menu = None;
-                    w.confirm = Some(Confirm::DeleteEntry(delete.clone()));
+                    w.confirm = Some(Confirm::DeleteEntries(delete.clone()));
                     cx.notify();
                 })));
         Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+    }
+
+    pub(crate) fn render_tag_editor(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.view != View::Library { return None; }
+        let editor = self.citations.tag_editor.as_ref()?;
+        let library = self.citations.library.as_ref()?;
+        let typed = editor.field.read(cx).text.trim().to_string();
+        let query = typed.to_lowercase();
+        let keys: BTreeSet<&String> = editor.keys.iter().collect();
+        let rows: Vec<Row> = library.rows().into_iter().filter(|row| keys.contains(&row.key)).collect();
+        let tags = library.tags();
+        let exists = tags.iter().any(|(tag, _)| tag.eq_ignore_ascii_case(&typed));
+        let list = tags.into_iter().filter(|(tag, _)| tag.to_lowercase().contains(&query)).enumerate().map(|(i, (tag, _))| {
+            let holders = rows.iter().filter(|row| row.tags.contains(&tag)).count();
+            let all = holders == rows.len();
+            let mark = if all { Some(Icon::Check) } else if holders > 0 { Some(Icon::Minus) } else { None };
+            menu_row(("tag-editor-row", i))
+                .child(div().w(px(16.)).flex_none().children(mark.map(|mark| menu_glyph(mark, 14.))))
+                .child(menu_label(tag.clone()))
+                .on_click(cx.listener(move |w, _, _, cx| { w.set_tag(&tag, !all, cx); }))
+        }).collect::<Vec<_>>();
+        let panel = popover().id("tag-editor").occlude().w(px(240.)).py(px(crate::ui::MENU_PAD_Y))
+            .on_mouse_down_out(cx.listener(|w, _, window, cx| w.close_tag_editor(window, cx)))
+            .child(div().px(px(8.)).pb(px(4.)).child(field_well(&editor.field, window, cx)))
+            .child(div().id("tag-editor-list").max_h(px(220.)).overflow_y_scroll().children(list))
+            .when(!typed.is_empty() && !exists, |d| d.child(menu_row("tag-editor-create").child(menu_glyph(Icon::Plus, 14.)).child(menu_label(format!("Create “{typed}”"))).on_click(cx.listener({
+                let typed = typed.clone();
+                let field = editor.field.clone();
+                move |w, _, _, cx| if w.set_tag(&typed, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+            }))));
+        Some(deferred(anchored().position(editor.position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element())
+    }
+
+    /// While resizing a column, a full-window layer follows the mouse, as the sidebar's does.
+    pub(crate) fn render_column_drag(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let drag = self.citations.column_drag?;
+        let end = |w: &mut Workspace, cx: &mut Context<Workspace>| {
+            w.citations.column_drag = None;
+            let widths = w.citations.widths.clone();
+            w.set_pref(|p| p.library_columns = widths, cx);
+            cx.notify();
+        };
+        Some(deferred(div().id("library-column-drag").absolute().inset_0().occlude().cursor(CursorStyle::ResizeLeftRight)
+            .on_mouse_move(cx.listener(move |w, ev: &MouseMoveEvent, _, cx| {
+                if ev.pressed_button != Some(MouseButton::Left) { return end(w, cx); }
+                let width = drag.start_width - f32::from(ev.position.x - drag.start_x);
+                w.citations.widths.insert(drag.name.to_string(), width.clamp(MIN_COLUMN_W, MAX_COLUMN_W));
+                cx.notify();
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))).with_priority(4).into_any_element())
     }
 
     pub(crate) fn render_library_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1026,7 +1274,7 @@ impl Workspace {
             .child(div().mt(px(8.)).flex().items_center().gap(px(8.))
                 .when_some(original, |d, key| d.child(plain_button("entry-delete", "Delete").text_color(Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
                     w.citations.form = None;
-                    w.confirm = Some(Confirm::DeleteEntry(key.clone()));
+                    w.confirm = Some(Confirm::DeleteEntries(vec![key.clone()]));
                     cx.notify();
                 }))))
                 .child(div().flex_1())

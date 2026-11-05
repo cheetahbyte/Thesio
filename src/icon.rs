@@ -21,6 +21,7 @@ macro_rules! icons {
 icons! {
     Back "chevron.left" "arrow-left",
     Check "checkmark" "check",
+    Tag "tag" "tag",
     ChevronDown "chevron.down" "chevron-down",
     ChevronRight "chevron.right" "chevron-right",
     ChevronUp "chevron.up" "chevron-up",

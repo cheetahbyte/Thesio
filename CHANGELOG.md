@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Tag sources in the Library: right-click for Tags…, filter by tag above the table, and search by tag. Tags are saved in `library.yaml` and exported to BibLaTeX as `keywords`.
+- Select several Library rows with shift, ⌘, or the arrow keys, then tag or delete them together. A click now selects a row; double-click or Return opens it.
+- Resize the Library's columns by dragging their edges.
 - Preview an included file in place: the whole document still compiles, but pages from other files blur and the preview opens at the file's first page.
 - Launch about twice as fast: the first document compiles while the app starts, and the first frame shows it finished.
 - Resolve Typst paths that start with `/` from the document's own project folder, so projects inside a vault compile as they do with `typst compile`.
