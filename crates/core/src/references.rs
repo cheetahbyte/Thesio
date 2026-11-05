@@ -97,3 +97,69 @@ pub fn rewrite_paths(text: &str, old_file: &str, new_file: &str, moved: impl Fn(
     }
     changed.then_some(out)
 }
+
+/// A document's `#bibliography` call.
+pub struct BibliographyCall {
+    /// The vault path of its first source, when that is a string path.
+    pub path: Option<String>,
+    pub range: Range<usize>,
+}
+
+fn walk(node: &LinkedNode, visit: &mut impl FnMut(&LinkedNode)) {
+    visit(node);
+    for child in node.children() {
+        walk(&child, visit);
+    }
+}
+
+/// The first `#bibliography` call in `text`, a document at vault path `file`.
+pub fn bibliography_call(text: &str, file: &str) -> Option<BibliographyCall> {
+    let source = Source::detached(text);
+    let mut found = None;
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        if found.is_none() && node.kind() == SyntaxKind::FuncCall && callee(node).as_deref() == Some("bibliography") {
+            let path = node.children().find(|c| c.kind() == SyntaxKind::Args)
+                .and_then(|args| args.children().find(|c| c.kind() == SyntaxKind::Str))
+                .and_then(|s| ast::Str::from_untyped(s.get()).map(|v| v.get().to_string()))
+                .and_then(|literal| resolve(&dir_of(file), &literal));
+            found = Some(BibliographyCall { path, range: node.range() });
+        }
+    });
+    found
+}
+
+/// Citation keys in `text`: `@key` and `#cite(<key>)`.
+pub fn cited_keys(text: &str) -> Vec<String> {
+    let source = Source::detached(text);
+    let mut keys = vec![];
+    walk(&LinkedNode::new(source.root()), &mut |node| match node.kind() {
+        SyntaxKind::Ref => {
+            if let Some(reference) = ast::Ref::from_untyped(node.get()) { keys.push(reference.target().to_string()); }
+        }
+        SyntaxKind::Label if node.parent().is_some_and(|args| args.kind() == SyntaxKind::Args && args.parent().and_then(callee).as_deref() == Some("cite")) => {
+            if let Some(label) = ast::Label::from_untyped(node.get()) { keys.push(label.get().to_string()); }
+        }
+        _ => {}
+    });
+    keys
+}
+
+/// Vault paths of the files `text`, at vault path `file`, includes directly.
+pub fn included_files(text: &str, file: &str) -> Vec<String> {
+    let source = Source::detached(text);
+    let mut files = vec![];
+    let dir = dir_of(file);
+    walk(&LinkedNode::new(source.root()), &mut |node| {
+        if node.kind() == SyntaxKind::Str && node.parent_kind() == Some(SyntaxKind::ModuleInclude)
+            && let Some(value) = ast::Str::from_untyped(node.get())
+            && let Some(path) = resolve(&dir, &value.get()) {
+                files.push(path);
+            }
+    });
+    files
+}
+
+/// `target` as a path relative to the document at vault path `file`.
+pub fn relative_to(file: &str, target: &str) -> String {
+    relative(&dir_of(file), target)
+}

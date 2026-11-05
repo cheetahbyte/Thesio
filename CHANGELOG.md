@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a Library page for citations, backed by Hayagriva, with BibLaTeX import and export.
+- Add a citation picker, and embed cited entries in the top-level document or link the library file.
+- Preview an included file through the document that includes it.
 - Update `#include`, `#import`, image, and bibliography paths when a file or folder is renamed or moved.
 - Sort the sidebar with folders first and names in natural order, and show every file in the vault.
 - Add drag and drop, new documents and folders inside folders, and separate file and folder menus.

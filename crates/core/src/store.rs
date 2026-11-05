@@ -120,7 +120,7 @@ struct FormatMarker {
 
 /// Write `bytes` to `path` through a temporary file, so a crash leaves
 /// either the old or the new contents.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let mut file = std::fs::File::create(&tmp)?;

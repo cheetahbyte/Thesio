@@ -1,6 +1,7 @@
 //! The header "…" menu: move, pin, star, duplicate, export, and delete.
 
 use crate::app::Workspace;
+use crate::library::Mode;
 use crate::theme::{self, Theme};
 use crate::ui::popover;
 use gpui::{prelude::FluentBuilder, *};
@@ -71,6 +72,13 @@ impl Workspace {
         let pinned = entry.is_some_and(|e| e.meta.pinned);
         let starred = entry.is_some_and(|e| e.meta.starred > 0);
         let typst = entry.is_some_and(|e| e.typst);
+        let mode = self.bibliography_mode(cx);
+        let bibliography = |id: &'static str, ic: &'static str, label: &'static str, target: Mode| {
+            menu_item(id, ic, label).on_click(cx.listener(move |w, _, _, cx| {
+                w.close_doc_menu(cx);
+                w.set_bibliography(target, cx);
+            }))
+        };
         let (pin_id, star_id, mv_id, del_id, dup_id, pdf_id) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
         let menu = popover()
             .id("doc-menu")
@@ -96,7 +104,15 @@ impl Workspace {
                 .child(menu_item("dm-pdf", "export", "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
                     w.close_doc_menu(cx);
                     w.export_pdf(&pdf_id, cx);
-                }))))
+                })))
+                .when(mode != Mode::Custom, |d| d.child(divider())
+                    .child(menu_item("dm-cite", "quote", "Insert citation").on_click(cx.listener(|w, _, window, cx| {
+                        w.close_doc_menu(cx);
+                        w.open_cite_picker(window, cx);
+                    })))
+                    .when(mode != Mode::Embedded, |d| d.child(bibliography("dm-embed", "library", "Embed bibliography", Mode::Embedded)))
+                    .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", "library", "Link library file", Mode::Linked)))
+                    .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", "x", "Remove bibliography", Mode::None)))))
             .child(divider())
             .child(menu_item("dm-delete", "bin", "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))))
             .child(divider())

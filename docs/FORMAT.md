@@ -6,6 +6,7 @@ A vault is a plain folder, by default `~/Documents/Thesio`. Set `THESIO_HOME` to
 Thesio/
 ├── notes/reading.typ      Documents, in any folders you like
 ├── thesis.typ
+├── library.yaml           The citation library, in Hayagriva format
 ├── references.bib         Any other files; text files open in the editor without a preview
 ├── .thesio/               App state
 │   ├── format.json        {"format": 1}: store::FORMAT

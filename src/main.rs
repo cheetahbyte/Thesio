@@ -5,6 +5,7 @@ mod app;
 mod shared_store;
 mod window_size;
 mod assets;
+mod citations;
 mod clipboard;
 mod devtools;
 mod docmenu;
@@ -26,7 +27,7 @@ mod trash;
 mod tree;
 mod ui;
 
-use thesio_core::{store, time};
+use thesio_core::{library, store, time};
 
 use gpui::*;
 

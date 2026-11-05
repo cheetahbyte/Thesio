@@ -151,10 +151,10 @@ impl Workspace {
 
         // The nav is just 主页: 36px items, a blue tint when selected. Its
         // icon column (x 17) is shared with 搜索 and the doc rows.
-        let home_on = self.view == View::Home;
-        let nav = div().flex_none().pt(px(8.)).pb(px(4.)).px(px(SB_X)).child(
+        let nav_row = |id: &'static str, label: &'static str, view: View, glyph: &'static str, on_glyph: &'static str, cx: &mut Context<Self>| {
+            let on = self.view == view;
             div()
-                .id("nav-home")
+                .id(id)
                 .h(px(ROW_H))
                 .pl(px(6.))
                 .pr(px(4.))
@@ -164,18 +164,19 @@ impl Workspace {
                 .cursor_pointer()
                 .text_size(px(13.))
                 .line_height(px(20.))
-                .when(home_on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-                .when(!home_on, |d| d.text_color(Theme::sidebar_text()).hover(|s| s.bg(Theme::sidebar_hover())))
-                .child(
-                    div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(
-                        if home_on { "home-filled" } else { "home" },
-                        ROW_ICON,
-                        if home_on { Theme::text_code() } else { Theme::icon() },
-                    )),
-                )
-                .child("Home")
-                .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Home, cx))),
-        );
+                .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
+                .when(!on, |d| d.text_color(Theme::sidebar_text()).hover(|s| s.bg(Theme::sidebar_hover())))
+                .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(
+                    if on { on_glyph } else { glyph },
+                    ROW_ICON,
+                    if on { Theme::text_code() } else { Theme::icon() },
+                )))
+                .child(label)
+                .on_click(cx.listener(move |w, _, _, cx| w.show_view(view, cx)))
+        };
+        let nav = div().flex_none().pt(px(8.)).pb(px(4.)).px(px(SB_X))
+            .child(nav_row("nav-home", "Home", View::Home, "home", "home-filled", cx))
+            .child(nav_row("nav-library", "Library", View::Library, "library", "library", cx));
 
         let mut list = div().flex().flex_col().px(px(SB_X)).pb(px(8.));
         // Pinned docs are shortcuts: they stay in 我的文档 too.

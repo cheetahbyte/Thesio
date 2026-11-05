@@ -122,12 +122,25 @@ impl Buffer {
         self.undo.push(Edit { at: range.start, old, new: new.to_string(), sel_before, sel_after });
     }
 
+    /// Replaces text outside the undo history: the generated bibliography
+    /// block follows the document rather than being an edit in it.
+    pub fn replace_silently(&mut self, range: Range<usize>, new: &str, caret: usize) {
+        self.text.replace_range(range, new);
+        self.index_lines();
+        self.sel = caret..caret;
+        self.reversed = false;
+        self.generation += 1;
+        self.last = None;
+    }
+
     pub fn undo(&mut self) -> bool { self.step(true) }
     pub fn redo(&mut self) -> bool { self.step(false) }
 
     fn step(&mut self, back: bool) -> bool {
         let Some(edit) = (if back { self.undo.pop() } else { self.redo.pop() }) else { return false };
         let (remove, insert, sel) = if back { (&edit.new, &edit.old, &edit.sel_before) } else { (&edit.old, &edit.new, &edit.sel_after) };
+        // A silent replacement can overtake an edit made inside it.
+        if self.text.get(edit.at..edit.at + remove.len()) != Some(remove.as_str()) { return false; }
         self.text.replace_range(edit.at..edit.at + remove.len(), insert);
         self.index_lines();
         self.sel = sel.clone();

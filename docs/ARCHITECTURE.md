@@ -56,6 +56,18 @@ A document's id is its vault-relative path. Renaming or moving a file therefore 
 
 A rename or move also updates the paths in every vault document: `#include`, `#import`, and the path arguments of `image`, `bibliography`, `read`, and the data loaders. A moved file's own relative paths are adjusted too. If the open document changes, its editor takes the new text as one undoable edit.
 
+## Citations
+
+`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it.
+
+A document has one of three bibliography modes, read from its text (`library::mode`):
+
+- **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`.
+- **Linked:** `#bibliography("library.yaml")`, with a path relative to the document.
+- **Custom:** any other `#bibliography` call, which Thesio leaves alone.
+
+The first citation in a document embeds a block unless one already covers it. A document can have only one bibliography, so the block goes in the top-level document, the one no other file includes, and covers citations in everything it includes. An included file's preview compiles that top-level document for the same reason.
+
 ## Limits
 
 - Fonts are the set bundled with Typst.
@@ -65,3 +77,6 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 - Changes made to the open file by other programs are not picked up, and the next save overwrites them.
 - Two windows on the same file are not kept in sync.
 - The editor has no find and replace yet.
+- Changing a citation key does not update `@key` citations that use it.
+- BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
+- Zotero import and sync are not implemented.

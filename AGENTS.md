@@ -8,6 +8,7 @@ Thesio is Obsidian for Typst: a plain-file vault of `.typ` notes and papers. Rea
 - `crates/core` (`thesio_core`) stays free of GPUI: vault, compiler, buffer, syntax. Dependencies point from the root crate to core only.
 - A document's id is its vault-relative path. Anything that renames or moves a file goes through `Workspace::path_changed`.
 - Plain files come first. Keep app state in `.thesio/` only for what a file cannot hold, and keep the vault readable without the app.
+- `library.yaml` is the source of truth for citations. Never overwrite a library file that failed to parse.
 - All vault paths pass through `Store::path`, which rejects anything leaving the vault.
 - Colors use `Theme::*` tokens, then the `theme::craft` scale. Shadows use `theme::shadow_*`, menus use `ui::popover` and `ui::menu_row`.
 - Record every `vendor/` change in vendor/PATCHES.md. Patch markers there read `quiet.md:` for provenance.

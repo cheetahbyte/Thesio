@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-actions!(workspace, [NewDoc, NewFolder, ImportDoc, ToggleSidebar, FocusSearch, OpenSettings, OpenAbout, GoHome, CloseWindow, Quit,
+actions!(workspace, [NewDoc, NewFolder, ImportDoc, InsertCitation, ToggleSidebar, FocusSearch, OpenSettings, OpenAbout, GoHome, CloseWindow, Quit,
     HideApp, HideOthers, ShowAll, Minimize, Zoom, ToggleFullScreen]);
 
 /// The menu bar, in the interface language.
@@ -43,6 +43,7 @@ pub fn set_menus(cx: &mut App) {
             items: vec![
                 MenuItem::action("New Document", NewDoc),
                 MenuItem::action("New Folder", NewFolder),
+                MenuItem::action("Insert Citation…", InsertCitation),
                 MenuItem::action("Import as Document…", ImportDoc),
                 MenuItem::separator(),
                 MenuItem::action("Close Window", CloseWindow),
@@ -81,6 +82,7 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-n", NewDoc, None),
         KeyBinding::new("cmd-shift-n", NewFolder, None),
+        KeyBinding::new("cmd-shift-c", InsertCitation, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-shift-i", ImportDoc, None),
         KeyBinding::new("cmd-alt-home", GoHome, None),
@@ -151,11 +153,12 @@ pub struct RowMenu {
     pub batch: bool,
 }
 
-/// What the main pane shows: the open document, 主页 or 回收站.
+/// What the main pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     Doc,
     Home,
+    Library,
     Trash,
     Settings,
 }
@@ -198,6 +201,7 @@ pub struct Workspace {
     pub current: Option<String>,
     pub editor: Option<Entity<SourceEditor>>,
     pub preview: Option<Entity<Preview>>,
+    pub citations: crate::citations::Citations,
     pub search: Entity<TextField>,
     /// Keyboard highlight inside search results.
     pub search_sel: Option<usize>,
@@ -273,7 +277,7 @@ impl Workspace {
             // The system switched between light and dark (or the app's own look changed).
             cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
-                if window.is_window_active() { this.entries = this.store.list(); this.sort(); cx.notify(); }
+                if window.is_window_active() { this.entries = this.store.list(); this.sort(); this.reload_library(); cx.notify(); }
                 else { this.cancel_shortcut_recording(cx); this.flush(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -309,6 +313,7 @@ impl Workspace {
         });
         let sidebar_width = store.settings().sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
         let store_expanded: HashSet<String> = store.settings().expanded.into_iter().collect();
+        let citations = crate::citations::Citations::new(&store.root(), cx);
         let mut ws = Workspace {
             shortcut_recording: None,
             shortcut_strokes: vec![],
@@ -320,6 +325,7 @@ impl Workspace {
             current: None,
             editor: None,
             preview: None,
+            citations,
             search,
             search_sel: None,
             sidebar_open: true,
@@ -419,7 +425,8 @@ impl Workspace {
         let typst = id.ends_with(".typ");
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
         let root = self.store.root();
-        let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string())));
+        let main = self.top_document(id);
+        let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string(), main)));
         if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
         self.editor_subs = vec![
             cx.subscribe_in(&editor, window, |this, editor, _: &SourceEvent, window, cx| {
@@ -459,7 +466,9 @@ impl Workspace {
         let moved = self.current.as_deref().and_then(|c| (c == old).then(|| new.to_string()).or_else(|| c.strip_prefix(&format!("{old}/")).map(|rest| format!("{new}/{rest}"))));
         if let Some(path) = moved {
             self.current = Some(path.clone());
-            if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path)); }
+            self.entries = self.store.list();
+            let main = self.top_document(&path);
+            if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
         let prefix = format!("{old}/");
         let renamed: Vec<String> = self.expanded.iter().filter(|e| *e == old || e.starts_with(&prefix)).cloned().collect();
@@ -669,6 +678,9 @@ impl Workspace {
         if view == View::Trash {
             self.trash = self.store.list_trash();
         }
+        if view == View::Library {
+            self.reload_library();
+        }
         self.view = view;
         self.row_menu = None;
         self.trash_menu = None;
@@ -746,6 +758,12 @@ impl Workspace {
 
 
 
+    /// Writes the open document again after text changed without an edit.
+    pub(crate) fn mark_unsaved(&mut self, cx: &mut Context<Self>) {
+        self.unsaved = true;
+        self.flush(cx);
+    }
+
     fn schedule_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.status = SaveStatus::Saving;
         self.unsaved = true;
@@ -779,6 +797,7 @@ impl Workspace {
                 self.status = SaveStatus::Saved;
                 self.unsaved = false;
                 self.sort();
+                self.sync_bibliographies(cx);
             }
             Err(e) => self.status = SaveStatus::Failed(format!("Could not save: {}", crate::settings::diagnostic(&e.to_string()))),
         }
@@ -1076,10 +1095,13 @@ impl Render for Workspace {
                 )
                 .into_any_element(),
             View::Home => self.render_home(window, cx),
+            View::Library => self.render_library(cx),
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(cx),
         };
         let move_dlg = self.render_move_dialog(cx);
+        let entry_form = self.render_entry_form(cx);
+        let cite_picker = self.render_cite_picker(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
         // surface beside it; the change of value is the only line between
@@ -1108,6 +1130,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|w, _: &OpenAbout, _, cx| w.open_settings(crate::settings::Page::About, cx)))
             .on_action(cx.listener(|w, _: &GoHome, _, cx| w.show_view(View::Home, cx)))
             .on_action(cx.listener(|w, _: &NewDoc, window, cx| w.new_doc(window, cx)))
+            .on_action(cx.listener(|w, _: &InsertCitation, window, cx| w.open_cite_picker(window, cx)))
             .on_action(cx.listener(|w, _: &NewFolder, window, cx| w.new_folder(None, window, cx)))
             .on_action(cx.listener(|w, _: &ImportDoc, window, cx| w.open_import(window, cx)))
             .on_action(cx.listener(|w, _: &ToggleSidebar, _, cx| {
@@ -1163,6 +1186,8 @@ impl Render for Workspace {
             .children(home_menus)
             .children(confirm)
             .children(move_dlg)
+            .children(entry_form)
+            .children(cite_picker)
             .children(search)
             .children(resize_overlay)
             .children(toast)

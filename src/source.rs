@@ -104,11 +104,10 @@ impl SourceEditor {
         self.reveal(cx);
     }
 
-    /// Takes in text changed on disk as one undoable edit, keeping the caret
-    /// on the same text where it can.
-    pub fn reload(&mut self, text: &str, cx: &mut Context<Self>) {
+    /// The differing span between the buffer and `text`, and where the caret
+    /// lands: `(old range, new end, caret)`.
+    fn diff(&self, text: &str) -> (std::ops::Range<usize>, usize, usize) {
         let old = self.buffer.text();
-        if old == text { return; }
         let mut start = old.bytes().zip(text.bytes()).take_while(|(a, b)| a == b).count();
         while !old.is_char_boundary(start) || !text.is_char_boundary(start) { start -= 1; }
         let longest = old.len().min(text.len()) - start;
@@ -117,8 +116,36 @@ impl SourceEditor {
         let (old_end, new_end) = (old.len() - tail, text.len() - tail);
         let caret = self.buffer.caret();
         let caret = if caret <= start { caret } else if caret >= old_end { caret + new_end - old_end } else { new_end };
-        self.buffer.replace_selecting(start..old_end, &text[start..new_end], caret..caret, EditKind::Other);
+        (start..old_end, new_end, caret)
+    }
+
+    /// Takes in text changed on disk as one undoable edit, keeping the caret
+    /// on the same text where it can.
+    pub fn reload(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.buffer.text() == text { return; }
+        let (range, new_end, caret) = self.diff(text);
+        let start = range.start;
+        self.buffer.replace_selecting(range, &text[start..new_end], caret..caret, EditKind::Other);
         self.changed(cx);
+    }
+
+    /// Takes in text Thesio generated, outside the undo history and without
+    /// announcing a change: it is already saved.
+    pub fn sync_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.buffer.text() == text { return; }
+        let (range, new_end, caret) = self.diff(text);
+        let start = range.start;
+        self.buffer.replace_silently(range, &text[start..new_end], caret);
+        if self.typst { self.spans = highlights(self.buffer.text()); }
+        self.list.reset(self.buffer.line_count());
+        cx.notify();
+    }
+
+    /// Inserts a citation at the caret, spaced off the word before it.
+    pub fn insert_citation(&mut self, key: &str, cx: &mut Context<Self>) {
+        let before = self.buffer.text()[..self.buffer.sel.start].chars().next_back();
+        let glue = if before.is_some_and(|c| !c.is_whitespace() && !"([{".contains(c)) { " " } else { "" };
+        self.insert(&format!("{glue}@{key}"), EditKind::Other, cx);
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {

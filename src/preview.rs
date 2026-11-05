@@ -34,12 +34,14 @@ pub struct Preview {
     scroll: ScrollHandle,
     width: Arc<Mutex<f32>>,
     open_path: String,
+    /// The document to compile: the open file, or the one that includes it.
+    main: String,
 }
 
 impl EventEmitter<PreviewEvent> for Preview {}
 
 impl Preview {
-    pub fn new(vault: std::path::PathBuf, path: String) -> Self {
+    pub fn new(vault: std::path::PathBuf, path: String, main: String) -> Self {
         Self {
             compiler: Arc::new(Mutex::new(Compiler::new(vault))),
             pages: vec![],
@@ -48,18 +50,22 @@ impl Preview {
             scroll: ScrollHandle::new(),
             width: Arc::new(Mutex::new(0.)),
             open_path: path,
+            main,
         }
     }
 
     /// The open file moved; it recompiles on the next edit.
-    pub fn set_path(&mut self, path: String) { self.open_path = path; }
+    pub fn set_path(&mut self, path: String, main: String) {
+        self.open_path = path;
+        self.main = main;
+    }
 
     /// Compiles `text` as the open file, superseding any pending compile.
     pub fn update(&mut self, text: String, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
         let known: Vec<u128> = self.pages.iter().map(|p| p.hash).collect();
-        let (compiler, path) = (self.compiler.clone(), self.open_path.clone());
+        let (compiler, path, main) = (self.compiler.clone(), self.open_path.clone(), self.main.clone());
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DEBOUNCE).await;
             let stale = this.read_with(cx, |this, _| this.generation != generation).unwrap_or(true);
@@ -67,7 +73,7 @@ impl Preview {
             let result = cx.background_spawn(async move {
                 let mut compiler = compiler.lock().unwrap();
                 compiler.set_buffer(&path, text)?;
-                let compilation = compiler.compile(&path)?;
+                let compilation = compiler.compile(&main)?;
                 let pages = compilation.document.as_ref().map(|document| {
                     let sizes: Vec<(f32, f32)> = document.pages().iter().map(|p| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32)).collect();
                     let rendered = render_changed(document, RENDER_SCALE, &known).into_iter().map(|(hash, image)| {
