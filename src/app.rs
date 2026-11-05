@@ -288,10 +288,10 @@ impl Workspace {
         let text = match loaded {
             Ok(text) => text,
             Err(e) => {
-                // Binary files belong to the system's apps; scripted runs must not start any.
+                // Binary files belong to the system's apps.
                 let path = self.store.borrow().path(id);
                 match path {
-                    Ok(path) if !paths::is_document(id) && std::env::var_os("THESIO_SCRIPT").is_none() => cx.open_with_system(&path),
+                    Ok(path) if !paths::is_document(id) => crate::system::open_with_system(&path, cx),
                     _ => self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {e}"), cx),
                 }
                 return cx.notify();
@@ -541,14 +541,9 @@ impl Workspace {
         let Ok(text) = self.text_of(id, cx) else { return };
         let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(crate::store::UNTITLED, |e| e.title.as_str()));
         let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
-        let picked = crate::devtools::take_pick().and_then(|p| p.into_iter().next());
-        let prompt = picked.is_none().then(|| cx.prompt_for_new_path(&root, Some(&name)));
+        let picked = crate::system::pick_new_path(&root, &name, cx);
         cx.spawn(async move |this, cx| {
-            let path = match prompt {
-                Some(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
-                None => picked,
-            };
-            let Some(path) = path else { return };
+            let Some(path) = picked.await else { return };
             let result = cx.background_spawn(async move {
                 let mut compiler = thesio_core::compiler::Compiler::new(root);
                 compiler.set_buffer(&id, text)?;
@@ -569,14 +564,9 @@ impl Workspace {
 
     /// Copies chosen files into the vault and opens the first document.
     pub fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let picked = crate::devtools::take_pick();
-        let prompt = picked.is_none().then(|| cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: true, prompt: None, extensions: None }));
+        let picked = crate::system::pick_files(None, true, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let paths = match prompt {
-                Some(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
-                None => picked,
-            };
-            let Some(paths) = paths else { return };
+            let Some(paths) = picked.await else { return };
             let _ = this.update_in(cx, |w, window, cx| {
                 let mut first = None;
                 for path in &paths {

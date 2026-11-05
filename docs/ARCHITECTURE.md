@@ -13,6 +13,7 @@ Dependencies point only from the application to core.
 main.rs: window
   app.rs: Workspace, the window's root view
     actions.rs: every action's name, menu entry, default keys, and handler
+    system.rs: file dialogs, other apps, the clipboard; scripted runs stop here
     store.rs: the vault on disk [core]
     document.rs: the open document's saves, and every write to a document
     overlay.rs: the one menu or dialog over the window

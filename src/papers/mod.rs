@@ -49,10 +49,8 @@ impl Workspace {
         self.show_view(View::Paper, window, cx);
     }
 
-    /// Scripted runs must not start other apps.
     pub(crate) fn open_paper_externally(&self, id: &str, cx: &App) {
-        if std::env::var_os("THESIO_SCRIPT").is_some() { return; }
-        if let Ok(path) = self.store.borrow().path(id) { cx.open_with_system(&path); }
+        if let Ok(path) = self.store.borrow().path(id) { crate::system::open_with_system(&path, cx); }
     }
 
     /// The name a paper goes by: its source's title, or its file name.
@@ -62,17 +60,9 @@ impl Workspace {
     }
 
     pub(crate) fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
-        let picked = crate::devtools::take_pick();
-        let prompt = picked.is_none().then(|| cx.prompt_for_paths(PathPromptOptions {
-            files: true, directories: false, multiple: false, prompt: None,
-            extensions: Some(vec!["pdf".into()]),
-        }));
+        let picked = crate::system::pick_files(Some("pdf"), false, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let paths = match prompt {
-                Some(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
-                None => picked,
-            };
-            let Some(path) = paths.and_then(|paths| paths.into_iter().next()) else { return };
+            let Some(path) = picked.await.and_then(|paths| paths.into_iter().next()) else { return };
             let _ = this.update_in(cx, |w, window, cx| then(w, path, window, cx));
         }).detach();
     }

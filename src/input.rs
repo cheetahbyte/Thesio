@@ -193,19 +193,19 @@ impl TextField {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.buffer.sel.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.buffer.selected().to_string()));
+            crate::system::copy(self.buffer.selected().to_string(), cx);
         }
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if !self.buffer.sel.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.buffer.selected().to_string()));
+            crate::system::copy(self.buffer.selected().to_string(), cx);
             self.replace(self.buffer.sel.clone(), "", cx);
         }
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(t) = cx.read_from_clipboard().and_then(|i| i.text()) {
+        if let Some(t) = crate::system::paste(cx) {
             self.replace(self.buffer.sel.clone(), &t, cx);
         }
     }

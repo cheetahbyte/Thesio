@@ -798,16 +798,16 @@ impl SourceEditor {
         self.move_caret(Place::Select(0..self.buffer.text().len()), false, cx);
     }
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.buffer.sel.is_empty() { cx.write_to_clipboard(ClipboardItem::new_string(self.buffer.selected().to_string())); }
+        if !self.buffer.sel.is_empty() { crate::system::copy(self.buffer.selected().to_string(), cx); }
     }
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if !self.buffer.sel.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.buffer.selected().to_string()));
+            crate::system::copy(self.buffer.selected().to_string(), cx);
             self.insert("", EditKind::Other, cx);
         }
     }
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        if let Some(text) = crate::system::paste(cx) {
             self.insert(&plain_newlines(&text), EditKind::Other, cx);
         }
     }

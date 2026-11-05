@@ -31,7 +31,7 @@ impl Default for PaperPanel {
 
 impl Workspace {
     pub(crate) fn highlight_selection(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = crate::devtools::take_pdf_select() { self.papers.pdf.select_text(&text); }
+        if let Some(text) = crate::system::take_pdf_selection() { self.papers.pdf.select_text(&text); }
         match self.papers.pdf.highlight_selection() {
             Ok(true) => {
                 self.papers.panel.tab = PaperTab::Highlights;

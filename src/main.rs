@@ -8,7 +8,6 @@ mod shared_store;
 mod window_size;
 mod assets;
 mod citations;
-mod clipboard;
 mod completion;
 mod confirm;
 mod devtools;
@@ -39,6 +38,7 @@ mod source;
 mod settings;
 mod shortcuts;
 mod startup;
+mod system;
 mod text;
 mod theme;
 mod trash;
@@ -100,7 +100,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
 fn main() {
     startup::mark("main");
     session::prepare();
-    let scripted = std::env::var_os("THESIO_SCRIPT").is_some();
+    let scripted = system::scripted();
     // No single-instance guard: copies may share a library (builds tested
     // side by side). `Store` rereads an index another copy rewrote before
     // writing its own.

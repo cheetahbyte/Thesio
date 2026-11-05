@@ -2,25 +2,31 @@
 
 usage: python3 tools/harness/compare.py <script.txt> <bin_a> <bin_b> [work_dir] [lib_dir]
   work_dir default: /tmp/thesio-compare   (a/, b/ and diff-<shot>.png land here)
-Exit status 1 when any shot differs. Needs Pillow. A pure refactor should
-report every shot identical. The caret does not blink (THESIO_NOBLINK); scripts
-should park the pointer first, since the real mouse position shows as hover.
+Exit status 1 when any shot differs or is missing from either side, or when
+there are no shots. Needs Pillow. A pure refactor should report every shot
+identical. Scripts should park the pointer first, since the real mouse position
+shows as hover.
 """
-import os, subprocess, sys
+import os, shutil, subprocess, sys
 from PIL import Image, ImageChops
 here = os.path.dirname(os.path.abspath(__file__))
 script, bins = sys.argv[1], sys.argv[2:4]
 work = os.path.abspath(sys.argv[4]) if len(sys.argv) > 4 else '/tmp/thesio-compare'
 lib = sys.argv[5] if len(sys.argv) > 5 else os.path.join(here, 'lib_clean')
 for side, binary in zip('ab', bins):
-    env = dict(os.environ, THESIO_BIN=os.path.abspath(binary), THESIO_NOBLINK='1')
+    shutil.rmtree(os.path.join(work, side), ignore_errors=True)
+    env = dict(os.environ, THESIO_BIN=os.path.abspath(binary))
     subprocess.run([sys.executable, os.path.join(here, 'run.py'), script, lib, os.path.join(work, side)], env=env, check=True)
-shots = sorted(f for f in os.listdir(os.path.join(work, 'a')) if f.endswith('.png'))
+pngs = lambda side: {f for f in os.listdir(os.path.join(work, side)) if f.endswith('.png')}
+shots_a, shots_b = pngs('a'), pngs('b')
+if not shots_a and not shots_b: sys.exit('no shots taken')
 bad = 0
-for f in shots:
+for name in os.listdir(work):
+    if name.startswith('diff-'): os.remove(os.path.join(work, name))
+for f in sorted(shots_a | shots_b):
+    if f not in shots_a or f not in shots_b:
+        print(f"{f}: missing in {'b' if f in shots_a else 'a'}"); bad += 1; continue
     pb = os.path.join(work, 'b', f)
-    if not os.path.exists(pb):
-        print(f'{f}: missing in b'); bad += 1; continue
     a, b = Image.open(os.path.join(work, 'a', f)).convert('RGB'), Image.open(pb).convert('RGB')
     if a.size != b.size:
         print(f'{f}: size {a.size} vs {b.size}'); bad += 1; continue

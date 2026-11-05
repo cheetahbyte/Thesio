@@ -34,32 +34,41 @@ Replace `OLD_BINARY` with the path to the old binary.
 - The comparison runs the same script against both versions and compares each screenshot pixel by pixel. For differences, it reports the number and bounds of differing pixels and writes a diff image to `/tmp/thesio-compare/diff-<name>.png`.
 - For refactors that move code without changing appearance, such as splitting modules, changing tokens, or sharing components, every screenshot must be `identical`.
 - `examples/edit.txt` opens the sample thesis in `lib_clean`, types into it, and captures an error state.
-- The cursor doesn't blink during comparisons (`THESIO_NOBLINK`). Move the pointer to a blank area at the start of the script, or its actual position can appear as a hover state in screenshots.
+- Move the pointer to a blank area at the start of the script, or its actual position can appear as a hover state in screenshots.
+- A run fails when it takes no shots, or when either version misses a shot the other took. Each run starts from empty `a/` and `b/` folders.
+- The compile time in the preview's corner can differ between runs.
 - To build the old binary, run `git worktree add /tmp/old COMMIT`, replacing `COMMIT` with the desired commit. In that worktree, run `CARGO_TARGET_DIR=REPOSITORY/target cargo build --release`, replacing `REPOSITORY` with this repository's path. Then copy the binary elsewhere.
 
 ## Script commands
 
-Use one command per line. Lines starting with `#` are comments. For complete details, see the start of `src/devtools.rs`.
+Use one command per line. Lines starting with `#` are comments. `COMMANDS` in `src/devtools.rs` is the grammar, and a test keeps this table in step with it. A line it cannot read prints `bad step` and is skipped.
 
 | Command | Effect |
 |---|---|
 | `wait <ms>` | Wait and draw frames during the wait, including when the screen is locked |
-| `key <key>` | Send a key, such as `key cmd-b` or `key escape` |
+| `key <key>...` | Send keys, such as `key cmd-b` or `key escape` |
 | `type <text>` | Enter text; trailing spaces are significant |
-| `move x y` / `click x y` / `dclick x y` / `rclick x y` / `cmdclick x y` / `drag x1 y1 x2 y2` | Mouse operations in window coordinates |
-| `wheel x y dy` | Send one wheel event |
-| `shot <name>` / `burst <name> n` | Capture a screenshot or capture `n` screenshots about 8 ms apart |
+| `nkey <letter>` | Press a real key through AppKit, so the active input method sees it |
 | `mark <text>` / `commit <text>` | Compose or commit input method text |
-| `clip html\|text <file>` | Set the simulated clipboard content for a subsequent `key cmd-v` |
-| `pick <path>[\|<path>…]` | Supply paths for the next open or save dialog without showing a system panel |
+| `move x y` / `click x y` / `dclick x y` / `rclick x y` / `cmdclick x y` / `drag x1 y1 x2 y2` | Mouse operations in window coordinates |
+| `down x y [clicks]` / `dragto x y` / `up x y [clicks]` | A drag in separate steps, so frames render and shots land mid-drag; `down x y 2` is a double click's second press |
+| `wheel x y dy` | Send one wheel event |
+| `shot <name>` / `burst <name> [n]` | Capture a screenshot or capture `n` screenshots (default 10) about 8 ms apart |
+| `clip text <file>` | Set the simulated clipboard to the file's text, for a subsequent `key cmd-v` |
+| `pick <path>[\|<path>…]` | Supply paths for the next open or save dialog; a dialog with none waiting counts as cancelled |
 | `pdfselect <text>` | Select the first match in the open paper before the next highlight; mouse steps cannot reach the native viewer |
 | `resize w h` | Resize the window |
 | `place x y` | Place the window's top-left corner at (x, y) on the primary screen, floating over other windows; use with `THESIO_NOPARK` for desktop screenshots |
 | `deskshot <name> [margin]` | Capture the window and content behind it, with a margin in pt on each side (default 48) |
-| `bench <n> <command>` | Run a command `n` times, drawing a frame synchronously each time, and report elapsed time |
-| `record <file.mp4>` / `record stop` / `glide` / `scroll` / `caption` | Record a demonstration video |
+| `bench <n> [command]` | Run a command `n` times, drawing a frame synchronously each time, and report step and frame times; the default command is `noop` |
+| `noop` | Request a redraw |
+| `record <file.mp4>` / `record stop` | Record a demonstration video at 30 fps through ffmpeg. Frames are rendered offscreen, so they have no cursor, traffic lights, or rounded corners |
+| `glide x y ms` / `scroll x y dy ms` | An eased pointer move from the last position, or an eased scroll |
+| `caption <text>` | A timed note in the pointer track, for titles |
 | `activate` | Make the window the key window. **This takes focus; generally don't use it.** |
 | `quit` | Exit; `run.py` appends this automatically |
+
+While recording, the pointer track goes to `<file.mp4>.cursor`, one `time x y what` line per event for compositing afterwards. Every pointer command writes to it: `what` is `move`, `click`, `down`, `up`, or `caption <text>`.
 
 Environment variables:
 
@@ -67,14 +76,13 @@ Environment variables:
 - `THESIO_TRACE`: Output an event trace.
 - `THESIO_NOPARK`: Don't move the window offscreen.
 - `THESIO_WINDOW_CAPTURE`: Use window server capture, including the system-drawn traffic lights.
-- `THESIO_NOBLINK`: Disable cursor blinking; `compare.py` sets this.
 - `THESIO_RECORD_FPS`: Recording frame rate, default 30.
 
 ## Usage rules
 
 Scripts run on a computer the user is actively using. Follow these rules:
 
-- Don't use the real system clipboard with ⌘C or ⌘V. Use `key cmd-v` only after `clip`.
+- A scripted run never touches the real system clipboard: copying and pasting use a simulated one, which starts empty. Use `key cmd-v` after `clip`.
 - Don't take focus with `activate`. By default, the window moves offscreen for rendering.
 - Don't select:
   - The **Show in Finder** button under Settings › Library.

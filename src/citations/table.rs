@@ -167,17 +167,9 @@ impl Workspace {
     }
 
     pub(crate) fn import_bib(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let picked = crate::devtools::take_pick();
-        let prompt = picked.is_none().then(|| cx.prompt_for_paths(PathPromptOptions {
-            files: true, directories: false, multiple: true, prompt: None,
-            extensions: Some(vec!["bib".into()]),
-        }));
+        let picked = crate::system::pick_files(Some("bib"), true, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let paths = match prompt {
-                Some(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
-                None => picked,
-            };
-            let Some(paths) = paths else { return };
+            let Some(paths) = picked.await else { return };
             let _ = this.update_in(cx, |w, window, cx| {
                 let (mut added, mut skipped) = (0, 0);
                 for path in &paths {
@@ -201,14 +193,9 @@ impl Workspace {
     pub(crate) fn export_bib(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self.citations.library.as_ref().map(Library::export_biblatex) else { return };
         let root = self.store.borrow().root().to_path_buf();
-        let picked = crate::devtools::take_pick().and_then(|p| p.into_iter().next());
-        let prompt = picked.is_none().then(|| cx.prompt_for_new_path(&root, Some("library.bib")));
+        let picked = crate::system::pick_new_path(&root, "library.bib", cx);
         cx.spawn(async move |this, cx| {
-            let path = match prompt {
-                Some(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
-                None => picked,
-            };
-            let Some(path) = path else { return };
+            let Some(path) = picked.await else { return };
             let result = std::fs::write(&path, text);
             let _ = this.update(cx, |w, cx| match result {
                 Ok(()) => w.show_toast("Exported BibLaTeX", cx),
@@ -397,7 +384,7 @@ impl Workspace {
                 w.choose_pdf(window, cx, move |w, path, _, cx| w.attach_paper(&path, &id, cx));
             }))))
             .when(single, |d| d.child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(menu_action(cx, move |w, window, cx| w.open_source_notes(&notes, window, cx)))))
-            .when(single, |d| d.child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(menu_action(cx, move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))))
+            .when(single, |d| d.child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(menu_action(cx, move |_, _, cx| crate::system::copy(copy.clone(), cx)))))
             .child(div().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border()))
             .child(menu_row("entry-menu-delete").text_color(Theme::danger())
                 .child(icon(Icon::Delete, 16., Theme::danger()))
