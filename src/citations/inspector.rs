@@ -13,7 +13,6 @@ use thesio_core::source_type::{Field, JOURNAL_ARTICLE, SOURCE_TYPES, SourceType}
 
 pub(crate) const INSPECTOR_W: f32 = 320.;
 
-/// The panel beside the table that edits the selected entry.
 pub struct Inspector {
     key: String,
     key_field: Entity<TextField>,

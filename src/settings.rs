@@ -13,11 +13,9 @@ use gpui::{prelude::FluentBuilder, *};
 use std::sync::{Arc, LazyLock};
 use widgets::{group, row, switch};
 
-/// The view's state.
 pub struct Settings {
     pub(crate) page: Page,
     pub(crate) scroll: ScrollHandle,
-    /// The Unpaywall email.
     email: Entity<TextField>,
     _subs: Vec<Subscription>,
 }
@@ -60,8 +58,7 @@ impl Page {
 
 const COLUMN_W: f32 = 640.;
 
-/// The sidebar list, one evenly spaced run (five rows need no unlabelled
-/// groups); `None` is Trash (its own view, shown with this sidebar).
+/// The sidebar list. `None` is Trash, its own view, shown with this sidebar.
 const NAV: [Option<Page>; 4] = [Some(Page::Appearance), Some(Page::Library), None, Some(Page::About)];
 
 impl Workspace {
@@ -83,14 +80,10 @@ impl Workspace {
         };
         div().w(px(self.sidebar_w(window))).h_full().flex_none().flex().flex_col().bg(Theme::sidebar_veil()).text_color(Theme::text()).font_family(theme::UI_FONT)
             .child(div().h(px(crate::ui::HEADER_H)).flex_none().flex().items_center().pl(px(theme::TRAFFIC_LIGHTS_W)).pr(px(12.)).title_bar().child(self.header_navigation(cx)))
-            // Match the document sidebar: Home sits 8 under the bar, followed by
-            // a section header and rows on a 31pt pitch. Settings aligns with Home;
-            // the 34pt box keeps the rows below.
             .child(div().pt(px(8.)).px(px(sb::SB_X)).flex().flex_col()
                 .child(div().h(px(sb::SECTION_H)).pl(px(4.)).pt(px((sb::SECTION_TOP + sb::SECTION_H) / 2. - sb::ROW_H / 2.))
                     .child(div().px(px(4.)).text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child("Settings")))
                 .child(div().flex().flex_col().gap(px(sb::ROW_GAP)).children(NAV.iter().map(|p| nav_row(*p, cx)).collect::<Vec<_>>())))
-            // Replace Settings with Back, returning to the previous page.
             .child(div().flex_1())
             .child(sb::footer_line())
             .child(sb::footer_slot(sb::nav_row("ft-back", Icon::Back, "Back", false).tip("Back", Some("Esc"))

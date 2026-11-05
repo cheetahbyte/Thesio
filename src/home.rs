@@ -105,7 +105,6 @@ impl Workspace {
         let title = "Home".to_string();
         let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
         let left = page_title_x(self.sidebar.open) + title_w + 16.;
-        // + is 32 wide with an 8pt inset; 16 clear of it.
         let right = crate::ui::HEADER_ACTIONS_H + crate::ui::header_right_inset() + 16.;
         let half = (main / 2. - left).min(main / 2. - right);
         let width = (main - 320.).min(2. * half).min(360.);
@@ -124,7 +123,6 @@ impl Workspace {
     pub(crate) fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let stamp = self.overview_stamp();
         if self.home.overview.as_ref().is_none_or(|(known, _)| *known != stamp) { self.home.overview = Some((stamp, self.overview())); }
-        // Too narrow for the search box: a search icon beside +, in the same style.
         let search = self.header_search(window, cx);
         let narrow = search.is_none();
         let header = page_header(self, "Home", None, cx).relative().children(search)

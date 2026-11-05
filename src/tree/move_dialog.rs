@@ -11,11 +11,9 @@ use gpui::{prelude::FluentBuilder, *};
 use std::collections::HashSet;
 use thesio_core::paths::is_within;
 
-/// The Move to dialog.
 pub struct MoveDialog {
-    /// Pages being moved (each with its subtree).
     pub ids: Vec<String>,
-    /// Chosen destination: `Some(None)` is the top level of My documents.
+    /// Chosen destination: `Some(None)` is the vault root.
     pub target: Option<Option<String>>,
     pub expanded: HashSet<String>,
     pub search: Entity<TextField>,
@@ -79,8 +77,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The Move to dialog: My documents on the left, its page tree on the right.
-    /// Quiet selection fills, a 30pt search field, the modal buttons.
     pub(crate) fn render_move_dialog(&self, dlg: &MoveDialog, cx: &mut Context<Self>) -> AnyElement {
         let tree = Tree::new(&self.entries);
         let hidden: HashSet<String> = dlg.ids.iter().flat_map(|id| tree.subtree(id)).collect();
@@ -103,8 +99,6 @@ impl Workspace {
             .bg(crate::theme::raised(Theme::bg_body()))
             .child(icon(Icon::Search, 15., Theme::text_caption()))
             .child(div().flex_1().min_w_0().ml(px(6.)).flex().child(dlg.search.clone()));
-        // The location column reads like a sidebar: a grey surface and
-        // a quiet pill for the selected location.
         let left = div()
             .w(px(240.))
             .flex_none()

@@ -1,5 +1,4 @@
-//! Search dialog: a 540-wide white dialog with the input row, Recently viewed / hit
-//! rows and a gray footer. Radius 16, quiet row fills, monochrome page glyphs.
+//! The search dialog: documents, sources, and PDF highlights.
 
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
@@ -25,7 +24,6 @@ const SUMMARY_SEP: &str = "\u{a0}\u{a0}\u{a0}";
 /// − row padding 12 / 8 − icon 24 + 10.
 const INFO_W: f32 = 472.;
 
-/// A search result.
 #[derive(Clone)]
 pub enum Hit {
     Doc(Entry),
@@ -34,7 +32,6 @@ pub enum Hit {
     Highlight(String, String, Highlight),
 }
 
-/// The search dialog's state.
 pub struct Search {
     pub field: Entity<TextField>,
     /// Keyboard highlight among the results.
@@ -105,7 +102,6 @@ pub(crate) fn find_ci(hay: &str, needle_lower: &str) -> Option<Range<usize>> {
     }
 }
 
-/// Every match of `q` in `hay`.
 fn find_all(hay: &str, q: &str) -> Vec<Range<usize>> {
     let mut out = vec![];
     let mut at = 0;
@@ -175,8 +171,7 @@ pub(crate) fn summary_text(text: String, mut hits: Vec<Range<usize>>, width: f32
     StyledText::new(text).with_runs(runs)
 }
 
-/// A page without an emoji: the monochrome page glyph (the sidebar's), in
-/// a 24 slot.
+/// A document's glyph, in a 24 slot.
 pub(crate) fn doc_icon() -> Div {
     div()
         .flex_none()
@@ -253,7 +248,6 @@ fn hit_info(title: String, summary: Option<(String, Vec<Range<usize>>)>, detail:
         .child(div().mt(px(2.)).h(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(12.)).line_height(px(20.)).text_color(Theme::text_caption()).child(detail))
 }
 
-/// A result's title (13pt semibold, hits in the link colour), summary and extra line.
 fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, window: &Window) -> Div {
     let title = display_title(&e.title);
     let title_hit = find_ci(&title, q);
@@ -321,7 +315,6 @@ impl Workspace {
         }).detach();
     }
 
-    /// First result is selected; an empty result list has no selection.
     pub(crate) fn default_search_sel(&self, cx: &App) -> Option<usize> {
         (!self.search_results(cx).is_empty()).then_some(0)
     }

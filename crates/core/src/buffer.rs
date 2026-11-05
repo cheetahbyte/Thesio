@@ -153,7 +153,6 @@ impl Buffer {
         change
     }
 
-    /// Undoes an edit, and returns what that changed.
     pub fn undo(&mut self) -> Option<Change> { self.step(true) }
     pub fn redo(&mut self) -> Option<Change> { self.step(false) }
 

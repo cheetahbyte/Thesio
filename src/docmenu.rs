@@ -8,7 +8,6 @@ use crate::ui::{Icon, ModalAt, anchored_menu};
 use gpui::{prelude::FluentBuilder, *};
 
 const MENU_W: f32 = 200.;
-/// Gap between the "…" button and the menu.
 const MENU_GAP: f32 = 6.;
 
 fn menu_item(id: &'static str, ic: Icon, label: impl Into<SharedString>) -> Stateful<Div> {
@@ -17,7 +16,6 @@ fn menu_item(id: &'static str, ic: Icon, label: impl Into<SharedString>) -> Stat
         .child(div().flex_1().min_w_0().overflow_hidden().child(crate::ui::menu_label(label)))
 }
 
-/// Native-menu separator: 1px, 5px either side, inset 13px.
 fn divider() -> Div {
     div().flex_none().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border())
 }

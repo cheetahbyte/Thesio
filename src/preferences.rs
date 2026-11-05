@@ -48,7 +48,6 @@ fn apply(p: Preferences) {
     *PREFS.write().unwrap() = Some(p);
 }
 
-/// The current preferences.
 pub fn prefs() -> Preferences {
     PREFS.read().unwrap().clone().unwrap_or_default()
 }

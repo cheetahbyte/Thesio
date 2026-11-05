@@ -1,5 +1,4 @@
-//! The Trash page. Deleted pages wait in the library's `trash/` for 30 days; each row is a
-//! deleted page together with the child pages that went with it.
+//! The Trash page. Deleted files wait in `.trash/` for `TRASH_DAYS`.
 
 use crate::app::Workspace;
 use crate::confirm::Confirm;
@@ -14,7 +13,6 @@ use gpui::{prelude::FluentBuilder, *};
 
 pub const TRASH_MENU_W: f32 = 160.;
 
-/// Time remaining: whole days left before automatic permanent deletion.
 fn remaining(deleted: u64) -> String {
     let end = deleted + TRASH_DAYS * 86_400;
     let left = end.saturating_sub(crate::time::now());
@@ -22,7 +20,7 @@ fn remaining(deleted: u64) -> String {
 }
 
 impl Workspace {
-    /// Where a trashed page goes back to: its parent if that page is live.
+    /// Where a trashed file goes back to: its folder, if that is still there.
     fn trash_location(&self, t: &TrashEntry) -> String {
         t.parent
             .as_ref()
@@ -36,8 +34,6 @@ impl Workspace {
         if self.trash.is_empty() {
             return page.child(empty_state(Icon::Delete, "Trash is empty", "Deleted documents stay here for a while.")).into_any_element();
         }
-        // The list: 13pt tertiary headers over a hairline,
-        // 15pt titles, 13pt secondary cells.
         let col = |w: Option<f32>, label: &'static str| {
             div()
                 .when_some(w, |d, w| d.w(px(w)).flex_none())

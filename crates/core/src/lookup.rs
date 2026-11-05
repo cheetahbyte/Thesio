@@ -123,7 +123,7 @@ fn fetch_isbn(id: &str) -> Result<Mapping> {
     Ok(entry)
 }
 
-/// Unpaywall's PDF links for `doi`, best first. None when it has no record.
+/// Unpaywall's PDF links for `doi`, best first. Empty when it has no record.
 fn unpaywall_links(doi: &str, email: &str) -> Result<Vec<String>> {
     let body = match get(&format!("https://api.unpaywall.org/v2/{}?email={}", encode(doi), encode(email)), "application/json") {
         Ok(body) => body,

@@ -13,7 +13,6 @@ pub enum CompletionKind {
     NoteLink,
 }
 
-/// A choice in the popup.
 pub struct Item {
     pub title: String,
     pub detail: String,

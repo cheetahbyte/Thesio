@@ -81,12 +81,10 @@ pub fn moved(path: &str, from: &str, to: &str) -> Option<String> {
     is_within(path, from).then(|| format!("{to}{}", &path[from.len()..]))
 }
 
-/// The stem of a document's file name.
 fn document_stem(name: &str) -> Option<&str> {
     name.rsplit_once('.').filter(|(_, extension)| *extension == EXTENSION).map(|(stem, _)| stem)
 }
 
-/// Whether a file name or path names a Typst document.
 pub fn is_document(name: &str) -> bool { document_stem(name).is_some() }
 /// A file's title: its name, without the extension if it is a document.
 pub fn document_title(name: &str) -> &str { document_stem(name).unwrap_or(name) }

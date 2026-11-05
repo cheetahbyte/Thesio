@@ -17,7 +17,6 @@ const TAB_X: f32 = 16.;
 #[derive(Clone, Copy, Default, PartialEq)]
 pub enum PaperTab { #[default] Notes, Highlights }
 
-/// The panel beside a paper.
 pub struct PaperPanel {
     hidden: bool,
     tab: PaperTab,

@@ -11,7 +11,6 @@ const INTERVAL: u64 = 5 * 60;
 /// Every version stays for a day, then one a day for this many days.
 const DAILY_DAYS: u64 = 90;
 
-/// The versions of one file.
 pub struct Versions {
     pub(crate) dir: PathBuf,
 }
@@ -78,7 +77,6 @@ impl Versions {
         }
     }
 
-    /// Moves them to follow their file.
     pub(crate) fn move_to(&self, other: &Versions) -> std::io::Result<()> {
         if !self.dir.exists() { return Ok(()); }
         if let Some(parent) = other.dir.parent() { std::fs::create_dir_all(parent)?; }

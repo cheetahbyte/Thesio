@@ -39,7 +39,6 @@ pub enum Mode {
     Custom,
 }
 
-/// The first `#bibliography` call under `root`.
 fn first_call<'a>(root: &LinkedNode<'a>) -> Option<LinkedNode<'a>> {
     let mut found = None;
     walk(root, &mut |node| {
@@ -60,21 +59,18 @@ fn source_path(call: &LinkedNode, file: &str) -> Option<String> {
 
 fn is_linked(call: &LinkedNode, file: &str) -> bool { source_path(call, file).as_deref() == Some(LIBRARY_FILE) }
 
-/// The string given for a call's `style` argument.
 fn style_value<'a>(args: &LinkedNode<'a>) -> Option<LinkedNode<'a>> {
     let named = args.children().filter(|child| child.kind() == SyntaxKind::Named)
         .find(|child| child.children().next().is_some_and(|name| name.get().full_text() == "style"))?;
     named.children().find(|child| child.kind() == SyntaxKind::Str)
 }
 
-/// The `style` a document's `#bibliography` asks for.
 pub fn style(text: &str) -> Option<String> {
     let source = Source::detached(text);
     let value = style_value(&args_of(&first_call(&LinkedNode::new(source.root()))?)?)?;
     string(&value)
 }
 
-/// `text` with its `#bibliography` using `style`.
 pub fn set_style(text: &str, style: &str) -> Option<String> {
     let source = Source::detached(text);
     let args = args_of(&first_call(&LinkedNode::new(source.root()))?)?;

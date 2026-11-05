@@ -165,10 +165,10 @@ impl DocumentSession {
     /// The document's words by file, as of the last good compile.
     pub fn words(&self) -> &[(String, usize)] { self.document.as_ref().map_or(&[], |document| &document.words) }
 
-    /// The open file moved; it recompiles on the next edit.
     /// The document this file compiles within.
     pub fn main(&self) -> &str { &self.main }
 
+    /// The open file moved; it recompiles on the next edit.
     pub fn set_path(&mut self, path: String, main: String) {
         self.path = path;
         self.main = main;

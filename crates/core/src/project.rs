@@ -84,7 +84,6 @@ impl Project {
 
     pub fn contains(&self, path: &str) -> bool { self.files.iter().any(|file| file.path == path) }
 
-    /// Each file's vault path and text.
     pub fn files(&self) -> impl Iterator<Item = (&str, &str)> { self.files.iter().map(|file| (file.path.as_str(), file.text.as_str())) }
 
     /// The headings of these files in reading order. A file that includes
@@ -145,7 +144,6 @@ pub struct LaunchTarget {
     pub document: String,
     /// The top-level file that includes `document`.
     pub main: String,
-    /// `document`'s text.
     pub text: String,
 }
 

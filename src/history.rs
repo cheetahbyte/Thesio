@@ -1,4 +1,4 @@
-//! The Version History dialog: earlier versions of the open document, what
+//! The Version History dialog: earlier versions of the open document or the library, what
 //! changed since each, and restoring one.
 
 use crate::app::Workspace;

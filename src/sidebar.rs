@@ -1,6 +1,4 @@
-//! Left pane: document list with search. Rows, sections and footer, sunken:
-//! no panel, border or shadow, straight on the window surface (only the note
-//! floats). 30pt rows on a 31pt pitch, selection pill radius 9.
+//! The left pane: the nav, the outline, the file list, and selection mode.
 
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
@@ -16,8 +14,6 @@ use crate::overlay::{Overlay, menu_action, menu_panel};
 use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, menu_row, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 
-/// Row "…" menu geometry: 32pt rows, 11pt dividers, 6pt padding inside
-/// a 1pt border.
 pub(crate) const ROW_MENU_W: f32 = 180.;
 const ROW_ITEM: f32 = crate::ui::MENU_ROW_H;
 const CHEVRON_SLOT: f32 = 16.;
@@ -25,11 +21,7 @@ const OUTLINE_ROW_H: f32 = 26.;
 const OUTLINE_INDENT: f32 = 12.;
 const CHEVRON_R: f32 = 6.;
 
-/// Sidebar geometry (measured from the window edge), shared by the
-/// document and Settings sidebars: selection pills start 14pt in, every row is
-/// 30pt with radius 9 on a 31pt pitch, glyphs (18pt) centre at 37pt and
-/// labels start at 54pt; groups are 16pt apart, a section header is 34pt
-/// (6 above its 28pt label).
+/// Geometry shared by the document and Settings sidebars.
 pub(crate) const SB_X: f32 = 14.;
 pub(crate) const ROW_H: f32 = 30.;
 const DOC_ROW_H: f32 = ROW_H;
@@ -40,7 +32,6 @@ pub(crate) const GROUP_GAP: f32 = 16.;
 pub(crate) const SECTION_H: f32 = 34.;
 pub(crate) const SECTION_TOP: f32 = 6.;
 
-/// Selection mode caps at 50 pages.
 const BATCH_LIMIT: usize = 50;
 
 /// The sidebar's lists, each folded on its own.
@@ -160,7 +151,6 @@ enum Check {
     On,
 }
 
-/// 14px checkbox.
 fn checkbox(state: Check, disabled: bool) -> Div {
     let white = Theme::bg_body();
     div()
@@ -189,7 +179,6 @@ fn jump_row(id: impl Into<ElementId>, title: String, indent: f32, active: bool) 
         .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(title)))
 }
 
-/// A sidebar row being dragged.
 #[derive(Clone)]
 pub(crate) struct DraggedRow {
     id: String,
@@ -234,7 +223,6 @@ impl Workspace {
         Some(document.session.as_ref().map_or_else(|| self.top_document(&document.id, cx), |session| session.read(cx).main().to_string()))
     }
 
-    /// Marks the heading the caret is under.
     pub(crate) fn mark_outline(&mut self, caret: usize, cx: &mut Context<Self>) {
         let current = self.current().map(str::to_string);
         let active = self.outline.headings.iter().rposition(|h| Some(&h.path) == current.as_ref() && h.offset <= caret);
@@ -294,8 +282,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Sidebar width for the current window: the dragged width, kept between
-    /// 268 and min(800, window − 540).
+    /// Sidebar width for this window: the dragged width, within the limits.
     pub(crate) fn sidebar_w(&self, window: &Window) -> f32 {
         let vw = f32::from(window.viewport_size().width);
         let max = theme::SIDEBAR_MAX.min(vw - theme::SIDEBAR_MIN_CONTENT).max(theme::SIDEBAR_MIN);
@@ -329,8 +316,6 @@ impl Workspace {
             .when(!cfg!(target_os = "windows"), |d| d.child(self.sidebar_toggle("collapse-sidebar", Theme::sidebar_icon(), cx).ml(px(4.))))
             .child(div().flex_1());
 
-        // The nav is just Home: 36px items, a blue tint when selected. Its
-        // icon column (x 17) is shared with Search and the doc rows.
         let page = |id: &'static str, label: &'static str, view: View, glyph: Icon, cx: &mut Context<Self>| {
             let on = self.view == view || view == View::Sources && self.view == View::Paper;
             nav_row(id, glyph, label, on).on_click(cx.listener(move |w, _, window, cx| w.show_view(view, window, cx)))
@@ -342,7 +327,7 @@ impl Workspace {
             .child(page("nav-sources", "Sources", View::Sources, Icon::Paper, cx));
 
         let mut list = div().flex().flex_col().px(px(SB_X)).pb(px(8.));
-        // Pinned docs are shortcuts: they stay in My documents too.
+        // Pinned files are shortcuts: they stay in Files too.
         let pinned: Vec<&Entry> = entries.iter().filter(|e| e.meta.pinned).collect();
         if !pinned.is_empty() {
             list = list.child(self.section(Section::Pinned, cx));
@@ -381,8 +366,6 @@ impl Workspace {
             }
         }
 
-        // The footer holds one row: Settings (Storage and Trash live in Settings).
-        // The Selection mode toolbar keeps the footer glyphs: bare on the sidebar.
         let footer_btn = |id: &'static str, name: Icon, tip: &'static str, enabled: bool| {
             div()
                 .id(id)
@@ -394,7 +377,6 @@ impl Workspace {
                 .child(div().size_full().flex().items_center().justify_center().child(icon(name, 17., if enabled { Theme::text_code() } else { Theme::sidebar_disabled() })))
         };
         let some = self.sidebar.batch.as_ref().is_some_and(|b| !b.is_empty());
-        // Settings; in Settings the same row reads Back (`settings.rs`), so one spot toggles.
         let footer = div()
             .flex_none()
             .flex()
@@ -406,7 +388,6 @@ impl Workspace {
                         .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Settings, window, cx))),
                 ))
             })
-            // Selection mode toolbar: Duplicate | Move to | Delete.
             .when(self.sidebar.batch.is_some(), |d| {
                 d.child(
                     div().h(px(46.)).mx(px(SB_X + 6. + 10. - 18.)).flex().items_center().gap(px(4.))
@@ -434,9 +415,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// Width handle: a 15px hit strip straddling the sidebar edge (6px inside,
-    /// 9px over the note's margin). Borderless like the sidebar: only the
-    /// cursor changes, and a faint line shows while dragging.
+    /// Width handle: a 15px hit strip straddling the sidebar edge.
     pub(crate) fn render_resize_handle(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let w = self.sidebar_w(window);
         let dragging = self.sidebar.drag;
@@ -580,8 +559,8 @@ impl Workspace {
         )
     }
 
-    /// Check or uncheck a My documents row (entering Selection mode if needed); false
-    /// when the 50-page limit blocks it.
+    /// Checks or unchecks a row of Files, entering Selection mode if needed.
+    /// False when the limit blocks it.
     pub(crate) fn toggle_check(&mut self, id: &str) -> bool {
         self.sidebar.folded[Section::Files as usize] = false;
         let sel = self.sidebar.batch.get_or_insert_with(Vec::new);
@@ -601,7 +580,6 @@ impl Workspace {
         self.entries.iter().filter(|e| sel.contains(&e.id)).map(|e| e.id.clone()).collect()
     }
 
-    /// Batch duplicate: a "… Copy" of each checked doc; leaves Selection mode.
     pub(crate) fn batch_copy(&mut self, cx: &mut Context<Self>) {
         let ids = self.checked();
         if ids.is_empty() {
@@ -703,7 +681,7 @@ impl Workspace {
                 .into_any_element(),
         };
         let renaming = self.sidebar.rename.as_ref().is_some_and(|r| r.id == e.id);
-        // Selection mode: My documents rows get a checkbox and lose "…"; checked rows are tinted.
+        // Selection mode: rows of Files get a checkbox, and checked rows a tint.
         let batch = self.sidebar.batch.as_ref().filter(|_| list == RowList::Files);
         let checked = batch.is_some_and(|b| b.contains(&e.id));
         let blocked = batch.is_some_and(|b| !checked && b.len() >= BATCH_LIMIT);
@@ -781,7 +759,6 @@ impl Workspace {
         let item = |id, ic, label| item_c(id, ic, label, Theme::text(), Theme::text_code());
         let divider = || div().mx(px(8.)).my(px(5.)).h(px(1.)).bg(Theme::line_border());
         if m.batch {
-            // Right-click in Selection mode: the batch menu.
             let n = self.sidebar.batch.as_ref().map_or(0, |b| b.len());
             let menu = menu_panel("batch-menu", ROW_MENU_W, cx)
                 .px(px(5.))

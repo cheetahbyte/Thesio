@@ -17,9 +17,7 @@ pub(crate) fn page_title_x(sidebar_open: bool) -> f32 {
     if sidebar_open { PAGE_INSET } else { theme::TRAFFIC_LIGHTS_W + NAV_W }
 }
 
-/// The page header, as tall as the document's so the header pills sit in
-/// the same place: a 17pt semibold view title, and the open-sidebar
-/// button when the sidebar is hidden.
+/// The page header, as tall as the document's so the header pills sit in the same place.
 pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx: &mut Context<Workspace>) -> Stateful<Div> {
     div()
         .id("page-header")
@@ -66,7 +64,6 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// Opens search; the tooltip names the key.
     pub(crate) fn search_button(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
         let tip = crate::shortcuts::hint(&FocusSearch, cx).map_or("Search".to_string(), |keys| format!("Search ({keys})"));
         toolbar_icon(id, Icon::Search).tip_label(tip, TipSide::Below).on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx)))

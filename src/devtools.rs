@@ -761,7 +761,6 @@ struct Recording {
     writer: std::thread::JoinHandle<()>,
 }
 
-/// Starts capturing frames into ffmpeg.
 fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Recording {
     let stop = Rc::new(Cell::new(false));
     let start = Instant::now();

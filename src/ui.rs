@@ -22,8 +22,7 @@ pub enum ToastKind {
 const TOAST_LIFE: f32 = 3.;
 pub const TOAST_FADE_AT: f32 = 2.7;
 
-/// Toast: a white rounded card `top` below the window top, centred, with a filled
-/// status circle (green check / red x / accent i). None once it is over.
+/// A toast `top` below the window top, centred. None once it is over.
 pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top: f32, window: &mut Window) -> Option<AnyElement> {
     let e = t0.elapsed().as_secs_f32();
     if e >= TOAST_LIFE {
@@ -79,8 +78,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
     )
 }
 
-/// Popover shell shared by menus and dropdowns: the light panel (macOS 26 menu material, near-white), hairline,
-/// radius 12, soft drop.
+/// Popover shell shared by menus and dropdowns.
 pub fn popover() -> Div {
     div()
         .bg(crate::theme::raised(Theme::popover_bg()))
@@ -92,13 +90,12 @@ pub fn popover() -> Div {
         .text_color(Theme::text())
 }
 
-/// Column headers of the page lists: tertiary text (measured #88898B on
-/// the name / last-viewed / created columns).
+/// Column headers of the page lists.
 pub fn list_header_text() -> Hsla {
     theme::c(0x88898b)
 }
 
-/// Hairline under a list header and between rows (black 4.5%).
+/// Hairline under a list header and between rows.
 pub fn list_line() -> Hsla {
     theme::ca(craft::N1000, 0.045)
 }
@@ -114,12 +111,10 @@ pub mod layer {
     pub const TOAST: usize = 20;
 }
 
-/// The window dimmed under a modal dialog: a light black veil.
 pub fn scrim() -> Hsla {
     theme::rgbaf(0, 0, 0, if theme::dark() { 0.45 } else { 0.25 })
 }
 
-/// The modal dialog: white, radius 12, deep soft drop.
 pub fn dialog(id: &'static str) -> Stateful<Div> {
     div().id(id).occlude().rounded(px(12.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -156,7 +151,6 @@ pub fn empty_state(glyph: Icon, title: &'static str, text: &'static str) -> Div 
         .child(div().mt(px(2.)).text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(text))
 }
 
-/// The primary button: a flat accent fill, a white 13pt label.
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     colored_button(id, label, false)
 }
@@ -222,7 +216,6 @@ pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on:
         }))
 }
 
-/// A glyph-only toolbar button.
 pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
     div().id(id).no_drag().flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
         .active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
@@ -239,7 +232,6 @@ pub fn format_count(count: usize) -> String {
     out
 }
 
-/// Toolbar buttons that belong together.
 pub fn toolbar_group() -> Div {
     div().flex_none().flex().items_center().gap(px(2.))
 }
@@ -268,7 +260,6 @@ mod button_tests {
     }
 }
 
-/// The secondary button: a hairline outline, flat.
 pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
@@ -295,8 +286,7 @@ pub fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).child(label)
 }
 
-/// The panel close button: a grey disc with a white cross (measured
-/// #B6B7B8 on #F7F7F7, black at about 26%).
+/// The panel close button: a grey disc with a white cross.
 pub fn close_button(id: &'static str) -> Stateful<Div> {
     div()
         .id(id)
@@ -323,7 +313,6 @@ const TOOLBAR_ITEM: f32 = 28.;
 pub const MENU_RADIUS: f32 = 8.;
 pub const ROW_RADIUS: f32 = 5.;
 
-/// A menu row: 26 tall, 13pt label, 16pt glyph, a quiet hover.
 pub const MENU_ROW_H: f32 = 26.;
 pub const MENU_PAD_Y: f32 = 5.;
 
@@ -345,17 +334,14 @@ pub fn menu_row(id: impl Into<ElementId>) -> Stateful<Div> {
         .hover(|s| s.bg(Theme::menu_highlight()))
 }
 
-/// A [`crate::ui::menu_row`] label.
 pub fn menu_label(label: impl Into<SharedString>) -> Div {
     div().whitespace_nowrap().child(label.into())
 }
 
-/// Glyph of a [`menu_row`].
 pub fn menu_glyph(name: Icon, size: f32) -> Svg {
     icon(name, size, Theme::text_code())
 }
 
-/// Tooltip bubble: a small flat tip, 11pt on the menu surface, no arrow.
 pub struct Tooltip {
     /// One or more lines.
     label: SharedString,

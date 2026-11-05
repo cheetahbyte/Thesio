@@ -8,7 +8,6 @@ use serde_yaml::{Mapping, Value};
 /// Where a field's value lives in an entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
-    /// The Hayagriva type.
     Type,
     /// The Hayagriva type of the work this one was published in.
     ParentType,
@@ -297,13 +296,11 @@ pub fn persons(entry: &Mapping, slot: Slot) -> Vec<String> {
     }
 }
 
-/// The surname of an entry's first author.
 pub fn first_surname(entry: &Mapping) -> Option<String> {
     let first = persons(entry, AUTHORS.slot).into_iter().next()?;
     first.split(',').next()?.split_whitespace().next_back().map(str::to_string)
 }
 
-/// The year of an entry's date.
 pub fn year(entry: &Mapping) -> String {
     match entry.get("date") {
         Some(Value::String(date)) => date.chars().take(4).collect(),

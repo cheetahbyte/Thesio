@@ -8,19 +8,14 @@ use crate::ui::{ModalAt, dialog, primary_button, secondary_button, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::references::cited_keys;
 
-/// A confirmation dialog and the pages it is about.
 pub enum Confirm {
     /// Delete to Trash; `batch` for the selected rows.
     Delete { ids: Vec<String>, batch: bool },
-    /// Trash → Restore.
     Restore(String),
-    /// Trash → Delete permanently.
     Purge(String),
-    /// Library → delete these entries.
     DeleteEntries(Vec<String>),
     /// Library → change an entry to a type without a parent.
     ChangeSourceType { key: String, kind: &'static thesio_core::source_type::SourceType },
-    /// Library → remove a tag from every entry.
     DeleteTag(String),
     /// The open document could not be written before it was to be replaced
     /// (another document, New, Quit): Retry / Discard changes, then carry on.
@@ -31,9 +26,6 @@ pub enum Confirm {
 pub type AfterSave = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
 impl Workspace {
-    /// The confirmation dialog: a modal (white, radius 16), a 15pt
-    /// semibold title, one line of 13pt body, Cancel and the action button on
-    /// the right.
     pub(crate) fn render_confirm(&self, c: &Confirm, cx: &mut Context<Self>) -> AnyElement {
         let title_of = |id: &str| {
             self.entries

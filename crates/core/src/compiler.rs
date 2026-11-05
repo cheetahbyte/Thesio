@@ -47,7 +47,6 @@ pub struct Diagnostic {
 /// does not change what it says. Autocomplete and hover can run against
 /// `world`, which is what `typst_ide` asks for.
 pub struct Compilation {
-    /// The vault path that was compiled.
     pub main: String,
     /// The last pass's document; `None` when compilation failed.
     pub document: Option<PagedDocument>,

@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 /// The vault folder that holds downloaded papers.
 pub const PAPERS_DIR: &str = "sources";
 
-/// The vault path of the paper for `key`. Keys may hold characters a file name should not.
 /// The vault folder that holds notes on sources.
 pub const NOTES_DIR: &str = "notes";
 
@@ -25,6 +24,7 @@ pub fn note_file(paper: &str) -> String {
     format!("{NOTES_DIR}/{}", document_name(name.strip_suffix(".pdf").unwrap_or(name)))
 }
 
+/// The vault path of the paper for `key`. Keys may hold characters a file name should not.
 pub fn paper_file(key: &str) -> String {
     let stem: String = key.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '-' }).collect();
     paper_named(stem.trim_start_matches('.'))
@@ -58,7 +58,6 @@ impl Row {
     }
 }
 
-/// The row whose paper is `id`.
 pub fn row_of_paper<'a>(rows: &'a [Row], id: &str) -> Option<&'a Row> {
     rows.iter().find(|row| paper_file(&row.key) == id)
 }
@@ -118,7 +117,6 @@ impl Library {
         Ok(Self { path, entries, parsed })
     }
 
-    /// The library's earlier versions.
     pub fn versions(&self) -> Versions {
         Versions::of(self.path.parent().unwrap_or(Path::new("")), LIBRARY_FILE)
     }
@@ -169,7 +167,6 @@ impl Library {
 
     fn entry(&self, key: &str) -> Option<&Mapping> { self.entries.get(key)?.as_mapping() }
 
-    /// What the paper of `key` can be found by.
     pub fn paper_ids(&self, key: &str) -> PaperIds {
         let Some(entry) = self.entry(key) else { return PaperIds::default() };
         PaperIds { doi: Some(read(entry, DOI.slot)).filter(|id| !id.is_empty()), arxiv: source_type::arxiv_id(entry) }
@@ -356,7 +353,6 @@ impl Library {
             .unwrap_or_else(|| (2..).map(|n| format!("{base}-{n}")).find(|key| !self.contains(key)).unwrap_or(base))
     }
 
-    /// The whole library as BibLaTeX.
     pub fn export_biblatex(&self) -> String { biblatex::export(&self.parsed, &self.entries) }
 
     /// YAML for the entries in `keys`, in library order. Tags stay out: this

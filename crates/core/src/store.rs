@@ -32,7 +32,6 @@ pub fn display_title(title: &str) -> String {
 pub struct Meta {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
-    /// Last time the document was opened.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub opened: u64,
     /// Star time (0: not starred).
@@ -81,7 +80,6 @@ pub struct TrashEntry {
     pub parent: Option<String>,
 }
 
-/// Trash is emptied after 30 days.
 pub const TRASH_DAYS: u64 = 30;
 
 #[derive(Clone, Debug)]
@@ -90,7 +88,6 @@ pub struct Entry {
     pub meta: Meta,
     /// The file's own time.
     pub modified: u64,
-    /// The containing folder.
     pub parent: Option<String>,
     pub title: String,
     pub folder: bool,
@@ -121,7 +118,6 @@ struct Layout {
 /// A rename or move that went through.
 #[derive(Debug)]
 pub struct Moved {
-    /// The file's new id.
     pub id: String,
     /// The documents whose paths were updated.
     pub rewritten: Vec<String>,
@@ -129,7 +125,6 @@ pub struct Moved {
     pub warnings: Vec<String>,
 }
 
-/// A trashed item put back.
 #[derive(Debug)]
 pub struct Restored {
     /// It came back under a new name because its old one was taken.
@@ -296,7 +291,6 @@ impl Store {
         anyhow::bail!("Too many files named {stem}")
     }
 
-    /// A new empty document.
     pub fn create(&mut self, parent: Option<&str>) -> Result<String> {
         self.create_from(parent, UNTITLED, "")
     }
@@ -371,13 +365,11 @@ impl Store {
         Ok(())
     }
 
-    /// Renames a file or folder in place.
     pub fn rename(&mut self, id: &str, title: &str) -> Result<Moved> {
         let typst = self.path(id)?.is_file() && is_document(id);
         self.relocate(id, &join(parent_of(id), &renamed_file(title, typst)))
     }
 
-    /// Moves a file or folder into `parent`.
     pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<Moved> {
         if let Some(parent) = parent {
             anyhow::ensure!(!paths::is_within(parent, id), "A folder cannot move into itself");
@@ -454,7 +446,6 @@ impl Store {
         Ok(Restored { renamed: taken, warnings })
     }
 
-    /// Permanently deletes a trashed item.
     pub fn purge(&mut self, key: &str) -> Result<()> {
         anyhow::ensure!(self.trash.contains_key(key), "Not in Trash");
         match std::fs::remove_dir_all(self.root.join(TRASH_DIR).join(key)) {

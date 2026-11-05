@@ -85,7 +85,6 @@ pub fn identifiers(text: &str) -> Vec<Result<Identifier, String>> {
     text.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.trim().is_empty()).map(|t| identify(t).ok_or_else(|| t.to_string())).collect()
 }
 
-/// What a paper can be found by.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PaperIds {
     pub doi: Option<String>,
@@ -104,7 +103,6 @@ pub(crate) fn arxiv_doi(id: &str) -> String {
     format!("10.48550/arXiv.{id}")
 }
 
-/// The arXiv ID in a link, when it is one.
 pub(crate) fn arxiv_of_link(url: &str) -> Option<String> {
     match identify(url) {
         Some(Identifier::Arxiv(id)) => Some(id),

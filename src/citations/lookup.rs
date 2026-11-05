@@ -10,7 +10,6 @@ use gpui::{prelude::FluentBuilder, *};
 use thesio_core::identifier::{Identifier, identifiers};
 use thesio_core::lookup;
 
-/// The Add by Identifier dialog.
 pub struct Lookup {
     field: Entity<TextField>,
     busy: bool,

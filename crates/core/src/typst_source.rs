@@ -26,7 +26,6 @@ pub(crate) fn args_of<'a>(call: &LinkedNode<'a>) -> Option<LinkedNode<'a>> {
     call.children().find(|child| child.kind() == SyntaxKind::Args)
 }
 
-/// A string literal's value.
 pub(crate) fn string(node: &LinkedNode) -> Option<String> {
     Some(ast::Str::from_untyped(node.get())?.get().to_string())
 }

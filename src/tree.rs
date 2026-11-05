@@ -46,7 +46,7 @@ impl<'a> Tree<'a> {
     }
 
 
-    /// Pre-order rows with their depth, descending into pages `open` says yes to.
+    /// Pre-order rows with their depth, descending into folders `open` says yes to.
     pub fn rows(&self, open: impl Fn(&str) -> bool) -> Vec<(&'a Entry, usize)> {
         let mut out = vec![];
         let mut stack: Vec<(&Entry, usize)> = self.children(None).iter().rev().map(|e| (*e, 0)).collect();
@@ -59,7 +59,7 @@ impl<'a> Tree<'a> {
         out
     }
 
-    /// `id` and every page under it.
+    /// `id` and every file under it.
     pub fn subtree(&self, id: &str) -> Vec<String> {
         let mut out = vec![id.to_string()];
         let mut i = 0;

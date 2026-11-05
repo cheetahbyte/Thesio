@@ -1,19 +1,11 @@
-//! Design tokens: the app's palette, type scale, shapes and shadows (light).
-//! The layout departs in one place: a sunken sidebar on the window surface
-//! and a full-bleed white note plane instead of floating panels.
+//! Design tokens: the app's palette, type scale, shapes and shadows.
 
 use gpui::{BoxShadow, Hsla, Rgba, point, px, rgb};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-// ---- dark mode
-//
-// Every colour here is designed for the light look. In dark mode the
-// palette helpers (`c`, `ca`, `mix`, `ta`) and the theme files' colours
-// pass through `adapt`, which mirrors lightness: the white page turns dark
-// gray, near-black text near-white, tints dark tints, while vivid colours
-// (the accent, coloured text) keep their hue and stay readable. Text
-// highlights keep their light colours instead (`mark`, `on_mark`).
-// `rgbaf` stays literal for shadows, scrims and controls drawn over images.
+// Every colour here is designed for the light look. In dark mode the palette
+// helpers pass through `adapt`, while text highlights (`mark`, `on_mark`) and
+// `rgbaf`, for shadows, scrims and controls over images, stay literal.
 
 static DARK: AtomicBool = AtomicBool::new(false);
 static ACCENT: AtomicU32 = AtomicU32::new(craft::B500);
@@ -126,7 +118,7 @@ pub mod craft {
     pub const N700: u32 = 0x3f4143;
     /// Toolbar glyphs.
     pub const N800: u32 = 0x303335;
-    /// Text (`.page` color).
+    /// Text.
     pub const N900: u32 = 0x1f2225;
     pub const N1000: u32 = 0x000000;
     /// The accent where the system offers none (see [`super::accent`]), and syntax and search hits.
@@ -139,9 +131,7 @@ pub mod craft {
     /// Success.
     pub const G500: u32 = 0x00c950;
 
-    /// Window surfaces (measured on the key window).
-    /// The sunken surface: the sidebar material, here the whole window
-    /// behind the note.
+    /// The sidebar material, here the whole window behind the note.
     pub const WINDOW: u32 = 0xeff0f1;
 }
 
@@ -151,7 +141,7 @@ fn shadow(a: f32, y: f32, blur: f32, spread: f32) -> BoxShadow {
     BoxShadow { color: rgbaf(0, 0, 0, a), offset: point(px(0.), px(y)), blur_radius: px(blur), spread_radius: px(spread) }
 }
 
-/// Menus and dropdowns: macOS 26 menu panel, soft and wide.
+/// Menus and dropdowns.
 pub fn shadow_menu() -> Vec<BoxShadow> {
     vec![shadow(0.05, 1., 3., 0.), shadow(0.10, 8., 24., 0.)]
 }
@@ -161,7 +151,7 @@ pub fn shadow_panel() -> Vec<BoxShadow> {
     vec![shadow(0.05, 1., 4., 0.), shadow(0.12, 12., 32., 0.)]
 }
 
-/// Modal dialogs (the modal container shadow is a deep, soft 9-slice).
+/// Modal dialogs.
 pub fn shadow_dialog() -> Vec<BoxShadow> {
     vec![shadow(0.06, 2., 8., 0.), shadow(0.16, 24., 64., 0.)]
 }
@@ -188,8 +178,7 @@ impl Theme {
     pub fn text_disabled() -> Hsla { ca(craft::N900, 0.3) }
     /// Toolbar glyphs.
     pub fn text_code() -> Hsla { c(craft::N800) }
-    /// The link colour: the content accent (#0087FF) blended half-way to the
-    /// text colour, #0F5492 measured.
+    /// The link colour: the palette's blue, half-way to the text colour.
     pub fn link() -> Hsla { mix(craft::B500, craft::N900, 0.5) }
     pub fn primary() -> Hsla { c(accent()) }
     /// The accent, darker: pressed buttons.
@@ -213,7 +202,6 @@ impl Theme {
     pub fn selection() -> Hsla { ca(accent(), 0.24) }
     pub fn danger() -> Hsla { c(craft::R500) }
 
-    // ---- Thesio shell
     /// A light gray tint separates the sidebar from the white page while keeping wallpaper colors quiet.
     /// The document pane paints its own opaque white surface.
     pub fn window(glass: bool) -> Hsla { ca(craft::WINDOW, if glass { 0. } else { 0.84 }) }
@@ -232,13 +220,11 @@ impl Theme {
     pub fn sidebar_selected() -> Hsla { ca(craft::N1000, 0.11) }
     /// Section headers on the sidebar.
     pub fn sidebar_section() -> Hsla { c(0x333739) }
-    /// Chrome glyphs (sidebar rows, header buttons): lighter than text so
-    /// they don't pull the eye from the labels and the page. Inferred: the
-    /// SF Symbols sit near secondary label; this is between N700 and N600.
+    /// Chrome glyphs: lighter than text, so they don't pull the eye from the page.
     pub fn icon() -> Hsla { ca(craft::N900, 0.6) }
     /// Indent guides in the file tree.
     pub fn sidebar_guide() -> Hsla { ca(craft::N1000, 0.1) }
-    /// Line above the sidebar footer (1pt, black 3.5%, #E8E8E9 on the sidebar).
+    /// Line above the sidebar footer.
     pub fn sidebar_divider() -> Hsla { ca(craft::N1000, 0.035) }
     /// White pill buttons on the note: hairline.
     pub fn button_border() -> Hsla { ca(craft::N1000, 0.075) }
@@ -248,10 +234,6 @@ impl Theme {
     pub fn popover_bg() -> Hsla { c(0xfafafa) }
 }
 
-// ---- layout metrics (pt)
-
-/// The sidebar is 273pt wide plus its 7pt inset; the sunken
-/// sidebar keeps that footprint.
 pub const SIDEBAR_WIDTH: f32 = 280.0;
 pub const SIDEBAR_MIN: f32 = 240.0;
 pub const SIDEBAR_MAX: f32 = 800.0;

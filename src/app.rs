@@ -1,6 +1,4 @@
-//! Workspace window: two panes — the document list on the left
-//! (see `sidebar.rs`) and the editor on the right, with the
-//! 64px top bar (breadcrumb title + save status) above the page.
+//! The window's root view: the main pane, and the file operations behind it.
 
 use crate::confirm::Confirm;
 use crate::document::{Edit, OpenDocument, SaveStatus};
@@ -46,7 +44,7 @@ pub enum View {
     Home,
     Library,
     Sources,
-    /// A paper, inside the app: `Workspace::paper`.
+    /// A paper, inside the app: `Papers::current`.
     Paper,
     Trash,
     Settings,
@@ -83,7 +81,6 @@ impl Workspace {
         let entries = store.borrow_mut().list();
         let subs = vec![
             cx.observe_window_bounds(window, |_, window, cx| crate::window_size::remember(window, cx)),
-            // The system switched between light and dark (or the app's own look changed).
             cx.observe_window_appearance(window, |_, _, cx| if crate::appearance::sync_dark(cx) { cx.refresh_windows(); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
@@ -221,7 +218,6 @@ impl Workspace {
         self.when_saved(window, cx, |w, window, cx| w.create_doc(None, window, cx));
     }
 
-    /// A new document in `parent`, opened.
     pub(crate) fn create_doc(&mut self, parent: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
         let result = self.store.borrow_mut().create(parent);
         match result {
@@ -249,7 +245,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Ask before deleting: a confirmation, then the Trash.
     pub fn ask_delete(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.open_overlay(Overlay::Confirm(Confirm::Delete { ids: vec![id.to_string()], batch: false }), window, cx);
     }
@@ -373,7 +368,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Favorites / Remove from favorites (listed under Home → Favorites).
     pub fn toggle_star(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { return };
         let on = e.meta.starred == 0;
@@ -386,7 +380,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Switch the main pane to Home or Trash (or back to the document).
     pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
         if view == View::Trash {
             self.refresh_trash(cx);
@@ -415,7 +408,6 @@ impl Workspace {
         }
     }
 
-    /// A success toast (Deleted successfully, Moved successfully …).
     pub fn show_toast(&mut self, msg: &str, cx: &mut Context<Self>) {
         self.show_toast_kind(ToastKind::Success, msg, cx);
     }
@@ -440,7 +432,6 @@ impl Workspace {
             SaveStatus::Failed(error) => Some(error.clone()),
             _ => None,
         });
-        // Independent icon controls, with equal top and right insets.
         let divider = || div().flex_none().w(px(1.)).h(px(18.)).bg(Theme::line_divider());
         // Breadcrumbs: the parent pages, each linking to itself, with the
         // middle ones folded into "…" when the chain is long.
@@ -548,8 +539,6 @@ impl Workspace {
                 crate::ui::toolbar_group()
                     .when(self.document.is_some(), |d| {
                         d.child(
-                            // No tooltip while its dropdown is open; the menu hangs
-                            // from this button's right edge.
                             crate::ui::toolbar_icon("doc-more", Icon::Ellipsis)
                                 .relative()
                                 .when(doc_menu, |d| d.bg(Theme::fill_hover()))
@@ -562,7 +551,6 @@ impl Workspace {
                     })
                     .child(self.search_button("doc-search", cx))
                     .child(
-                        // Straight to a new document: no New menu, as Import is rare.
                         crate::ui::toolbar_icon("doc-new", Icon::Plus).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
                     ).into_any_element()
             )
@@ -617,10 +605,6 @@ impl Render for Workspace {
         };
         let overlay = self.render_overlay(window, cx);
         let column_drag = self.render_column_drag(cx);
-        // Only the note stands out: a white plane flush with the window's top,
-        // right and bottom edges. The sidebar sits sunken on the window
-        // surface beside it; the change of value is the only line between
-        // them (no gutter, radius, border or shadow).
         let hairline = px(1. / window.scale_factor());
         let note = div().id("note").relative().flex_1().min_w_0().h_full().flex().bg(Theme::bg_body()).child(main)
             .child(div().absolute().top(px(HEADER_H)).left_0().right_0().h(hairline).bg(Theme::hairline()))

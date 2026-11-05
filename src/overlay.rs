@@ -21,7 +21,6 @@ pub enum Overlay {
     StyleMenu,
     TrashMenu { id: String, position: Point<Pixels>, corner: Corner },
     LibraryMenu,
-    /// An entry's context menu.
     EntryMenu { key: String, position: Point<Pixels> },
     /// A filter chip's menu.
     TagMenu { tag: String, position: Point<Pixels> },

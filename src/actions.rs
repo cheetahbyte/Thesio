@@ -94,7 +94,6 @@ fn with_separators(groups: &[Group]) -> Vec<MenuItem> {
     menu
 }
 
-/// The menu bar, in the interface language.
 pub fn set_menus(cx: &mut App) {
     use crate::source as k;
     let mut app = with_separators(&[Group::About, Group::Preferences]);

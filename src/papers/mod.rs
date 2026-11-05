@@ -33,7 +33,7 @@ pub struct Papers {
 }
 
 impl Workspace {
-    /// The ids of the papers in the vault.
+    /// The ids of the PDFs in `sources/`.
     pub(crate) fn paper_ids(&self) -> BTreeSet<String> {
         self.entries.iter().filter(|e| !e.folder && e.parent.as_deref() == Some(PAPERS_DIR) && is_pdf(&e.id)).map(|e| e.id.clone()).collect()
     }
