@@ -1,7 +1,7 @@
 //! The Library page, its entry form, the citation picker, and keeping each
 //! document's bibliography in step with the library.
 
-use crate::app::{View, Workspace};
+use crate::app::{Confirm, View, Workspace};
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::{self, Fields, Library, Mode, Row};
 use crate::store::natural_cmp;
@@ -368,7 +368,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn delete_entry(&mut self, key: &str, cx: &mut Context<Self>) {
+    pub(crate) fn delete_entry(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(library) = &mut self.citations.library else { return };
         match library.delete_entry(key) {
             Ok(()) => {
@@ -525,7 +525,11 @@ impl Workspace {
             .children(rows)
             .when_some(form.error.clone(), |d, error| d.child(div().text_size(px(13.)).text_color(theme::c(craft::R400)).child(error)))
             .child(div().mt(px(10.)).flex().items_center().gap(px(12.))
-                .when_some(original, |d, key| d.child(secondary_button("entry-delete", "Delete").text_color(Theme::danger()).on_click(cx.listener(move |w, _, _, cx| w.delete_entry(&key, cx)))))
+                .when_some(original, |d, key| d.child(secondary_button("entry-delete", "Delete").text_color(Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
+                    w.citations.form = None;
+                    w.confirm = Some(Confirm::DeleteEntry(key.clone()));
+                    cx.notify();
+                }))))
                 .child(div().flex_1())
                 .child(secondary_button("entry-cancel", "Cancel").on_click(cx.listener(move |w, _, _, cx| close(w, cx))))
                 .child(primary_button("entry-save", "Save").on_click(cx.listener(|w, _, window, cx| w.save_entry(window, cx)))));

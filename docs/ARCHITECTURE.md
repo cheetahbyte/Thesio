@@ -58,7 +58,7 @@ A rename or move also updates the paths in every vault document: `#include`, `#i
 
 ## Citations
 
-`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it.
+`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the form keeps fields it does not show, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting an entry asks first and says how many documents cite it.
 
 A document has one of three bibliography modes, read from its text (`library::mode`):
 

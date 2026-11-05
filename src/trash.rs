@@ -10,6 +10,7 @@ pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, me
 use crate::theme::{self, Theme, craft};
 use crate::ui::{ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
+use thesio_core::references::cited_keys;
 
 pub const TRASH_MENU_W: f32 = 160.;
 
@@ -280,6 +281,15 @@ impl Workspace {
             ),
             Confirm::Restore(_) => ("Restore this document?".to_string(), "The document will be restored to its original location.".to_string(), "Restore", false),
             Confirm::Purge(_) => ("Delete permanently?".to_string(), "This page and its child pages cannot be recovered after permanent deletion.".to_string(), "Delete", true),
+            Confirm::DeleteEntry(key) => {
+                let citing = self.entries.iter().filter(|e| e.typst && cited_keys(&e.body).contains(key)).count();
+                let effect = match citing {
+                    0 => "No document cites it.".to_string(),
+                    1 => "1 document cites it and will show an error.".to_string(),
+                    n => format!("{n} documents cite it and will show an error."),
+                };
+                (format!("Delete {key}?"), format!("This removes it from the library and cannot be undone. {effect}"), "Delete", true)
+            }
             Confirm::SaveFailed => (
                 "Could not save document".to_string(),
                 format!("{}. Retry, or cancel and export a copy using More → Export as PDF. Discarding changes will lose your unsaved work.", self.save_error()),
@@ -326,6 +336,7 @@ impl Workspace {
                             }
                             Confirm::Restore(id) => w.restore_doc(&id, cx),
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
+                            Confirm::DeleteEntry(key) => w.delete_entry(&key, cx),
                             Confirm::SaveFailed => w.resolve_save_failed(true, window, cx),
                         }
                         cx.notify();

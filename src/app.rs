@@ -172,6 +172,8 @@ pub enum Confirm {
     Restore(String),
     /// 回收站 → 彻底删除.
     Purge(String),
+    /// Library → delete an entry.
+    DeleteEntry(String),
     /// The open document could not be written before it was to be replaced
     /// (another document, 新建, 退出): 重试 / 放弃修改, then carry on.
     SaveFailed,
