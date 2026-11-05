@@ -209,8 +209,8 @@ impl Render for Preview {
                 .on_click(cx.listener(move |_, _, _, cx| if let Some(offset) = target { cx.emit(PreviewEvent::Jump(offset)); }))
         }).collect::<Vec<_>>();
         div().relative().size_full().flex().flex_col().bg(Theme::sidebar_hover())
-            .child(div().relative().flex_1().min_h_0()
-                .child(div().id("preview-pages").size_full().overflow_y_scroll().track_scroll(&self.scroll)
+            .child(div().relative().flex().flex_col().flex_1().min_h_0()
+                .child(div().id("preview-pages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
                     .flex().flex_col().items_center().gap(px(PAGE_GAP)).p(px(PAD)).children(pages))
                 .children(self.took.map(|took| div().absolute().right(px(12.)).bottom(px(8.)).text_size(px(11.)).line_height(px(14.)).text_color(Theme::text_caption()).child(format_took(took)))))
             .when(!problems.is_empty(), |d| d.child(div().id("preview-problems").flex_none().max_h(px(160.)).overflow_y_scroll().py(px(6.)).bg(Theme::bg_body()).children(problems)))
