@@ -10,8 +10,9 @@ pub(crate) mod tags;
 use crate::app::{View, Workspace};
 use crate::document::Edit;
 use crate::input::{TextField, TextFieldEvent};
+use crate::completion::{Item, Query};
 use crate::library::{Library, Row};
-use crate::source::SourceEditor;
+use crate::store::Entry;
 use crate::theme::Theme;
 use crate::ui::ToastKind;
 use gpui::*;
@@ -89,15 +90,27 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Gives the editor the library as it is on disk now.
-    pub(crate) fn offer_sources(&mut self, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
-        self.reload_library();
-        let rows = self.visible_rows("");
-        // Paper notes have no path of their own here, so they offer no links.
-        let file = self.current.clone().filter(|_| self.editor.as_ref() == Some(editor));
-        let notes = file.map_or(vec![], |file| self.entries.iter().filter(|e| e.typst && e.id != file)
-            .map(|e| (note_link(&file, &e.id, &e.title), e.title.clone(), e.id.clone())).collect());
-        editor.update(cx, |e, cx| { e.sources = rows; e.notes = notes; cx.notify(); });
+    /// What `@` offers, matching keys first. An opening popup sees the library
+    /// as it is on disk now.
+    pub(crate) fn citation_items(&mut self, query: &Query) -> Vec<Item> {
+        if query.opening { self.reload_library(); }
+        let mut rows = self.visible_rows(&query.text);
+        rows.sort_by_key(|row| !row.key.to_lowercase().starts_with(&query.text));
+        rows.into_iter().map(|row| Item {
+            detail: [row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · "),
+            insert: format!("@{}", row.key),
+            title: if row.title.is_empty() { row.key } else { row.title },
+            info: None,
+            selection: None,
+        }).collect()
+    }
+
+    /// What `[[` offers from the open document, matching titles first.
+    pub(crate) fn note_link_items(&self, query: &str) -> Vec<Item> {
+        let Some(file) = &self.current else { return vec![] };
+        let mut notes: Vec<&Entry> = self.entries.iter().filter(|e| e.typst && e.id != *file && (e.title.to_lowercase().contains(query) || e.id.to_lowercase().contains(query))).collect();
+        notes.sort_by_key(|e| !e.title.to_lowercase().starts_with(query));
+        notes.into_iter().map(|e| Item { title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None }).collect()
     }
 
     pub(crate) fn delete_entries(&mut self, keys: &[String], window: &mut Window, cx: &mut Context<Self>) {

@@ -8,6 +8,7 @@ use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
 use crate::session::DocumentSession;
 use crate::source::{SourceEditor, SourceEvent};
+use crate::completion::{Citations, CompletionKind, NoteLinks, Provider};
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::display_title;
 use crate::store::Entry;
@@ -389,7 +390,9 @@ impl Workspace {
         };
         let typst = paths::is_document(id);
         let opened_text = text.clone();
-        let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
+        let workspace = cx.weak_entity();
+        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(Citations(workspace.clone())), Rc::new(NoteLinks(workspace))];
+        let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
         let root = self.store.borrow().root().to_path_buf();
         let main = self.top_document(id, cx);
         let session = typst.then(|| cx.new(|_| DocumentSession::with_pages(root, id.to_string(), main)));
@@ -410,13 +413,13 @@ impl Workspace {
                     if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.follow(caret, cx)); }
                     this.mark_outline(caret, cx);
                 }
-                SourceEvent::Citing => this.offer_sources(editor, cx),
                 SourceEvent::Follow(offset) => {
                     let Some(id) = this.current.clone() else { return };
                     let text = editor.read(cx).text();
                     if let Some(link) = note_links(text, &id).into_iter().find(|link| link.range.contains(offset)) { this.follow_link(&link.target, window, cx); }
                 }
-                SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
+                SourceEvent::Completed(CompletionKind::Citation) => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
+                SourceEvent::Completed(_) => {}
             }),
         ];
         if let Some(preview) = &preview {

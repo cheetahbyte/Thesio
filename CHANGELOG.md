@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reach every citation and note in the completion popup: it scrolls now, instead of stopping at six. ⌃Space opens it where a citation or note link is being written.
 - Keep the caret two lines above the bottom edge when pressing Enter at the end of a document. A new empty line used to send the view to that line.
 - Keep the view still when pressing Enter on the last visible line. The new line used to jump to the top of the view.
 - Keep the preview near the caret after a click, a drag, or Select All as well.

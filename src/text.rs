@@ -88,8 +88,33 @@ impl PaintedLine {
         self.index_at(position - self.bounds.origin)
     }
 
+    /// The byte at a point in window coordinates, only if a glyph is there:
+    /// the rest of a row is empty space, for what the nearest byte would be wrong.
+    pub fn text_at(&self, position: Point<Pixels>) -> Option<usize> {
+        if !self.bounds.contains(&position) { return None; }
+        self.layout.as_ref()?.index_for_position(position - self.bounds.origin, self.line_height).ok()
+    }
+
     pub fn height(&self) -> Pixels {
         self.layout.as_ref().map_or(self.line_height, |layout| layout.size(self.line_height).height)
+    }
+
+    /// Paints a wavy underline beneath `range`, on each visual row it reaches.
+    fn underline(&self, range: &Range<usize>, color: Hsla, window: &mut Window) {
+        let Some(layout) = &self.layout else { return };
+        let ends = layout.wrap_boundaries().iter().map(|wrap| layout.runs()[wrap.run_ix].glyphs[wrap.glyph_ix].index).chain([layout.len()]);
+        let mut start = 0;
+        for (row, end) in ends.enumerate() {
+            let (from, to) = (range.start.max(start), range.end.min(end));
+            if from < to {
+                // A wrap point reads as the end of the row above, which is right for `to` only.
+                let left = if from == start { px(0.) } else { self.position(from).unwrap_or_default().x };
+                let right = self.position(to).unwrap_or_default().x;
+                let at = self.bounds.origin + point(left, self.line_height * row as f32 + self.line_height - px(3.));
+                window.paint_underline(at, right - left, &UnderlineStyle { thickness: px(1.), color: Some(color), wavy: true });
+            }
+            start = end;
+        }
     }
 }
 
@@ -106,6 +131,8 @@ pub struct LineMarks {
     /// How far a selection runs past the end, for the newline it includes.
     pub selection_tail: Pixels,
     pub caret: Option<CaretMark>,
+    /// Bytes of the line to underline, and in what colour.
+    pub decorations: Vec<(Range<usize>, Hsla)>,
 }
 
 pub fn paint_line(line: &PaintedLine, marks: &LineMarks, window: &mut Window, cx: &mut App) {
@@ -124,6 +151,7 @@ pub fn paint_line(line: &PaintedLine, marks: &LineMarks, window: &mut Window, cx
     if let Some(layout) = &line.layout {
         let _ = layout.paint(bounds.origin, height, TextAlign::Left, None, window, cx);
     }
+    for (range, color) in &marks.decorations { line.underline(range, *color, window); }
     if let Some(caret) = &marks.caret {
         let at = bounds.origin + position(caret.at) + point(px(0.), caret.inset);
         window.paint_quad(fill(Bounds::new(at, gpui::size(caret.width, height - caret.inset * 2.)), Theme::primary()));

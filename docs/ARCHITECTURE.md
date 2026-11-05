@@ -20,6 +20,8 @@ main.rs: window
     papers/: Sources, the viewer, notes, quotes
     settings, preferences, appearance
     source.rs: SourceEditor, the open file's text
+      text.rs: shaping and painting a line, shared with TextField
+      completion.rs: providers of what the popup offers
       buffer.rs: text, selection, undo [core]
       syntax.rs: highlighting from Typst's parser [core]
     preview.rs: Preview, the view of the pages and diagnostics
@@ -67,6 +69,12 @@ Text that does not come from typing goes through `Workspace::write_document`, wh
 `SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret through `text.rs`, which `TextField` shares. Painted rows are kept from frame to frame to resolve mouse positions and vertical caret movement. `Buffer` reports each edit as a `Change`, and only the rows it names are replaced, which keeps the scroll position and measured heights.
 
 Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
+
+Rows also paint `Decoration`s: an underline over a precise byte range, in a colour, which moves with edits around it. `SourceEditor::set_decorations` sets them for diagnostics, and `SourceEditor::text_at` says which byte the pointer is on, if any, for hover. Neither has a caller yet.
+
+## Completion
+
+`completion.rs` has the `Provider` trait and the two providers. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, and optional `info` shown under the list. `Citations` and `NoteLinks` ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host what was accepted. The popup keeps six rows on screen and scrolls the rest.
 
 ## Overlays
 

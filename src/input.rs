@@ -464,7 +464,7 @@ impl Element for FieldText {
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, state: &mut Self::RequestLayoutState, _: &mut (), window: &mut Window, cx: &mut App) {
         let line = PaintedLine { bounds, layout: state.borrow().clone(), line_height: px(self.line_height) };
-        let marks = LineMarks { selection: self.selection.clone(), selection_tail: px(0.), caret: self.caret.map(|at| CaretMark { at, width: px(1.5), inset: px(0.) }) };
+        let marks = LineMarks { selection: self.selection.clone(), selection_tail: px(0.), caret: self.caret.map(|at| CaretMark { at, width: px(1.5), inset: px(0.) }), decorations: vec![] };
         paint_line(&line, &marks, window, cx);
         *self.painted.borrow_mut() = Some(line);
     }

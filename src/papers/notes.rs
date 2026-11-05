@@ -2,11 +2,13 @@
 
 use super::viewer::{PANEL_W, PaperPanel};
 use crate::app::Workspace;
+use crate::completion::{Citations, CompletionKind};
 use crate::document::Edit;
 use crate::library::{NOTES_DIR, note_file, paper_file};
 use crate::source::{SourceEditor, SourceEvent};
 use crate::ui::ToastKind;
 use gpui::*;
+use std::rc::Rc;
 use thesio_core::bibliography::{self, Mode};
 use thesio_core::paths::moved;
 
@@ -44,8 +46,10 @@ impl Workspace {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not read the notes: {e}"), cx);
             }
         };
+        // Paper notes have no path of their own here, so they offer no note links.
+        let workspace = cx.weak_entity();
         let editor = cx.new(|cx| {
-            let mut editor = SourceEditor::new(text, true, cx);
+            let mut editor = SourceEditor::new(text, true, vec![Rc::new(Citations(workspace))], cx);
             // Inside the panel: the viewer would hide what crosses onto it.
             editor.completion_w = PANEL_W - 40.;
             editor
@@ -54,9 +58,8 @@ impl Workspace {
             let Some(note) = w.papers.panel.notes.as_ref().map(|notes| notes.id.clone()) else { return };
             match event {
                 SourceEvent::Changed => { let text = editor.read(cx).text().to_string(); w.save_note(&note, &text, cx); }
-                SourceEvent::Citing => w.offer_sources(&editor, cx),
-                SourceEvent::Cited => w.link_note_library(&note, &editor, cx),
-                SourceEvent::Caret | SourceEvent::Follow(_) => {}
+                SourceEvent::Completed(CompletionKind::Citation) => w.link_note_library(&note, &editor, cx),
+                SourceEvent::Completed(_) | SourceEvent::Caret | SourceEvent::Follow(_) => {}
             }
         });
         self.papers.panel.notes = Some(Notes { id: note, editor, _subscription: subscription });
