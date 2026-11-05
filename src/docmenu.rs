@@ -94,7 +94,10 @@ impl Workspace {
         let typst = entry.is_some_and(|e| e.typst);
         let mode = self.bibliography_mode(cx);
         let block_shown = self.editor.as_ref().is_some_and(|e| e.read(cx).block_shown);
-        let style = self.style_owner(cx).map(|(_, style)| style);
+        let owner = self.style_owner(cx);
+        // A document has one bibliography, and a chapter's may be in its main file.
+        let elsewhere = owner.as_ref().is_some_and(|(doc, _)| Some(doc) != self.current.as_ref());
+        let style = owner.map(|(_, style)| style);
         let bibliography = |id: &'static str, ic: Icon, label: &'static str, target: Mode| {
             menu_item(id, ic, label).on_click(cx.listener(move |w, _, _, cx| {
                 w.close_doc_menu(cx);
@@ -144,8 +147,8 @@ impl Workspace {
                         w.close_doc_menu(cx);
                         if let Some(editor) = &w.editor { editor.update(cx, |e, cx| e.toggle_block(cx)); }
                     }))))
-                    .when(mode != Mode::Embedded, |d| d.child(bibliography("dm-embed", Icon::Library, "Embed bibliography", Mode::Embedded)))
-                    .when(mode != Mode::Linked, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))
+                    .when(mode != Mode::Embedded && !elsewhere, |d| d.child(bibliography("dm-embed", Icon::Library, "Embed bibliography", Mode::Embedded)))
+                    .when(mode != Mode::Linked && !elsewhere, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))
                     .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", Icon::Close, "Remove bibliography", Mode::None)))))
             .child(divider())
             .child(menu_item("dm-delete", Icon::Delete, "Delete").on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))));
