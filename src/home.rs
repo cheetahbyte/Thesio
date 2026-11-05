@@ -112,7 +112,7 @@ impl Workspace {
         let Some((_, overview)) = &self.home.overview else { return page.into_any_element() };
         if overview.sources == 0 && !self.entries.iter().any(|e| e.typst) {
             let start = div().mt(px(16.)).flex().gap(px(8.))
-                .child(secondary_button("home-sources", "Add a Source").on_click(cx.listener(|w, _, _, cx| w.show_view(View::Sources, cx))))
+                .child(secondary_button("home-sources", "Add a Source").on_click(cx.listener(|w, _, window, cx| w.show_view(View::Sources, window, cx))))
                 .child(primary_button("home-start", "New Document").on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))));
             return page.child(empty_state(Icon::Home, "Nothing here yet", "Start writing, or add the papers you are reading.").child(start)).into_any_element();
         }
@@ -127,8 +127,8 @@ impl Workspace {
         let (recent, favorites) = (self.document_rows(recent, "home-recent", cx), self.document_rows(favorites, "home-favorite", cx));
         let uncited = shown.into_iter().enumerate().map(|(i, (key, title))| {
             let open = key.clone();
-            row(("home-uncited", i), title, key).on_click(cx.listener(move |w, _, _, cx| {
-                if w.has_paper(&open) { w.open_paper(&paper_file(&open), cx); } else { w.show_view(View::Library, cx); }
+            row(("home-uncited", i), title, key).on_click(cx.listener(move |w, _, window, cx| {
+                if w.has_paper(&open) { w.open_paper(&paper_file(&open), window, cx); } else { w.show_view(View::Library, window, cx); }
             }))
         }).collect::<Vec<_>>();
         let column = div().w_full().max_w(px(COLUMN_W)).flex().flex_col().gap(px(28.))

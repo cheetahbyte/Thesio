@@ -26,7 +26,7 @@ impl Workspace {
     /// Duplicates a document beside the original and opens the copy.
     pub fn duplicate_doc(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(new) = self.copy_doc(id, cx) {
-            self.refresh_entries();
+            self.refresh_entries(cx);
             self.open(&new, window, cx);
         }
         cx.notify();

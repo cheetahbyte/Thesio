@@ -69,7 +69,7 @@ impl Workspace {
         if let Err(e) = self.ensure_notes_dir().and_then(|()| self.write_document(id, text, Edit::Generated, cx)) {
             return self.show_toast_kind(ToastKind::Error, &format!("Could not save the notes: {e}"), cx);
         }
-        if new { self.refresh_entries(); }
+        if new { self.refresh_entries(cx); }
     }
 
     /// Notes that cite the library read it directly, so they compile on their own.
@@ -92,7 +92,7 @@ impl Workspace {
             if let Err(e) = self.ensure_notes_dir().and_then(|()| self.write_document(&id, &text, Edit::Generated, cx)) {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not create the notes: {e}"), cx);
             }
-            self.refresh_entries();
+            self.refresh_entries(cx);
         }
         self.open(&id, window, cx);
     }

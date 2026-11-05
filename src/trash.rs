@@ -153,7 +153,7 @@ impl Workspace {
                 self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not restore document: {detail}"), cx);
             }
         }
-        self.refresh_entries();
+        self.refresh_entries(cx);
         self.refresh_trash(cx);
         self.show_warnings(&warnings, cx);
     }

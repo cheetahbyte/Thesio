@@ -15,7 +15,10 @@ main.rs: window
     store.rs: the vault on disk [core]
     document.rs: the open document's saves, and every write to a document
     overlay.rs: the one menu or dialog over the window
-    sidebar, tree, home, search, trash, settings, docmenu
+    sidebar, tree, home, search, trash, confirm, docmenu
+    citations/: the Library table, inspector, tags, picker, lookup, bibliographies
+    papers/: Sources, the viewer, notes, quotes
+    settings, preferences, appearance
     source.rs: SourceEditor, the open file's text
       buffer.rs: text, selection, undo [core]
       syntax.rs: highlighting from Typst's parser [core]
@@ -63,7 +66,7 @@ Text that does not come from typing goes through `Workspace::write_document`, wh
 
 ## Overlays
 
-`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
+`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
 
 ## Vault ids
 

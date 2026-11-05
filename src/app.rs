@@ -245,7 +245,7 @@ impl Workspace {
             cx.observe_window_appearance(window, |this, _, cx| if crate::appearance::sync_dark(cx) { crate::appearance::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(this, cx); } this.refresh_entries(); this.reload_library(); cx.notify(); }
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(this, cx); } this.refresh_entries(cx); this.reload_library(); this.table_changed(window, cx); cx.notify(); }
                 else { this.save_all(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -281,7 +281,7 @@ impl Workspace {
         let settings = store.borrow().settings();
         let sidebar_width = settings.sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
         let store_expanded: HashSet<String> = settings.expanded.into_iter().collect();
-        let citations = crate::citations::Citations::new(store.borrow().root(), cx);
+        let citations = crate::citations::Citations::new(store.borrow().root(), window, cx);
         let mut ws = Workspace {
             settings: crate::settings::Settings::new(cx),
             store,
@@ -339,10 +339,11 @@ impl Workspace {
         self.entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     }
 
-    /// Reads the vault's entries again.
-    pub(crate) fn refresh_entries(&mut self) {
+    /// Reads the vault's entries again. A paper that went leaves its view.
+    pub(crate) fn refresh_entries(&mut self, cx: &mut Context<Self>) {
         self.entries = self.store.borrow_mut().list();
         self.sort();
+        if self.view == View::Paper && !self.papers.current.as_ref().is_some_and(|id| self.entries.iter().any(|e| &e.id == id)) { self.set_view(View::Sources, cx); }
     }
 
     pub fn query(&self, cx: &App) -> String {
@@ -367,7 +368,7 @@ impl Workspace {
     fn load_document(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_overlay(cx);
         if id.ends_with(".pdf") && crate::native_pdf::supported() {
-            return self.open_paper(id, cx);
+            return self.open_paper(id, window, cx);
         }
         let loaded = self.store.borrow().load(id);
         let text = match loaded {
@@ -441,7 +442,8 @@ impl Workspace {
     /// Follows a rename or move through everything that holds a vault path.
     /// The open document's editor and undo history stay.
     pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
-        self.refresh_entries();
+        if let Some(path) = self.papers.current.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.papers.current = Some(path); }
+        self.refresh_entries(cx);
         let moved = self.current.as_deref().and_then(|c| paths::moved(c, old, new));
         if let Some(path) = moved {
             self.current = Some(path.clone());
@@ -449,7 +451,6 @@ impl Workspace {
             self.outline_root = paths::is_document(&path).then(|| main.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
-        if let Some(path) = self.papers.current.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.papers.current = Some(path); }
         self.papers.panel.path_changed(old, new);
         self.paper_index = std::mem::take(&mut self.paper_index).into_iter().map(|(id, paper)| (paths::moved(&id, old, new).unwrap_or(id), paper)).collect();
         if let Some(batch) = &mut self.batch {
@@ -526,7 +527,7 @@ impl Workspace {
         let result = self.store.borrow_mut().create(parent);
         match result {
             Ok(id) => {
-                self.refresh_entries();
+                self.refresh_entries(cx);
                 self.search.update(cx, |s, cx| s.set_text("", cx));
                 if let Some(parent) = parent { self.set_expanded(parent, true, cx); }
                 self.open(&id, window, cx);
@@ -541,7 +542,7 @@ impl Workspace {
         let result = self.store.borrow_mut().create_folder(parent, "New folder");
         match result {
             Ok(id) => {
-                self.refresh_entries();
+                self.refresh_entries(cx);
                 self.start_rename(&id, window, cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not create folder: {e}"), cx),
@@ -588,7 +589,7 @@ impl Workspace {
             self.preview = None;
             self.editor_subs.clear();
         }
-        self.refresh_entries();
+        self.refresh_entries(cx);
         if let Some(b) = self.batch.as_mut() {
             b.retain(|id| !deleted.iter().any(|d| inside(id, d)));
         }
@@ -663,7 +664,7 @@ impl Workspace {
                         Err(e) => w.show_toast_kind(ToastKind::Error, &format!("Could not import {}: {e}", path.display()), cx),
                     }
                 }
-                w.refresh_entries();
+                w.refresh_entries(cx);
                 if let Some(id) = first { w.open(&id, window, cx); }
                 cx.notify();
             });
@@ -696,17 +697,18 @@ impl Workspace {
     }
 
     /// Switch the main pane to Home or Trash (or back to the document).
-    pub fn show_view(&mut self, view: View, cx: &mut Context<Self>) {
+    pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
         if view == View::Trash {
             self.refresh_trash(cx);
         }
         if matches!(view, View::Library | View::Sources) {
             self.save_all(cx);
             self.reload_library();
-            // Rebuilt on the next frame, with what documents cite now.
+            // Rebuilt below, with what documents cite now.
             self.citations.close_inspector();
         }
         self.set_view(view, cx);
+        self.table_changed(window, cx);
     }
 
     /// What every change of the main pane goes through: an overlay belongs to
@@ -919,7 +921,7 @@ impl Workspace {
                         .active(|s| s.bg(Theme::fill_pressed()))
                         .tip("Back to Home", None)
                         .child(icon(Icon::Home, 18., Theme::icon()))
-                        .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Home, cx))),
+                        .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Home, window, cx))),
                 )
                 .child(div().mx(px(12.)).child(divider()))
             })
@@ -1000,8 +1002,6 @@ pub(crate) const HEADER_ACTIONS_H: f32 = 32.;
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.view == View::Paper && !self.papers.current.as_ref().is_some_and(|id| self.entries.iter().any(|e| &e.id == id)) { self.view = View::Sources; }
-        if self.view != View::Paper { self.papers.pdf.close(); }
         self.native_sidebar.sync(if self.sidebar_open { self.sidebar_w(window) } else { 0. }, window);
         let sidebar = if self.sidebar_open { Some(if matches!(self.view, View::Settings | View::Trash) { self.render_settings_sidebar(window, cx) } else { self.render_sidebar(window, cx) }) } else { None };
         let resize = self.sidebar_open.then(|| self.render_resize_handle(window, cx));
@@ -1064,9 +1064,9 @@ impl Render for Workspace {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
-            .on_action(cx.listener(|w, _: &OpenSettings, _, cx| w.show_view(View::Settings, cx)))
-            .on_action(cx.listener(|w, _: &OpenAbout, _, cx| w.open_settings(crate::settings::Page::About, cx)))
-            .on_action(cx.listener(|w, _: &GoHome, _, cx| w.show_view(View::Home, cx)))
+            .on_action(cx.listener(|w, _: &OpenSettings, window, cx| w.show_view(View::Settings, window, cx)))
+            .on_action(cx.listener(|w, _: &OpenAbout, window, cx| w.open_settings(crate::settings::Page::About, window, cx)))
+            .on_action(cx.listener(|w, _: &GoHome, window, cx| w.show_view(View::Home, window, cx)))
             .on_action(cx.listener(|w, _: &NewDoc, window, cx| w.new_doc(window, cx)))
             .on_action(cx.listener(|w, _: &InsertCitation, window, cx| w.open_cite_picker(window, cx)))
             .on_action(cx.listener(|w, _: &NewFolder, window, cx| w.new_folder(None, window, cx)))
@@ -1075,10 +1075,10 @@ impl Render for Workspace {
                 w.sidebar_open = !w.sidebar_open;
                 cx.notify();
             }))
-            .on_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {
                 // Esc leaves Settings.
                 if ev.keystroke.key == "escape" && w.view == View::Settings {
-                    w.close_settings(cx);
+                    w.close_settings(window, cx);
                     cx.stop_propagation();
                 }
             }))

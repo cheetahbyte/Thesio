@@ -114,7 +114,7 @@ impl Workspace {
         if !is_document(&id) {
             return self.show_toast_kind(ToastKind::Error, "Citations go in Typst documents", cx);
         }
-        self.show_view(View::Doc, cx);
+        self.show_view(View::Doc, window, cx);
         editor.update(cx, |e, cx| e.insert_citation(key, cx));
         self.citation_added(&id, cx);
         editor.read(cx).focus(window);

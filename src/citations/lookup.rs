@@ -83,6 +83,7 @@ impl Workspace {
             }
         }
         if added > 0 { self.refresh_after_library_change(cx); }
+        self.table_changed(window, cx);
         self.fetch_papers(keys, cx);
         let summary = match (added, already) {
             (0, 0) => None,

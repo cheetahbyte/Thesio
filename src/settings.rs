@@ -65,10 +65,10 @@ const COLUMN_W: f32 = 640.;
 const NAV: [Option<Page>; 4] = [Some(Page::Appearance), Some(Page::Library), None, Some(Page::About)];
 
 impl Workspace {
-    pub(crate) fn open_settings(&mut self, page: Page, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.settings.page = page;
         self.settings.scroll.set_offset(point(px(0.), px(0.)));
-        if self.view != View::Settings { self.show_view(View::Settings, cx); }
+        if self.view != View::Settings { self.show_view(View::Settings, window, cx); }
         cx.notify();
     }
 
@@ -84,7 +84,7 @@ impl Workspace {
                 .when(!on, |d| d.text_color(Theme::sidebar_text()))
                 .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(ui::icon(icon, sb::ROW_ICON, Theme::sidebar_glyph())))
                 .child(title)
-                .on_click(cx.listener(move |w, _, _, cx| match page { Some(p) => w.open_settings(p, cx), None => w.show_view(View::Trash, cx) }))
+                .on_click(cx.listener(move |w, _, window, cx| match page { Some(p) => w.open_settings(p, window, cx), None => w.show_view(View::Trash, window, cx) }))
         };
         div().w(px(self.sidebar_w(window))).h_full().flex_none().flex().flex_col().bg(Theme::sidebar_veil()).text_color(Theme::text()).font_family(theme::UI_FONT)
             .child(div().h(px(crate::app::HEADER_H)).flex_none().flex().items_center().pl(px(theme::TRAFFIC_LIGHTS_W)).pr(px(12.)).title_bar().child(self.header_navigation(cx)))
@@ -99,7 +99,7 @@ impl Workspace {
             .child(div().flex_1())
             .child(sb::footer_line())
             .child(sb::footer_slot(sb::footer_row("ft-back", Icon::Back, "Back").tip("Back", Some("Esc"))
-                .on_click(cx.listener(|w, _, _, cx| w.close_settings(cx)))))
+                .on_click(cx.listener(|w, _, window, cx| w.close_settings(window, cx)))))
             .into_any_element()
     }
 
@@ -117,14 +117,14 @@ impl Workspace {
                 .tip(if open { "Hide sidebar" } else { "Show sidebar" }, Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
                 .on_click(cx.listener(|w, _, _, cx| { w.sidebar_open = !w.sidebar_open; cx.notify(); })))
             .child(bar_button("settings-home", Icon::Home).tip("Home", Some(crate::shortcuts::hint("workspace::GoHome", "⌘ + ⌥ + Home")))
-                .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Home, cx))))
+                .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Home, window, cx))))
             .into_any_element()
     }
 
     /// Back to where Settings was opened from.
-    pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let back = if self.editor.is_some() && self.current.is_some() { View::Doc } else { View::Home };
-        self.show_view(back, cx);
+        self.show_view(back, window, cx);
     }
 
     pub(crate) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -176,7 +176,7 @@ impl Workspace {
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
                     ui::field_well(&self.settings.email, window, cx).w(px(220.))).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
-                    button("open-trash", "Open").on_click(cx.listener(|w, _, _, cx| w.show_view(View::Trash, cx)))).into_any_element(),
+                    button("open-trash", "Open").on_click(cx.listener(|w, _, window, cx| w.show_view(View::Trash, window, cx)))).into_any_element(),
             ]))
             .into_any_element()
     }

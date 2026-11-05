@@ -110,8 +110,8 @@ impl Workspace {
                             }
                             Confirm::Restore(id) => w.restore_doc(&id, cx),
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
-                            Confirm::DeleteEntries(keys) => w.delete_entries(&keys, cx),
-                            Confirm::DeleteTag(tag) => w.delete_tag(&tag, cx),
+                            Confirm::DeleteEntries(keys) => w.delete_entries(&keys, window, cx),
+                            Confirm::DeleteTag(tag) => w.delete_tag(&tag, window, cx),
                             Confirm::ChangeSourceType { key, kind } => w.set_source_type(&key, kind, window, cx),
                             Confirm::SaveFailed(then) => w.resolve_save_failed(true, then, window, cx),
                         }

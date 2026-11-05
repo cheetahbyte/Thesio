@@ -41,12 +41,12 @@ impl Workspace {
     }
 
     /// Shows a paper in the app, or where there is no viewer, in the system's app.
-    pub(crate) fn open_paper(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn open_paper(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::native_pdf::supported() { return self.open_paper_externally(id, cx); }
         self.papers.current = Some(id.to_string());
         self.papers.failed.set(false);
         self.load_paper_notes(id, cx);
-        self.show_view(View::Paper, cx);
+        self.show_view(View::Paper, window, cx);
     }
 
     /// Scripted runs must not start other apps.
@@ -90,7 +90,7 @@ impl Workspace {
         let result = self.store.borrow_mut().attach(path, id);
         match result {
             Ok(()) => {
-                self.refresh_entries();
+                self.refresh_entries(cx);
                 self.show_toast("Added the paper", cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not add the paper: {e}"), cx),
@@ -153,7 +153,7 @@ impl Workspace {
                 if let Err(e) = result { problem = Some(e.to_string()); }
                 let _ = this.update(cx, |w, cx| {
                     w.papers.fetching -= 1;
-                    if downloaded { w.refresh_entries(); }
+                    if downloaded { w.refresh_entries(cx); }
                     cx.notify();
                 });
             }

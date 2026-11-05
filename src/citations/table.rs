@@ -119,7 +119,7 @@ impl Workspace {
         self.citations.table.cursor = Some(key.to_string());
     }
 
-    pub(crate) fn click_row(&mut self, key: &str, modifiers: Modifiers, cx: &mut Context<Self>) {
+    pub(crate) fn click_row(&mut self, key: &str, modifiers: Modifiers, window: &mut Window, cx: &mut Context<Self>) {
         if modifiers.shift {
             self.select_range(key, &self.library_rows(cx));
         } else if modifiers.platform {
@@ -129,7 +129,7 @@ impl Workspace {
         } else {
             self.select_only(key);
         }
-        cx.notify();
+        self.table_changed(window, cx);
     }
 
     pub(crate) fn library_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -159,7 +159,7 @@ impl Workspace {
             _ => return,
         }
         cx.stop_propagation();
-        cx.notify();
+        self.table_changed(window, cx);
     }
 
     pub(crate) fn column_width(&self, name: &str, default: f32) -> f32 {
@@ -178,7 +178,7 @@ impl Workspace {
                 None => picked,
             };
             let Some(paths) = paths else { return };
-            let _ = this.update(cx, |w, cx| {
+            let _ = this.update_in(cx, |w, window, cx| {
                 let (mut added, mut skipped) = (0, 0);
                 for path in &paths {
                     let result = std::fs::read_to_string(path).map_err(anyhow::Error::from)
@@ -193,7 +193,7 @@ impl Workspace {
                     let already = if skipped > 0 { format!(", {skipped} already in the library") } else { String::new() };
                     w.show_toast(&format!("Imported {added} entries{already}"), cx);
                 }
-                cx.notify();
+                w.table_changed(window, cx);
             });
         }).detach();
     }
@@ -217,10 +217,8 @@ impl Workspace {
         }).detach();
     }
 
-    pub(crate) fn render_library(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.sync_inspector(window, cx);
+    pub(crate) fn render_library(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let tags = self.citations.library.as_ref().map(Library::tags).unwrap_or_default();
-        if !tags.iter().any(|(tag, _)| self.citations.tag_filter.as_ref() == Some(tag)) { self.citations.tag_filter = None; }
         let rows = self.library_rows(cx);
         let total = self.citations.library.as_ref().map_or(0, Library::len);
         let can_edit = self.citations.library.is_some();
@@ -253,7 +251,7 @@ impl Workspace {
         columns
     }
 
-    pub(crate) fn render_library_table(&mut self, tags: &[(String, usize)], rows: Vec<Row>, total: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_library_table(&self, tags: &[(String, usize)], rows: Vec<Row>, total: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let mut page = div().flex_1().min_w_0().min_h_0().flex().flex_col();
         if let Some(error) = &self.citations.error {
             return page.child(div().p(px(26.)).text_size(px(13.)).text_color(Theme::danger())
@@ -271,9 +269,9 @@ impl Workspace {
                     .child(label)
                     .child(div().text_color(Theme::text_placeholder()).child(count.to_string()))
                     .when_some(filter.clone(), |d, tag| d.on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| w.open_overlay(Overlay::TagMenu { tag: tag.clone(), position: ev.position }, window, cx))))
-                    .on_click(cx.listener(move |w, _, _, cx| {
+                    .on_click(cx.listener(move |w, _, window, cx| {
                         w.citations.tag_filter = filter.clone();
-                        cx.notify();
+                        w.table_changed(window, cx);
                     }))
             };
             let filter = self.citations.tag_filter.clone();
@@ -339,7 +337,10 @@ impl Workspace {
                     .when(on, |d| d.bg(if active { Theme::primary() } else { Theme::sidebar_selected() }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
                         window.focus(&w.citations.table.focus);
-                        if !w.citations.table.selected.contains(&menu) { w.select_only(&menu); }
+                        if !w.citations.table.selected.contains(&menu) {
+                            w.select_only(&menu);
+                            w.table_changed(window, cx);
+                        }
                         w.open_overlay(Overlay::EntryMenu { key: menu.clone(), position: ev.position }, window, cx);
                     }))
                     .children(cells)
@@ -358,7 +359,7 @@ impl Workspace {
                     )))
                     .on_click(cx.listener(move |w, ev: &ClickEvent, window, cx| {
                         window.focus(&w.citations.table.focus);
-                        if ev.click_count() >= 2 && !ev.modifiers().modified() { w.open_entry(Some(open.clone()), window, cx); } else { w.click_row(&open, ev.modifiers(), cx); }
+                        if ev.click_count() >= 2 && !ev.modifiers().modified() { w.open_entry(Some(open.clone()), window, cx); } else { w.click_row(&open, ev.modifiers(), window, cx); }
                     }))
             }).collect()
         })).track_scroll(self.citations.table.scroll.clone()).flex_1().min_h_0().px(px(TABLE_X)).pt(px(4.));
@@ -388,8 +389,8 @@ impl Workspace {
             .when(single, |d| d.child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(menu_action(cx, move |w, window, cx| w.open_entry(Some(edit.clone()), window, cx)))))
             .child(item("entry-menu-tags", Icon::Tag, "Tags…").on_click(menu_action(cx, move |w, window, cx| w.open_tag_editor(tagged.clone(), position, window, cx))))
             .when(single && self.can_cite(), |d| d.child(item("entry-menu-cite", Icon::Quote, "Cite").on_click(menu_action(cx, move |w, window, cx| w.insert_citation(&cite, window, cx)))))
-            .when(single, |d| d.child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(menu_action(cx, move |w, _, cx| {
-                if has_paper { w.open_paper(&paper_file(&paper), cx); } else { w.fetch_papers(vec![paper.clone()], cx); }
+            .when(single, |d| d.child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(menu_action(cx, move |w, window, cx| {
+                if has_paper { w.open_paper(&paper_file(&paper), window, cx); } else { w.fetch_papers(vec![paper.clone()], cx); }
             }))))
             .when(single && !has_paper, |d| d.child(item("entry-menu-attach", Icon::Import, "Attach Paper…").on_click(menu_action(cx, move |w, window, cx| {
                 let id = paper_file(&attach);

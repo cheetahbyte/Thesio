@@ -75,7 +75,7 @@ impl Workspace {
             if let Err(e) = result {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not save the page numbering: {e}"), cx);
             }
-            self.refresh_entries();
+            self.refresh_entries(cx);
         }
         editor.update(cx, |e, cx| e.insert_quote(&markup, block, cx));
         if self.papers.panel.notes_editor(&target).is_some() {

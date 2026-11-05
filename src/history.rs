@@ -112,7 +112,7 @@ impl Workspace {
             if let Err(e) = self.citations.library.as_mut().map_or(Ok(()), |library| library.restore(&text)) {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not restore the library: {e}"), cx);
             }
-            self.library_restored(&text, cx);
+            self.library_restored(&text, window, cx);
         } else {
             let (Some(id), Some(current)) = (self.current.clone(), self.history_text(cx)) else { return };
             self.keep_version(&id, &current, true, cx);

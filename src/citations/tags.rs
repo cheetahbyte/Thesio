@@ -34,11 +34,11 @@ impl Workspace {
             f
         });
         let tagged = keys.clone();
-        let subs = vec![cx.subscribe(&field, move |w, field, ev: &TextFieldEvent, cx| match ev {
+        let subs = vec![cx.subscribe_in(&field, window, move |w, field, ev: &TextFieldEvent, window, cx| match ev {
             TextFieldEvent::Submit => {
                 let tag = field.read(cx).text.clone();
                 if tag.trim().is_empty() { return; }
-                if w.set_tag(&tagged, &tag, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+                if w.set_tag(&tagged, &tag, true, window, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
             }
             _ => cx.notify(),
         })];
@@ -71,13 +71,13 @@ impl Workspace {
                 Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename the tag: {e}"), cx),
             }
         }
-        cx.notify();
+        self.table_changed(window, cx);
     }
 
-    pub(crate) fn delete_tag(&mut self, tag: &str, cx: &mut Context<Self>) {
+    pub(crate) fn delete_tag(&mut self, tag: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(library) = &mut self.citations.library else { return };
         if let Err(e) = library.delete_tag(tag) { self.show_toast_kind(ToastKind::Error, &format!("Could not delete the tag: {e}"), cx); }
-        cx.notify();
+        self.table_changed(window, cx);
     }
 
     /// How many entries carry `tag`.
@@ -86,11 +86,11 @@ impl Workspace {
     }
 
     /// Applies `tag` to the entries `keys`. False if it was refused.
-    pub(crate) fn set_tag(&mut self, keys: &[String], tag: &str, on: bool, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn set_tag(&mut self, keys: &[String], tag: &str, on: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(library) = &mut self.citations.library else { return false };
         let result = library.set_tag(keys, tag, on);
         if let Err(e) = &result { self.show_toast_kind(ToastKind::Error, &format!("Could not change tags: {e}"), cx); }
-        cx.notify();
+        self.table_changed(window, cx);
         result.is_ok()
     }
 
@@ -125,7 +125,7 @@ impl Workspace {
             menu_row(("tag-editor-row", i))
                 .child(div().w(px(16.)).flex_none().children(mark.map(|mark| menu_glyph(mark, 14.))))
                 .child(menu_label(tag.clone()))
-                .on_click(cx.listener(move |w, _, _, cx| { w.set_tag(&keys, &tag, !all, cx); }))
+                .on_click(cx.listener(move |w, _, window, cx| { w.set_tag(&keys, &tag, !all, window, cx); }))
         }).collect::<Vec<_>>();
         let panel = menu_panel("tag-editor", 240., cx)
             .child(div().px(px(8.)).pb(px(4.)).child(field_well(&editor.field, window, cx)))
@@ -134,7 +134,7 @@ impl Workspace {
                 let typed = typed.clone();
                 let keys = editor.keys.clone();
                 let field = editor.field.clone();
-                move |w, _, _, cx| if w.set_tag(&keys, &typed, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+                move |w, _, window, cx| if w.set_tag(&keys, &typed, true, window, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
             }))));
         Some(anchored_menu(Corner::TopLeft, editor.position, panel))
     }

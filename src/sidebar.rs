@@ -194,7 +194,7 @@ impl Workspace {
                     Theme::sidebar_glyph(),
                 )))
                 .child(label)
-                .on_click(cx.listener(move |w, _, _, cx| w.show_view(view, cx)))
+                .on_click(cx.listener(move |w, _, window, cx| w.show_view(view, window, cx)))
         };
         let nav = div().flex_none().pt(px(8.)).pb(px(4.)).px(px(SB_X))
             .child(nav_row("nav-home", "Home", View::Home, Icon::Home, Icon::HomeFilled, cx))
@@ -276,7 +276,7 @@ impl Workspace {
             .when(self.batch.is_none(), |d| {
                 d.child(footer_slot(
                     footer_row("ft-settings", Icon::Gear, "Settings")
-                        .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Settings, cx))),
+                        .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Settings, window, cx))),
                 ))
             })
             // Selection mode toolbar: Duplicate | Move to | Delete, minus the cloud ones.
@@ -482,7 +482,7 @@ impl Workspace {
         for id in ids.iter().filter(|id| thesio_core::paths::is_document(id)) {
             self.copy_doc(id, cx);
         }
-        self.refresh_entries();
+        self.refresh_entries(cx);
         self.batch = None;
         cx.notify();
     }

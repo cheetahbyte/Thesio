@@ -47,10 +47,10 @@ impl Workspace {
                 key
             }
         };
-        if self.view != View::Library { self.show_view(View::Library, cx); }
+        if self.view != View::Library { self.show_view(View::Library, window, cx); }
         if self.citations.details.hidden { self.set_details_hidden(false, window, cx); }
         self.select_only(&key);
-        self.sync_inspector(window, cx);
+        self.table_changed(window, cx);
         if let Some((_, field)) = self.citations.details.panel.as_ref().and_then(|inspector| inspector.fields.first()) { window.focus(&field.focus_handle(cx)); }
         cx.notify();
     }
