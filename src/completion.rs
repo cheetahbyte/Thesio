@@ -3,11 +3,9 @@
 //! so it is a task, and a newer query replaces one still running. The editor
 //! owns the popup and everything that follows from a `Completion`.
 
-use crate::app::Workspace;
 use gpui::*;
 use std::ops::Range;
 use std::rc::Rc;
-use thesio_core::references::{citation_at, note_link_at};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionKind {
@@ -70,39 +68,5 @@ impl Completion {
         let strategy = if index > self.selected { ScrollStrategy::Bottom } else { ScrollStrategy::Top };
         self.selected = index;
         self.scroll.scroll_to_item(index, strategy);
-    }
-}
-
-/// `@key` citations, from the library.
-pub struct Citations(pub WeakEntity<Workspace>);
-
-impl Provider for Citations {
-    fn kind(&self) -> CompletionKind { CompletionKind::Citation }
-
-    fn find(&self, text: &str, caret: usize) -> Option<Found> {
-        let range = citation_at(text, caret)?;
-        Some(Found { query: text[range.start + 1..caret].to_lowercase(), range })
-    }
-
-    fn items(&self, query: Query, cx: &mut App) -> Task<Vec<Item>> {
-        let workspace = self.0.clone();
-        cx.spawn(async move |cx| workspace.update(cx, |w, _| w.citation_items(&query)).unwrap_or_default())
-    }
-}
-
-/// `[[note` links to the vault's other documents.
-pub struct NoteLinks(pub WeakEntity<Workspace>);
-
-impl Provider for NoteLinks {
-    fn kind(&self) -> CompletionKind { CompletionKind::NoteLink }
-
-    fn find(&self, text: &str, caret: usize) -> Option<Found> {
-        let range = note_link_at(text, caret)?;
-        Some(Found { query: text[range.start + 2..caret].to_lowercase(), range })
-    }
-
-    fn items(&self, query: Query, cx: &mut App) -> Task<Vec<Item>> {
-        let workspace = self.0.clone();
-        cx.spawn(async move |cx| workspace.update(cx, |w, _| w.note_link_items(&query.text)).unwrap_or_default())
     }
 }

@@ -10,6 +10,7 @@ use crate::history::History;
 use crate::papers::quote::QuoteDialog;
 use crate::sidebar::{ROW_MENU_W, RowMenu};
 use crate::tree::MoveDialog;
+use crate::ui::{MENU_PAD_Y, ModalAt, modal_layer, popover};
 use gpui::*;
 
 pub enum Overlay {
@@ -49,6 +50,27 @@ impl Overlay {
             _ => true,
         }
     }
+}
+
+/// `panel` over the dimmed window. With `dismiss`, a click beside it closes it.
+pub(crate) fn modal(id: &'static str, at: ModalAt, dismiss: bool, panel: impl IntoElement, cx: &Context<Workspace>) -> AnyElement {
+    modal_layer(id, at, cx.listener(move |w, _, window, cx| {
+        cx.stop_propagation();
+        if dismiss { w.close_overlay(window, cx); }
+    }), panel)
+}
+
+/// A menu panel `width` wide that closes on a click outside it.
+pub(crate) fn menu_panel(id: &'static str, width: f32, cx: &Context<Workspace>) -> Stateful<Div> {
+    popover().id(id).occlude().w(px(width)).py(px(MENU_PAD_Y)).on_mouse_down_out(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))
+}
+
+/// A menu row's click: the menu closes, then `action` runs.
+pub(crate) fn menu_action(cx: &Context<Workspace>, action: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |w, _, window, cx| {
+        w.close_overlay(window, cx);
+        action(w, window, cx);
+    })
 }
 
 impl Workspace {

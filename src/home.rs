@@ -1,14 +1,17 @@
 //! Home: where the vault stands. Recent documents, favorites, a few counts, and
 //! the sources no document cites yet.
 
+use crate::actions::{FocusSearch, NewDoc};
 use crate::app::{View, Workspace};
+use crate::chrome::page_title_x;
 use crate::library::{NOTES_DIR, paper_file};
 use thesio_core::references::cited_keys;
 use crate::store::display_title;
 use crate::store::Entry;
 use thesio_core::bibliography::without_block;
 use crate::theme::Theme;
-use crate::ui::{Icon, TipExt, empty_state, format_visit, page_header, primary_button, secondary_button};
+use crate::chrome::page_header;
+use crate::ui::{Icon, TipExt, TitleBarExt, empty_state, format_visit, icon, primary_button, secondary_button};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -93,6 +96,31 @@ impl Workspace {
         }).collect()
     }
 
+    /// Home's search box, centred on the pane but never over what sits on
+    /// either side of it: the title (and, with the sidebar hidden, the
+    /// traffic lights and Show sidebar) on the left, + on the right. Below a
+    /// usable width it is None and the caller shows a search icon instead.
+    fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
+        let title = "Home".to_string();
+        let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
+        let left = page_title_x(self.sidebar_open) + title_w + 16.;
+        // + is 32 wide with an 8pt inset; 16 clear of it.
+        let right = crate::ui::HEADER_ACTIONS_H + crate::ui::header_right_inset() + 16.;
+        let half = (main / 2. - left).min(main / 2. - right);
+        let width = (main - 320.).min(2. * half).min(360.);
+        if width < 120. { return None }
+        Some(div().id("header-search").absolute().left(px((main - width) / 2.)).top(px(11.))
+            .w(px(width)).h(px(crate::ui::BUTTON_H)).no_drag().flex().items_center().gap(px(6.)).px(px(9.))
+            .rounded(px(crate::ui::BUTTON_RADIUS)).border_1().border_color(Theme::line_border())
+            .cursor_pointer()
+            .child(icon(Icon::Search, 13., Theme::text_caption()))
+            .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
+            .when_some(crate::shortcuts::compact_hint(&FocusSearch, cx).filter(|_| width >= 200.), |d, keys| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(keys)))
+            .tip_action("Search documents", &FocusSearch, cx)
+            .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx))))
+    }
+
     pub(crate) fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let stamp = self.overview_stamp();
         if self.home.overview.as_ref().is_none_or(|(known, _)| *known != stamp) { self.home.overview = Some((stamp, self.overview())); }
@@ -102,10 +130,10 @@ impl Workspace {
         let header = page_header(self, "Home", None, cx).relative().children(search)
             .child(crate::ui::toolbar_group()
                 .when(narrow, |d| d.child(crate::ui::toolbar_icon("home-search", Icon::Search)
-                    .tip_action("Search documents", &crate::actions::FocusSearch, cx)
+                    .tip_action("Search documents", &FocusSearch, cx)
                     .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx)))))
                 .child(crate::ui::toolbar_icon("home-new", Icon::Plus)
-                    .tip_action("New document", &crate::actions::NewDoc, cx)
+                    .tip_action("New document", &NewDoc, cx)
                     .on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx)))));
         let page = div().size_full().flex().flex_col().bg(Theme::bg_body()).text_color(Theme::text()).font_family(crate::theme::UI_FONT).child(header);
         let Some((_, overview)) = &self.home.overview else { return page.into_any_element() };

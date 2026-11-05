@@ -6,7 +6,8 @@ use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::native_pdf::Highlight;
 use crate::theme::Theme;
-use crate::ui::{Icon, TipExt, TipSide, ToastKind, field_well, icon, page_header, toolbar_group, toolbar_icon, ui_para};
+use crate::chrome::page_header;
+use crate::ui::{Icon, TipExt, TipSide, ToastKind, field_well, icon, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::quote::printed_page;
 
@@ -121,10 +122,10 @@ impl Workspace {
         let tab = self.papers.panel.tab;
         let highlights = self.papers.pdf.highlights();
         let label: &'static str = "Highlights";
-        let tabs = crate::ui::segmented("paper-tab", &["Notes", label], usize::from(tab == PaperTab::Highlights), |w, i, cx| {
-            w.papers.panel.tab = if i == 0 { PaperTab::Notes } else { PaperTab::Highlights };
+        let tabs = crate::ui::segmented("paper-tab", &["Notes", label], usize::from(tab == PaperTab::Highlights), cx.listener(|w, i: &usize, _, cx| {
+            w.papers.panel.tab = if *i == 0 { PaperTab::Notes } else { PaperTab::Highlights };
             cx.notify();
-        }, cx);
+        }));
         let empty = highlights.is_empty();
         let rows = highlights.into_iter().enumerate().map(|(i, highlight)| self.render_highlight(i, highlight, window, cx)).collect::<Vec<_>>();
         let body = match tab {

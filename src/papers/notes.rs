@@ -2,7 +2,8 @@
 
 use super::viewer::{PANEL_W, PaperPanel};
 use crate::app::Workspace;
-use crate::completion::{Citations, CompletionKind};
+use crate::citations::CitationKeys;
+use crate::completion::CompletionKind;
 use crate::document::Edit;
 use crate::library::{NOTES_DIR, note_file, paper_file};
 use crate::source::{SourceEditor, SourceEvent};
@@ -58,7 +59,7 @@ impl Workspace {
         // Paper notes have no path of their own here, so they offer no note links.
         let workspace = cx.weak_entity();
         let editor = cx.new(|cx| {
-            let mut editor = SourceEditor::new(text, true, vec![Rc::new(Citations(workspace))], cx);
+            let mut editor = SourceEditor::new(text, true, vec![Rc::new(CitationKeys(workspace))], cx);
             // Inside the panel: the viewer would hide what crosses onto it.
             editor.completion_w = PANEL_W - 40.;
             editor

@@ -140,7 +140,7 @@ impl Workspace {
                 .when(selected, |d| d.bg(Theme::fill_hover_strong()))
         };
         let title = |t: String| div().ml(px(9.)).flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(t));
-        let page_icon = |_: &Entry| icon(Icon::Folder, 16., Theme::text_caption()).into_any_element();
+        let folder_icon = || icon(Icon::Folder, 16., Theme::text_caption()).into_any_element();
         let mut list = div().id("move-tree").flex_1().min_w_0().px(px(8.)).py(px(12.)).overflow_y_scroll().track_scroll(&dlg.scroll);
         if q.is_empty() {
             list = list.child(
@@ -185,7 +185,7 @@ impl Workspace {
                                         }))
                                 }),
                         )
-                        .child(page_icon(e))
+                        .child(folder_icon())
                         .child(title(display_title(&e.title)))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             if let Some(d) = w.move_dialog() {
@@ -205,7 +205,7 @@ impl Workspace {
                 list = list.child(
                     row(format!("move-hit-{}", e.id), dlg.target.as_ref().is_some_and(|t| t.as_deref() == Some(e.id.as_str())))
                         .pl(px(16.))
-                        .child(page_icon(e))
+                        .child(folder_icon())
                         .child(title(display_title(&e.title)))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             if let Some(d) = w.move_dialog() {
@@ -263,6 +263,6 @@ impl Workspace {
                         w.close_overlay(window, cx);
                     }))),
             );
-        crate::ui::modal("move-mask", ModalAt::Center, true, dialog, cx)
+        crate::overlay::modal("move-mask", ModalAt::Center, true, dialog, cx)
     }
 }

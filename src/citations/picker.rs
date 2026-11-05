@@ -4,9 +4,9 @@ use super::table::DEFAULT_SORT;
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::{Row, paper_file, paper_named};
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, modal};
 use crate::theme::Theme;
-use crate::ui::{ModalAt, dialog, modal, plain_button, search_well, ui_text};
+use crate::ui::{ModalAt, dialog, plain_button, search_well, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::path::PathBuf;
 

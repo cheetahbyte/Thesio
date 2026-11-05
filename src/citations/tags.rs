@@ -4,9 +4,9 @@ use crate::confirm::Confirm;
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::Row;
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, menu_action, menu_panel};
 use crate::theme::Theme;
-use crate::ui::{Icon, ToastKind, anchored_menu, field_well, icon, menu_action, menu_glyph, menu_label, menu_panel, menu_row, popover};
+use crate::ui::{Icon, ToastKind, anchored_menu, field_well, icon, menu_glyph, menu_label, menu_row, popover};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 

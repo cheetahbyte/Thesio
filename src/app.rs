@@ -2,14 +2,14 @@
 //! (see `sidebar.rs`) and the editor on the right, with the
 //! 64px top bar (breadcrumb title + save status) above the page.
 
-use crate::actions::FocusSearch;
 use crate::confirm::Confirm;
-use crate::document::Edit;
 use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
 use crate::session::DocumentSession;
 use crate::source::{SourceEditor, SourceEvent};
-use crate::completion::{Citations, CompletionKind, NoteLinks, Provider};
+use crate::citations::CitationKeys;
+use crate::completion::{CompletionKind, Provider};
+use crate::document::{Edit, NoteLinks};
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::display_title;
 use crate::store::Entry;
@@ -18,7 +18,7 @@ use crate::theme::{self, Theme, craft};
 use thesio_core::paths;
 use thesio_core::project::{self, Heading, Project};
 use thesio_core::references::note_links;
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
+use crate::ui::{HEADER_H, Icon, TipExt, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -143,8 +143,6 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(document: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        crate::preferences::load();
-        if !cx.has_global::<SharedStore>() { cx.set_global(SharedStore::open().expect("open document library")); }
         let store = cx.global::<SharedStore>().clone();
         let entries = store.borrow_mut().list();
         let search = cx.new(|cx| {
@@ -155,10 +153,10 @@ impl Workspace {
         let subs = vec![
             cx.observe_window_bounds(window, |_, window, cx| crate::window_size::remember(window, cx)),
             // The system switched between light and dark (or the app's own look changed).
-            cx.observe_window_appearance(window, |_, _, cx| if crate::appearance::sync_dark(cx) { crate::appearance::refresh_all(cx); }),
+            cx.observe_window_appearance(window, |_, _, cx| if crate::appearance::sync_dark(cx) { cx.refresh_windows(); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(cx); } this.refresh_entries(cx); this.reload_library(); this.table_changed(window, cx); cx.notify(); }
+                if window.is_window_active() { if crate::appearance::sync_accent() { cx.refresh_windows(); } this.refresh_entries(cx); this.reload_library(); this.table_changed(window, cx); cx.notify(); }
                 else { this.save_all(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -300,7 +298,7 @@ impl Workspace {
         let typst = paths::is_document(id);
         let opened_text = text.clone();
         let workspace = cx.weak_entity();
-        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(Citations(workspace.clone())), Rc::new(NoteLinks(workspace))];
+        let providers: Vec<Rc<dyn Provider>> = vec![Rc::new(CitationKeys(workspace.clone())), Rc::new(NoteLinks(workspace))];
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, providers, cx));
         let root = self.store.borrow().root().to_path_buf();
         let main = self.top_document(id, cx);
@@ -645,7 +643,7 @@ impl Workspace {
     pub fn show_toast_kind(&mut self, kind: ToastKind, msg: &str, cx: &mut Context<Self>) {
         self.toast = Some((kind, SharedString::from(msg.to_string()), Instant::now()));
         self.toast_task = Some(cx.spawn(async |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(2700)).await;
+            cx.background_executor().timer(Duration::from_secs_f32(crate::ui::TOAST_FADE_AT)).await;
             let _ = this.update(cx, |_, cx| cx.notify());
         }));
         cx.notify();
@@ -706,44 +704,9 @@ impl Workspace {
         cx.notify();
     }
 
-
-
-    /// Home's search box, centred on the pane but never over what sits on
-    /// either side of it: the title (and, with the sidebar hidden, the
-    /// traffic lights and Show sidebar) on the left, + on the right. Below a
-    /// usable width it is None and the caller shows a search icon instead.
-    pub(crate) fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
-        let title = "Home".to_string();
-        let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
-        // page_header's left inset (26 with the sidebar, else the traffic
-        // lights plus the 4 + 28 + 12 of Show sidebar), then 16 clear of the title.
-        let left = if self.sidebar_open { 26. } else { theme::TRAFFIC_LIGHTS_W + 44. + if cfg!(target_os = "windows") { 32. } else { 0. } } + title_w + 16.;
-        // + is 32 wide with an 8pt inset; 16 clear of it.
-        let right = HEADER_ACTIONS_H + crate::ui::header_right_inset() + 16.;
-        let half = (main / 2. - left).min(main / 2. - right);
-        let width = (main - 320.).min(2. * half).min(360.);
-        if width < 120. { return None }
-        Some(div().id("header-search").absolute().left(px((main - width) / 2.)).top(px(11.))
-            .w(px(width)).h(px(crate::ui::BUTTON_H)).no_drag().flex().items_center().gap(px(6.)).px(px(9.))
-            .rounded(px(crate::ui::BUTTON_RADIUS)).border_1().border_color(Theme::line_border())
-            .cursor_pointer()
-            .child(icon(Icon::Search, 13., Theme::text_caption()))
-            .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
-            .when_some(crate::shortcuts::hint(&FocusSearch, cx).filter(|_| width >= 200.), |d, keys| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(keys.replace(" + ", " "))))
-            .tip_action("Search documents", &FocusSearch, cx)
-            .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx))))
-    }
-
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = !self.sidebar_open;
         cx.notify();
-    }
-
-    /// Opens search; the tooltip names the key.
-    pub(crate) fn search_button(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
-        let tip = crate::shortcuts::hint(&FocusSearch, cx).map_or("Search".to_string(), |keys| format!("Search ({keys})"));
-        crate::ui::toolbar_icon(id, Icon::Search).tip_label(tip, TipSide::Below).on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx)))
     }
 
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -887,11 +850,8 @@ pub(crate) fn updated_paths(files: usize) -> String {
     format!("Updated paths in {files} {}", if files == 1 { "file" } else { "files" })
 }
 
-/// Header and action group share an 8px top/right inset.
-pub const HEADER_H: f32 = 48.;
 /// Toasts stay in the header over a paper: the native viewer would hide them lower down.
 const TOAST_ON_PAPER: f32 = 4.;
-pub(crate) const HEADER_ACTIONS_H: f32 = 32.;
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -947,7 +907,7 @@ impl Render for Workspace {
             .relative()
             .size_full()
             .flex()
-            .bg(Theme::window())
+            .bg(Theme::window(crate::native_sidebar::supported()))
             .font_family(theme::UI_FONT)
             .text_color(Theme::text())
             .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {

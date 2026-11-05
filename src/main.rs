@@ -7,6 +7,7 @@ mod appearance;
 mod shared_store;
 mod window_size;
 mod assets;
+mod chrome;
 mod citations;
 mod completion;
 mod confirm;
@@ -82,7 +83,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
             titlebar: Some(TitlebarOptions {
                 title: Some("Thesio".into()),
                 appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
-                traffic_light_position: Some(point(px(20.), px(app::HEADER_H / 2. - 7.))),
+                traffic_light_position: Some(point(px(20.), px(ui::HEADER_H / 2. - 7.))),
             }),
             window_min_size: Some(size(px(480.), px(480.))),
             focus: !scripted,
@@ -117,7 +118,7 @@ fn main() {
         preferences::load();
         appearance::apply_appearance(&preferences::prefs().appearance);
         appearance::sync_dark(cx);
-        theme::sync_accent();
+        appearance::sync_accent();
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));
         actions::set_menus(cx);

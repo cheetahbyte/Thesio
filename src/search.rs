@@ -501,7 +501,7 @@ impl Workspace {
             .child(list)
             .child(footer);
 
-        crate::ui::modal("search-mask", ModalAt::Center, true, panel, cx)
+        crate::overlay::modal("search-mask", ModalAt::Center, true, panel, cx)
     }
 }
 

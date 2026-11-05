@@ -26,23 +26,8 @@ pub fn dark() -> bool { DARK.load(Ordering::Relaxed) }
 /// The accent as `0xrrggbb`: the system's on macOS, else `craft::B500`.
 pub fn accent() -> u32 { ACCENT.load(Ordering::Relaxed) }
 
-/// Read the system accent; true when it changed. Call on the main thread.
-#[cfg(target_os = "macos")]
-pub fn sync_accent() -> bool {
-    use objc::{class, msg_send, runtime::Object, sel, sel_impl};
-    let hex = objc::rc::autoreleasepool(|| unsafe {
-        let accent: *mut Object = msg_send![class!(NSColor), controlAccentColor];
-        let space: *mut Object = msg_send![class!(NSColorSpace), sRGBColorSpace];
-        let color: *mut Object = msg_send![accent, colorUsingColorSpace: space];
-        if color.is_null() { return None }
-        let (r, g, b): (f64, f64, f64) = (msg_send![color, redComponent], msg_send![color, greenComponent], msg_send![color, blueComponent]);
-        let byte = |v: f64| (v.clamp(0., 1.) * 255.).round() as u32;
-        Some(byte(r) << 16 | byte(g) << 8 | byte(b))
-    });
-    hex.is_some_and(|hex| ACCENT.swap(hex, Ordering::Relaxed) != hex)
-}
-#[cfg(not(target_os = "macos"))]
-pub fn sync_accent() -> bool { false }
+/// Take the system's accent; true when it changed.
+pub fn set_accent(hex: u32) -> bool { ACCENT.swap(hex, Ordering::Relaxed) != hex }
 
 /// Switch the look; true when it changed.
 pub fn set_dark(on: bool) -> bool { DARK.swap(on, Ordering::Relaxed) != on }
@@ -231,7 +216,7 @@ impl Theme {
     // ---- Thesio shell
     /// A light gray tint separates the sidebar from the white page while keeping wallpaper colors quiet.
     /// The document pane paints its own opaque white surface.
-    pub fn window() -> Hsla { if crate::native_sidebar::supported() { ca(craft::WINDOW, 0.) } else { ca(craft::WINDOW, 0.84) } }
+    pub fn window(glass: bool) -> Hsla { ca(craft::WINDOW, if glass { 0. } else { 0.84 }) }
     /// Lifts the sidebar off the glass behind it. Fully clear glass settles
     /// near mid gray, where no text colour alone stays readable over a busy
     /// wallpaper.

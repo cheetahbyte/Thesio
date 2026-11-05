@@ -3,9 +3,9 @@
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::Added;
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, menu_action, modal};
 use crate::theme::{self, Theme, craft};
-use crate::ui::{ModalAt, dialog, field_well, menu_action, modal, plain_button, primary_button, secondary_button};
+use crate::ui::{ModalAt, dialog, field_well, plain_button, primary_button, secondary_button};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::identifier::{Identifier, identifiers};
 use thesio_core::lookup;

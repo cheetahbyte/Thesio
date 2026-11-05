@@ -5,9 +5,10 @@ use crate::confirm::Confirm;
 use crate::app::Workspace;
 use crate::library::{Library, Row, paper_file};
 use crate::input::TextField;
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, menu_action, menu_panel};
 use crate::theme::{self, Theme};
-use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, list_header_text, list_line, menu_action, menu_glyph, menu_label, menu_panel, menu_row, page_header, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
+use crate::chrome::page_header;
+use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, list_header_text, list_line, menu_glyph, menu_label, menu_row, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -442,6 +443,6 @@ impl Workspace {
             })));
         // Under the "…" button, which sits left of the Add button.
         let right = window.viewport_size().width - px(crate::ui::header_right_inset() + ADD_W);
-        anchored_menu(Corner::TopRight, point(right, px(crate::app::HEADER_H - 4.)), menu)
+        anchored_menu(Corner::TopRight, point(right, px(crate::ui::HEADER_H - 4.)), menu)
     }
 }

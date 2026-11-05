@@ -7,11 +7,11 @@ mod widgets;
 use crate::{app::{View, Workspace}, theme::{self, Theme}, ui};
 use crate::input::{TextField, TextFieldEvent};
 use crate::preferences::prefs;
-use crate::ui::{Icon, TitleBarExt, TipExt, segmented};
+use crate::ui::{Icon, TitleBarExt, TipExt, secondary_button, segmented};
 use crate::sidebar as sb;
 use gpui::{prelude::FluentBuilder, *};
 use std::sync::{Arc, LazyLock};
-use widgets::{button, group, row, switch};
+use widgets::{group, row, switch};
 
 /// The view's state.
 pub struct Settings {
@@ -82,7 +82,7 @@ impl Workspace {
                 .on_click(cx.listener(move |w, _, window, cx| match page { Some(p) => w.open_settings(p, window, cx), None => w.show_view(View::Trash, window, cx) }))
         };
         div().w(px(self.sidebar_w(window))).h_full().flex_none().flex().flex_col().bg(Theme::sidebar_veil()).text_color(Theme::text()).font_family(theme::UI_FONT)
-            .child(div().h(px(crate::app::HEADER_H)).flex_none().flex().items_center().pl(px(theme::TRAFFIC_LIGHTS_W)).pr(px(12.)).title_bar().child(self.header_navigation(cx)))
+            .child(div().h(px(crate::ui::HEADER_H)).flex_none().flex().items_center().pl(px(theme::TRAFFIC_LIGHTS_W)).pr(px(12.)).title_bar().child(self.header_navigation(cx)))
             // Match the document sidebar: Home sits 8 under the bar, followed by
             // a section header and rows on a 31pt pitch. Settings aligns with Home;
             // the 34pt box keeps the rows below.
@@ -95,16 +95,6 @@ impl Workspace {
             .child(sb::footer_line())
             .child(sb::footer_slot(sb::nav_row("ft-back", Icon::Back, "Back", false).tip("Back", Some("Esc"))
                 .on_click(cx.listener(|w, _, window, cx| w.close_settings(window, cx)))))
-            .into_any_element()
-    }
-
-    /// Sidebar toggle and Home, in the document sidebar's toggle box (28pt,
-    /// 4pt past the traffic lights, glyph 17), so the buttons don't move when
-    /// switching between the document list and Settings.
-    pub(crate) fn header_navigation(&self, cx: &mut Context<Self>) -> AnyElement {
-        div().flex().items_center().ml(px(4.)).gap(px(4.))
-            .child(self.sidebar_toggle("settings-collapse", Theme::icon(), cx))
-            .child(self.home_button("settings-home", 17., cx).tip_action("Home", &crate::actions::GoHome, cx))
             .into_any_element()
     }
 
@@ -123,7 +113,7 @@ impl Workspace {
         };
         div().flex_1().min_w_0().h_full().flex().flex_col().bg(Theme::bg_body()).text_color(Theme::text()).font_family(theme::UI_FONT)
             // The bar only drags the window; the page title heads the centred column.
-            .child(div().h(px(crate::app::HEADER_H)).flex_none().flex().items_center().title_bar()
+            .child(div().h(px(crate::ui::HEADER_H)).flex_none().flex().items_center().title_bar()
                 .when(!self.sidebar_open, |d| d.pl(px(theme::TRAFFIC_LIGHTS_W)).child(self.header_navigation(cx))))
             .child(div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings.scroll)
                 .child(div().w_full().flex().flex_col().items_center().px(px(32.)).pb(px(64.))
@@ -137,10 +127,10 @@ impl Workspace {
     fn appearance_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let at = match prefs().appearance.as_str() { "light" => 1, "dark" => 2, _ => 0 };
         div().w_full().flex().flex_col().gap(px(28.))
-            .child(group(None, vec![
+            .child(group(vec![
                 row("Appearance", None,
                     segmented("appearance", &["System", "Light", "Dark"], at,
-                        |w, i, cx| w.set_pref(|p| p.appearance = ["", "light", "dark"][i].into(), cx), cx)).into_any_element(),
+                        cx.listener(|w, i: &usize, _, cx| w.set_pref(|p| p.appearance = ["", "light", "dark"][*i].into(), cx)))).into_any_element(),
             ]))
             .into_any_element()
     }
@@ -150,20 +140,17 @@ impl Workspace {
         let location = if cfg!(target_os = "windows") { root.display().to_string() } else {
             dirs::home_dir().and_then(|h| root.strip_prefix(h).ok().map(|r| format!("~/{}", r.display()))).unwrap_or_else(|| root.display().to_string())
         };
-        let reveal = if cfg!(target_os = "macos") { "Show in Finder" } else if cfg!(target_os = "windows") {
-            "Show in File Explorer"
-        } else { "Show in File Manager" };
         let hide_library_files = prefs().hide_library_files;
         div().w_full().flex().flex_col().gap(px(8.))
-            .child(group(None, vec![
+            .child(group(vec![
                 row("Vault folder", Some(location.into()),
-                    button("reveal-library", reveal).on_click(|_, _, cx| cx.reveal_path(&crate::store::Store::root_dir()))).into_any_element(),
+                    secondary_button("reveal-library", crate::system::REVEAL_LABEL).on_click(|_, _, cx| crate::system::reveal(&crate::store::Store::root_dir(), cx))).into_any_element(),
                 row("Hide library files", Some("Keeps library.yaml and the sources folder out of the sidebar. They stay in the vault.".into()),
                     switch("hide-library-files", hide_library_files).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_files = !hide_library_files, cx)))).into_any_element(),
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
                     ui::field_well(&self.settings.email, window, cx).w(px(220.))).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
-                    button("open-trash", "Open").on_click(cx.listener(|w, _, window, cx| w.show_view(View::Trash, window, cx)))).into_any_element(),
+                    secondary_button("open-trash", "Open").on_click(cx.listener(|w, _, window, cx| w.show_view(View::Trash, window, cx)))).into_any_element(),
             ]))
             .into_any_element()
     }

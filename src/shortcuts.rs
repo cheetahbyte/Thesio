@@ -37,16 +37,21 @@ fn key_name(key: &str) -> String {
     chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
-fn stroke_name(stroke: &Keystroke) -> String {
+fn stroke_name(stroke: &Keystroke, separator: &str) -> String {
     let m = stroke.modifiers;
     let held = [(m.platform, "⌘"), (m.alt, "⌥"), (m.shift, "Shift"), (m.control, "Control")].into_iter().filter(|(on, _)| *on).map(|(_, name)| name.to_string());
-    held.chain([key_name(&stroke.key)]).collect::<Vec<_>>().join(" + ")
+    held.chain([key_name(&stroke.key)]).collect::<Vec<_>>().join(separator)
 }
 
-/// The key the keymap holds for `action`, as the UI writes it; None when it has none.
-pub fn hint(action: &dyn Action, cx: &App) -> Option<String> {
+fn keys(action: &dyn Action, separator: &str, cx: &App) -> Option<String> {
     let keymap = cx.key_bindings();
     let keymap = keymap.borrow();
     let binding = keymap.bindings_for_action(action).next()?;
-    Some(binding.keystrokes().iter().map(|stroke| stroke_name(stroke.inner())).collect::<Vec<_>>().join(", "))
+    Some(binding.keystrokes().iter().map(|stroke| stroke_name(stroke.inner(), separator)).collect::<Vec<_>>().join(", "))
 }
+
+/// The key the keymap holds for `action`, as the UI writes it; None when it has none.
+pub fn hint(action: &dyn Action, cx: &App) -> Option<String> { keys(action, " + ", cx) }
+
+/// `hint` for a tight space.
+pub fn compact_hint(action: &dyn Action, cx: &App) -> Option<String> { keys(action, " ", cx) }

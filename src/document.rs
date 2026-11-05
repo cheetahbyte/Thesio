@@ -3,10 +3,30 @@
 //! replaces them. Everything else that fails says so in a toast.
 
 use crate::app::{SaveStatus, View, Workspace};
+use crate::completion::{CompletionKind, Found, Item, Provider, Query};
 use crate::confirm::AfterSave;
+use crate::store::Entry;
 use crate::ui::ToastKind;
 use gpui::*;
 use std::time::Duration;
+use thesio_core::references::{note_link, note_link_at};
+
+/// `[[note` links to the vault's other documents.
+pub struct NoteLinks(pub WeakEntity<Workspace>);
+
+impl Provider for NoteLinks {
+    fn kind(&self) -> CompletionKind { CompletionKind::NoteLink }
+
+    fn find(&self, text: &str, caret: usize) -> Option<Found> {
+        let range = note_link_at(text, caret)?;
+        Some(Found { query: text[range.start + 2..caret].to_lowercase(), range })
+    }
+
+    fn items(&self, query: Query, cx: &mut App) -> Task<Vec<Item>> {
+        let workspace = self.0.clone();
+        cx.spawn(async move |cx| workspace.update(cx, |w, _| w.note_link_items(&query.text)).unwrap_or_default())
+    }
+}
 
 /// How text that did not come from typing enters an editor.
 #[derive(Clone, Copy, PartialEq)]
@@ -18,6 +38,14 @@ pub(crate) enum Edit {
 }
 
 impl Workspace {
+    /// What `[[` offers from the open document, matching titles first.
+    fn note_link_items(&self, query: &str) -> Vec<Item> {
+        let Some(file) = &self.current else { return vec![] };
+        let mut notes: Vec<&Entry> = self.entries.iter().filter(|e| e.typst && e.id != *file && (e.title.to_lowercase().contains(query) || e.id.to_lowercase().contains(query))).collect();
+        notes.sort_by_key(|e| !e.title.to_lowercase().starts_with(query));
+        notes.into_iter().map(|e| Item { title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None }).collect()
+    }
+
     /// What `id` holds now: the open editor's copy, or the file.
     pub(crate) fn text_of(&self, id: &str, cx: &App) -> anyhow::Result<String> {
         match (&self.current, &self.editor) {

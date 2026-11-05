@@ -8,8 +8,8 @@ use crate::store::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
 use thesio_core::project::Heading;
-use crate::overlay::Overlay;
-use crate::ui::{Icon, TipExt, TitleBarExt, anchored_menu, icon, menu_action, menu_panel, menu_row, ui_text};
+use crate::overlay::{Overlay, menu_action, menu_panel};
+use crate::ui::{Icon, TipExt, TitleBarExt, anchored_menu, icon, menu_row, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 
 /// Row "…" menu geometry: 32pt rows, 11pt dividers, 6pt padding inside
@@ -101,6 +101,15 @@ fn checkbox(state: Check, disabled: bool) -> Div {
         .when(state == Check::Partial, |d| d.child(div().w(px(8.)).h(px(2.)).rounded(px(1.)).bg(white)))
 }
 
+/// A row that goes somewhere in a document.
+fn jump_row(id: impl Into<ElementId>, title: String, indent: f32, active: bool) -> Stateful<Div> {
+    div().id(id).h(px(OUTLINE_ROW_H)).pl(px(8. + indent)).pr(px(CHEVRON_R)).flex().items_center().rounded(px(ROW_R)).cursor_pointer()
+        .text_size(px(13.))
+        .text_color(if active { Theme::text() } else { Theme::sidebar_section() })
+        .when(active, |d| d.font_weight(FontWeight::MEDIUM))
+        .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(title)))
+}
+
 /// A sidebar row being dragged.
 #[derive(Clone)]
 pub(crate) struct DraggedRow {
@@ -140,7 +149,7 @@ impl Workspace {
         let entries: Vec<Entry> = self.listed_entries().cloned().collect();
 
         let header = div()
-            .h(px(crate::app::HEADER_H))
+            .h(px(crate::ui::HEADER_H))
             .flex_none()
             .flex()
             .items_center()
@@ -190,7 +199,7 @@ impl Workspace {
             if !self.folded[3] {
                 for (i, (path, title, offset)) in self.backlinks.iter().enumerate() {
                     let (path, offset) = (path.clone(), *offset);
-                    list = list.child(self.jump_row(("backlink", i), title.clone(), 0., false, cx).on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx))));
+                    list = list.child(jump_row(("backlink", i), title.clone(), 0., false).on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx))));
                 }
             }
             list = list.child(div().h(px(GROUP_GAP - SECTION_TOP)));
@@ -450,17 +459,8 @@ impl Workspace {
 
     fn outline_row(&self, i: usize, heading: &Heading, top: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let (path, offset) = (heading.path.clone(), heading.offset);
-        self.jump_row(("outline", i), heading.title.clone(), OUTLINE_INDENT * (heading.level - top) as f32, self.outline_active == Some(i), cx)
+        jump_row(("outline", i), heading.title.clone(), OUTLINE_INDENT * (heading.level - top) as f32, self.outline_active == Some(i))
             .on_click(cx.listener(move |w, _, window, cx| w.go_to_source(&path, offset, window, cx)))
-    }
-
-    /// A row that goes somewhere in a document.
-    fn jump_row(&self, id: impl Into<ElementId>, title: String, indent: f32, active: bool, _: &mut Context<Self>) -> Stateful<Div> {
-        div().id(id).h(px(OUTLINE_ROW_H)).pl(px(8. + indent)).pr(px(CHEVRON_R)).flex().items_center().rounded(px(ROW_R)).cursor_pointer()
-            .text_size(px(13.))
-            .text_color(if active { Theme::text() } else { Theme::sidebar_section() })
-            .when(active, |d| d.font_weight(FontWeight::MEDIUM))
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(title)))
     }
 
     fn row_base(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -624,8 +624,8 @@ impl Workspace {
         let id = m.id.clone();
         let mut menu = menu_panel("row-menu", ROW_MENU_W, cx).px(px(5.));
         let reveal = self.store.borrow().path(&id).ok();
-        let reveal_item = item("rm-reveal", Icon::Move, if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in file manager" }).on_click(menu_action(cx, move |_, _, cx| {
-            if let Some(path) = &reveal { cx.reveal_path(path); }
+        let reveal_item = item("rm-reveal", Icon::Move, crate::system::REVEAL_LABEL).on_click(menu_action(cx, move |_, _, cx| {
+            if let Some(path) = &reveal { crate::system::reveal(path, cx); }
         }));
         if folder {
             let (doc, sub, mv, ren, del) = (id.clone(), id.clone(), id.clone(), id.clone(), id);

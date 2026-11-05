@@ -3,10 +3,10 @@
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::native_pdf::Highlight;
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, modal};
 use crate::source::SourceEditor;
 use crate::theme::Theme;
-use crate::ui::{ModalAt, ToastKind, dialog, field_well, modal, primary_button, secondary_button};
+use crate::ui::{ModalAt, ToastKind, dialog, field_well, primary_button, secondary_button};
 use gpui::*;
 use thesio_core::paths::is_document;
 use thesio_core::quote::{clean_quote, page_offset, quote_markup};

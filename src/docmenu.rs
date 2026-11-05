@@ -3,8 +3,8 @@
 use crate::app::Workspace;
 use thesio_core::bibliography::{CITATION_STYLES, Mode};
 use crate::theme::{self, Theme};
-use crate::overlay::Overlay;
-use crate::ui::{Icon, ModalAt, anchored_menu, menu_action, menu_panel, modal};
+use crate::overlay::{Overlay, menu_action, menu_panel, modal};
+use crate::ui::{Icon, ModalAt, anchored_menu};
 use gpui::{prelude::FluentBuilder, *};
 
 const MENU_W: f32 = 200.;

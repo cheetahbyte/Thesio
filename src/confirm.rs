@@ -118,6 +118,6 @@ impl Workspace {
                         cx.notify();
                     }))),
             );
-        crate::ui::modal("confirm-mask", ModalAt::Center, false, dialog, cx)
+        crate::overlay::modal("confirm-mask", ModalAt::Center, false, dialog, cx)
     }
 }

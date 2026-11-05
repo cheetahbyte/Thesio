@@ -1,7 +1,5 @@
 //! Preferences: `.thesio/preferences.json` in the vault.
 
-use crate::app::Workspace;
-use gpui::*;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use thesio_core::paths::{STATE_DIR, write_atomic};
@@ -50,36 +48,17 @@ fn apply(p: Preferences) {
     *PREFS.write().unwrap() = Some(p);
 }
 
-/// The current preferences (loaded on first use).
+/// The current preferences.
 pub fn prefs() -> Preferences {
-    if PREFS.read().unwrap().is_none() { load(); }
     PREFS.read().unwrap().clone().unwrap_or_default()
 }
 
-fn save(p: &Preferences) -> anyhow::Result<()> {
+pub fn save(p: &Preferences) -> anyhow::Result<()> {
     if let Some(problem) = &*UNREADABLE.read().unwrap() { anyhow::bail!("preferences.json could not be read and was left alone: {problem}"); }
     std::fs::create_dir_all(crate::store::Store::root_dir().join(STATE_DIR))?;
     write_atomic(&path(), &serde_json::to_vec_pretty(p)?)?;
     apply(p.clone());
     Ok(())
-}
-
-impl Workspace {
-    /// Change preferences and refresh what depends on them.
-    pub(crate) fn set_pref(&mut self, f: impl FnOnce(&mut Preferences), cx: &mut Context<Self>) {
-        let old = prefs();
-        let mut p = old.clone();
-        f(&mut p);
-        if let Err(e) = save(&p) {
-            self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not save settings: {e}"), cx);
-            return;
-        }
-        if p.appearance != old.appearance { crate::appearance::apply_appearance(&p.appearance); }
-        if crate::appearance::sync_dark(cx) || p.hide_library_files != old.hide_library_files {
-            crate::appearance::refresh_all(cx);
-        }
-        cx.notify();
-    }
 }
 
 #[cfg(test)]

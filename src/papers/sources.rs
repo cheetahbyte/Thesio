@@ -7,7 +7,8 @@ use crate::citations::table::{CELL_X, Col, ROW_H, TABLE_X, column, column_spec};
 use crate::library::{Library, Row, row_of_paper};
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme};
-use crate::ui::{Icon, TipExt, TitleBarExt, list_header_text, list_line, page_header, primary_icon_button, ui_text};
+use crate::chrome::page_header;
+use crate::ui::{Icon, TipExt, TitleBarExt, list_header_text, list_line, primary_icon_button, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::paths::{base_name, natural_cmp};
 

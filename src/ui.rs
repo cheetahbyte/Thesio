@@ -1,6 +1,5 @@
 //! Small shared UI pieces: icons, tooltips, popover shells.
 
-use crate::app::Workspace;
 use crate::theme::{self, Theme, craft};
 use crate::time::civil;
 use gpui::{prelude::FluentBuilder, *};
@@ -19,17 +18,20 @@ pub enum ToastKind {
     Error,
 }
 
+/// How long a toast lasts, and when it starts to fade, in seconds.
+const TOAST_LIFE: f32 = 3.;
+pub const TOAST_FADE_AT: f32 = 2.7;
+
 /// Toast: a white rounded card `top` below the window top, centred, with a filled
-/// status circle (green check / red x / accent i). It lasts 3s and fades over
-/// its last .3s; None once it is over.
+/// status circle (green check / red x / accent i). None once it is over.
 pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top: f32, window: &mut Window) -> Option<AnyElement> {
     let e = t0.elapsed().as_secs_f32();
-    if e >= 3. {
+    if e >= TOAST_LIFE {
         return None;
     }
-    let op = if e > 2.7 {
+    let op = if e > TOAST_FADE_AT {
         window.request_animation_frame();
-        (3. - e) / 0.3
+        (TOAST_LIFE - e) / (TOAST_LIFE - TOAST_FADE_AT)
     } else {
         1.
     };
@@ -126,57 +128,18 @@ pub fn dialog(id: &'static str) -> Stateful<Div> {
 #[derive(Clone, Copy, PartialEq)]
 pub enum ModalAt { Center, Top }
 
-/// `panel` over the dimmed window. With `dismiss`, a click beside it closes it.
-pub fn modal(id: &'static str, at: ModalAt, dismiss: bool, panel: impl IntoElement, cx: &Context<Workspace>) -> AnyElement {
+/// `panel` over the dimmed window. `on_press` takes a press beside it.
+pub fn modal_layer(id: &'static str, at: ModalAt, on_press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static, panel: impl IntoElement) -> AnyElement {
     deferred(div().id(id).absolute().inset_0().bg(scrim()).flex().justify_center().occlude()
         .when(at == ModalAt::Center, |d| d.items_center())
         .when(at == ModalAt::Top, |d| d.items_start().pt(px(96.)))
-        .on_mouse_down(MouseButton::Left, cx.listener(move |w, _, window, cx| {
-            cx.stop_propagation();
-            if dismiss { w.close_overlay(window, cx); }
-        }))
+        .on_mouse_down(MouseButton::Left, on_press)
         .child(panel)).with_priority(layer::DIALOG).into_any_element()
 }
 
 /// `menu` floating at `position`, kept inside the window.
 pub fn anchored_menu(corner: Corner, position: Point<Pixels>, menu: impl IntoElement) -> AnyElement {
     deferred(anchored().anchor(corner).position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(layer::MENU).into_any_element()
-}
-
-/// A menu panel `width` wide that closes on a click outside it.
-pub fn menu_panel(id: &'static str, width: f32, cx: &Context<Workspace>) -> Stateful<Div> {
-    popover().id(id).occlude().w(px(width)).py(px(MENU_PAD_Y)).on_mouse_down_out(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))
-}
-
-/// A menu row's click: the menu closes, then `action` runs.
-pub fn menu_action(cx: &Context<Workspace>, action: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    cx.listener(move |w, _, window, cx| {
-        w.close_overlay(window, cx);
-        action(w, window, cx);
-    })
-}
-
-/// The page header, as tall as the document's so the header pills sit in
-/// the same place: a 17pt semibold view title, and the open-sidebar
-/// button when the sidebar is hidden.
-pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx: &mut Context<Workspace>) -> Stateful<Div> {
-    div()
-        .id("page-header")
-        .h(px(crate::app::HEADER_H))
-        .flex_none()
-        .flex()
-        .items_center()
-        // Clear of the traffic lights, like the document header.
-        .pl(if ws.sidebar_open { px(26.) } else { px(theme::TRAFFIC_LIGHTS_W) })
-        .pr(px(header_right_inset()))
-        .title_bar()
-        .when(!ws.sidebar_open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
-        .when(!ws.sidebar_open && !cfg!(target_os = "windows"), |d| {
-            d.child(ws.sidebar_toggle("open-sidebar", Theme::icon(), cx).ml(px(4.)).mr(px(12.)))
-        })
-        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
-        .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
-        .child(div().flex_1())
 }
 
 /// Centred empty state: a large glyph, a title, and a caption.
@@ -244,7 +207,8 @@ pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -
 }
 
 /// A segmented control: a grey groove and a white selected pill.
-pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
+pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Div {
+    let on = Rc::new(on);
     div().flex_none().h(px(BUTTON_H)).flex().gap(px(2.))
         .children(labels.iter().enumerate().map(|(i, label)| {
             let on = on.clone();
@@ -254,7 +218,7 @@ pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on:
                 .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
                 .when(i != selected, |d| d.text_color(Theme::text_caption()))
                 .child(*label)
-                .on_click(cx.listener(move |w, _, _, cx| on(w, i, cx)))
+                .on_click(move |_, window, cx| on(&i, window, cx))
         }))
 }
 
@@ -346,6 +310,10 @@ pub fn close_button(id: &'static str) -> Stateful<Div> {
         .bg(theme::ca(craft::N1000, 0.26))
         .child(icon(Icon::Close, 16., gpui::white()))
 }
+
+/// The height of every header, and of the actions in it.
+pub const HEADER_H: f32 = 48.;
+pub const HEADER_ACTIONS_H: f32 = 32.;
 
 pub const BUTTON_H: f32 = 26.;
 pub const BUTTON_RADIUS: f32 = 6.;
@@ -509,18 +477,18 @@ impl<E: InteractiveElement> TitleBarExt for E {}
 
 pub(crate) const WINDOW_CONTROLS_W: f32 = if cfg!(target_os = "windows") { 163. } else { 0. };
 pub(crate) fn header_right_inset() -> f32 {
-    if cfg!(target_os = "windows") { WINDOW_CONTROLS_W } else { (crate::app::HEADER_H - crate::app::HEADER_ACTIONS_H) / 2. }
+    if cfg!(target_os = "windows") { WINDOW_CONTROLS_W } else { (HEADER_H - HEADER_ACTIONS_H) / 2. }
 }
 
 pub(crate) fn window_controls(window: &Window) -> Option<Div> {
     if !cfg!(target_os = "windows") { return None; }
     let button = |id: &'static str, area: WindowControlArea, label: &'static str| {
-        div().id(id).size(px(crate::app::HEADER_ACTIONS_H)).mx(px(7.)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
+        div().id(id).size(px(HEADER_ACTIONS_H)).mx(px(7.)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
             .occlude().window_control_area(area).active(|s| s.bg(Theme::fill_pressed())).tip(label, None)
     };
     let maximized = window.is_maximized();
     // Native hit-test areas preserve Snap Layouts and the normal WM_CLOSE save guard.
-    Some(div().absolute().top_0().right_0().h(px(crate::app::HEADER_H)).flex().items_center().title_bar()
+    Some(div().absolute().top_0().right_0().h(px(HEADER_H)).flex().items_center().title_bar()
         .child(div().mx(px(12.)).w(px(1.)).h(px(18.)).bg(Theme::line_divider()))
         .child(button("window-minimize", WindowControlArea::Min, "Minimize")
             .child(icon(Icon::Minus, 18., Theme::icon())))
@@ -818,21 +786,3 @@ impl Element for UiPara {
         }
     }
 }
-
-/// A 28pt button in the window's title bar, beside the traffic lights.
-fn bar_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful<Div> {
-    div().id(id).no_drag().flex_none().size(px(28.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer().child(icon(glyph, size, color))
-}
-
-impl Workspace {
-    pub(crate) fn sidebar_toggle(&self, id: &'static str, color: Hsla, cx: &mut Context<Self>) -> Stateful<Div> {
-        bar_button(id, Icon::SidebarToggle, 17., color)
-            .tip_action(if self.sidebar_open { "Hide sidebar" } else { "Show sidebar" }, &crate::actions::ToggleSidebar, cx)
-            .on_click(cx.listener(|w, _, _, cx| w.toggle_sidebar(cx)))
-    }
-
-    pub(crate) fn home_button(&self, id: &'static str, size: f32, cx: &mut Context<Self>) -> Stateful<Div> {
-        bar_button(id, Icon::Home, size, Theme::icon()).on_click(cx.listener(|w, _, window, cx| w.show_view(crate::app::View::Home, window, cx)))
-    }
-}
-

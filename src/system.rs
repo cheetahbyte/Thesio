@@ -47,6 +47,13 @@ pub fn open_with_system(path: &Path, cx: &App) {
     if !scripted() { cx.open_with_system(path); }
 }
 
+/// What the action that shows a file in the system's file manager is called.
+pub const REVEAL_LABEL: &str = if cfg!(target_os = "macos") { "Show in Finder" } else if cfg!(target_os = "windows") { "Show in File Explorer" } else { "Show in File Manager" };
+
+pub fn reveal(path: &Path, cx: &App) {
+    if !scripted() { cx.reveal_path(path); }
+}
+
 pub fn copy(text: String, cx: &App) {
     if scripted() { *CLIPBOARD.lock().unwrap() = Some(text); } else { cx.write_to_clipboard(ClipboardItem::new_string(text)); }
 }
