@@ -40,7 +40,7 @@ main.rs: window
 2. It recomputes highlights and emits `SourceEvent::Changed`.
 3. `Workspace` passes the text to `Preview` and schedules a save 500 ms later.
 4. `Preview` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `preview::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
-5. Pages are hashed, and only changed pages are rendered again. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
+5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
 
 A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document.
 

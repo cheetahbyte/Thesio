@@ -12,10 +12,13 @@ const DEBOUNCE: Duration = Duration::from_millis(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
 /// Pixels per typographic point: sharp on a 2x screen at full page width.
 const RENDER_SCALE: f32 = 2.;
+/// Pages of other files only need to read as pages, so they render small.
+const BLUR_SCALE: f32 = 0.5;
+const BLUR_SIGMA: f32 = 1.5;
 const PAGE_GAP: f32 = 16.;
 const PAD: f32 = 24.;
 
-type CompileResult = anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32)>)>, Vec<Diagnostic>, Duration)>;
+type CompileResult = anyhow::Result<(Option<(Vec<(u128, Option<Arc<RenderImage>>)>, Vec<(f32, f32, bool)>)>, Vec<Diagnostic>, Duration)>;
 
 /// Compiles `text` as `path` within `main`, rendering pages not in `known`.
 fn run(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u128]) -> CompileResult {
@@ -24,10 +27,13 @@ fn run(compiler: &mut Compiler, path: &str, text: String, main: &str, known: &[u
     let compilation = compiler.compile(main)?;
     crate::startup::mark("typst-done");
     let pages = compilation.document.as_ref().map(|document| {
-        let sizes: Vec<(f32, f32)> = document.pages().iter().map(|p| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32)).collect();
-        let rendered = render_changed(document, RENDER_SCALE, known).into_iter().map(|(hash, image)| {
+        let own = compiler.pages_from(document, path);
+        let sizes: Vec<(f32, f32, bool)> = document.pages().iter().zip(&own).map(|(p, own)| (p.frame.width().to_pt() as f32, p.frame.height().to_pt() as f32, *own)).collect();
+        let scales: Vec<f32> = own.iter().map(|own| if *own { RENDER_SCALE } else { BLUR_SCALE }).collect();
+        let rendered = render_changed(document, &scales, known).into_iter().zip(&own).map(|((hash, image), own)| {
             (hash, image.map(|image| {
                 let mut buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba).expect("page size matches its pixels");
+                if !*own { buffer = image::imageops::fast_blur(&buffer, BLUR_SIGMA); }
                 for pixel in buffer.pixels_mut() { pixel.0.swap(0, 2); }
                 Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
             }))
@@ -81,6 +87,8 @@ pub struct Preview {
     took: Option<Duration>,
     /// Waiting for the first compile to reach the screen.
     unsettled: bool,
+    /// The page to scroll to once the pane has a width.
+    reveal: Option<usize>,
     first_compile: Option<Task<Option<CompileResult>>>,
 }
 
@@ -100,6 +108,7 @@ impl Preview {
             main,
             took: None,
             unsettled: false,
+            reveal: None,
             first_compile: None,
         }
     }
@@ -173,7 +182,8 @@ impl Preview {
         // A failed compile keeps the last good pages on screen.
         if let Some((rendered, sizes)) = pages {
             let mut old = std::mem::take(&mut self.pages);
-            for ((hash, image), (width, height)) in rendered.into_iter().zip(sizes) {
+            if old.is_empty() { self.reveal = Some(file_start(&sizes)); }
+            for ((hash, image), (width, height, _)) in rendered.into_iter().zip(sizes) {
                 let image = image.or_else(|| old.iter().position(|p| p.hash == hash).map(|i| old.remove(i).image));
                 if let Some(image) = image { self.pages.push(Page { hash, image, width, height }); }
             }
@@ -181,6 +191,17 @@ impl Preview {
         }
         cx.notify();
     }
+}
+
+/// The first page of the longest run of the open file's pages. A contents
+/// page lists every chapter, so the first match alone would often land there.
+fn file_start(pages: &[(f32, f32, bool)]) -> usize {
+    let (mut best, mut best_length, mut start) = (0, 0, 0);
+    for (i, (.., own)) in pages.iter().enumerate() {
+        if !*own { start = i + 1; }
+        else if i + 1 - start > best_length { (best, best_length) = (start, i + 1 - start); }
+    }
+    best
 }
 
 fn format_took(took: Duration) -> String {
@@ -193,6 +214,7 @@ impl Render for Preview {
         self.await_first_compile(cx);
         if std::mem::take(&mut self.unsettled) { window.on_next_frame(|_, _| crate::startup::settled()); }
         let measured = *self.width.lock().unwrap();
+        if measured > 0. && let Some(page) = self.reveal.take() && page > 0 { self.scroll.scroll_to_top_of_item(page); }
         let pages = self.pages.iter().map(|page| {
             let zoom = if measured > 0. { ((measured - 2. * PAD) / page.width).max(0.2) } else { 1. };
             img(page.image.clone()).flex_none().w(px(page.width * zoom)).h(px(page.height * zoom)).shadow_sm()
@@ -218,7 +240,9 @@ impl Render for Preview {
                 let mut stored = width.lock().unwrap();
                 if *stored != f32::from(bounds.size.width) {
                     *stored = bounds.size.width.into();
-                    entity.update(cx, |_, cx| cx.notify());
+                    // A notify during drawing is lost, and the pages would wait for the next event.
+                    let entity = entity.clone();
+                    cx.defer(move |cx| entity.update(cx, |_, cx| cx.notify()));
                 }
             }, |_, _, _, _| {}).absolute().size_full())
     }

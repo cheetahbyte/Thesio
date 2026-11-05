@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preview an included file in place: the whole document still compiles, but pages from other files blur and the preview opens at the file's first page.
 - Launch about twice as fast: the first document compiles while the app starts, and the first frame shows it finished.
 - Resolve Typst paths that start with `/` from the document's own project folder, so projects inside a vault compile as they do with `typst compile`.
 - Show how long the last compile took in the corner of the preview.

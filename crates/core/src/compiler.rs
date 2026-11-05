@@ -11,7 +11,8 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration};
-use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
+use typst::layout::{Frame, FrameItem};
+use typst::syntax::{FileId, RootedPath, Source, Span, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
@@ -87,6 +88,34 @@ impl Compiler {
         comemo::evict(CACHE_AGE);
         Ok(Compilation { document, diagnostics })
     }
+
+    /// For each page, whether it shows content from `path` or a file `path`
+    /// includes. Every page counts for the main file, and for a file that puts
+    /// nothing on the page, such as one holding only definitions.
+    pub fn pages_from(&self, document: &PagedDocument, path: &str) -> Vec<bool> {
+        let every = vec![true; document.pages().len()];
+        if file_id(path).ok() == self.world.main { return every; }
+        let mut files = rustc_hash::FxHashSet::default();
+        let mut stack = vec![path.to_string()];
+        while let Some(file) = stack.pop() {
+            let Ok(id) = file_id(&file).map(|id| self.world.resolved(id)) else { continue };
+            if !files.insert(id) { continue; }
+            if let Ok(source) = self.world.source(id) { stack.extend(crate::references::included_files(source.text(), &file)); }
+        }
+        let own: Vec<bool> = document.pages().iter().map(|page| shows(&page.frame, &files)).collect();
+        if own.contains(&true) { own } else { every }
+    }
+}
+
+/// Whether anything drawn in `frame` came from `files`.
+fn shows(frame: &Frame, files: &rustc_hash::FxHashSet<FileId>) -> bool {
+    let from = |span: Span| span.id().is_some_and(|id| files.contains(&id));
+    frame.items().any(|(_, item)| match item {
+        FrameItem::Group(group) => shows(&group.frame, files),
+        FrameItem::Text(text) => text.glyphs.iter().any(|glyph| from(glyph.span.0)),
+        FrameItem::Shape(_, span) | FrameItem::Image(_, _, span) => from(*span),
+        FrameItem::Link(..) | FrameItem::Tag(_) => false,
+    })
 }
 
 /// Rasterizes a page; `scale` is pixels per typographic point.
@@ -227,11 +256,12 @@ pub fn vault_path(root: &Path, path: &Path) -> Option<String> {
     Some(vpath.get_without_slash().to_string())
 }
 
-/// One page's content hash, and its image unless `known` already has that hash.
-pub fn render_changed(document: &PagedDocument, scale: f32, known: &[u128]) -> Vec<(u128, Option<PageImage>)> {
+/// Each page's hash of content and scale, and its image at `scales[page]`
+/// unless `known` already has that hash.
+pub fn render_changed(document: &PagedDocument, scales: &[f32], known: &[u128]) -> Vec<(u128, Option<PageImage>)> {
     (0..document.pages().len()).map(|i| {
-        let hash = typst::utils::hash128(&document.pages()[i]);
-        (hash, (!known.contains(&hash)).then(|| render_page(document, i, scale)).flatten())
+        let hash = typst::utils::hash128(&(&document.pages()[i], scales[i].to_bits()));
+        (hash, (!known.contains(&hash)).then(|| render_page(document, i, scales[i])).flatten())
     }).collect()
 }
 
