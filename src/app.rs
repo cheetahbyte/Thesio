@@ -446,14 +446,25 @@ impl Workspace {
                     if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
                     this.schedule_save(window, cx);
                 }
+                SourceEvent::Caret => {
+                    let caret = editor.read(cx).buffer.caret();
+                    if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.follow(caret, cx)); }
+                }
                 SourceEvent::Citing => this.offer_sources(editor, cx),
                 SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
             }),
         ];
         if let Some(preview) = &preview {
             self.editor_subs.push(cx.subscribe_in(preview, window, |this, _, ev: &PreviewEvent, window, cx| {
-                let PreviewEvent::Jump(offset) = ev;
-                if let Some(editor) = &this.editor { editor.update(cx, |e, cx| e.go_to(*offset, window, cx)); }
+                let offset = match ev {
+                    PreviewEvent::Jump(offset) => *offset,
+                    PreviewEvent::Source(path, offset) => {
+                        if this.current.as_ref() != Some(path) { this.open(path, window, cx); }
+                        if this.current.as_ref() != Some(path) { return; }
+                        *offset
+                    }
+                };
+                if let Some(editor) = &this.editor { editor.update(cx, |e, cx| e.go_to(offset, window, cx)); }
             }));
         }
         // Opening a document puts the caret in it, unless the user is typing a search.

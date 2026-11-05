@@ -26,7 +26,7 @@ main.rs: window
 | Module | Responsibility |
 |---|---|
 | `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. See [FORMAT.md](FORMAT.md). |
-| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. |
+| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. It keeps the last good document, and `typst-ide` maps between that document and the source for the preview. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
 | `library.rs` | The citation library, BibLaTeX import and export, and the generated bibliography block. |

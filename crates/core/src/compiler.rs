@@ -5,22 +5,27 @@
 
 use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration};
-use typst::layout::{Frame, FrameItem};
+use typst::introspection::PagedPosition;
+use typst::layout::{Abs, Frame, FrameItem, Point};
 use typst::syntax::{FileId, RootedPath, Source, Span, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
+use typst_ide::{IdeWorld, Jump};
 use typst_kit::fonts::FontStore;
 pub use typst_layout::PagedDocument;
 
 /// Memoized results older than this many compilations are dropped.
 const CACHE_AGE: usize = 10;
+/// How far back to look for text when the caret is on none, in bytes.
+const NEAREST_TEXT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Diagnostic {
@@ -50,6 +55,8 @@ pub struct PageImage {
 
 pub struct Compiler {
     world: VaultWorld,
+    /// The last document that compiled, for moving between it and the source.
+    last: Option<PagedDocument>,
 }
 
 impl Compiler {
@@ -63,7 +70,7 @@ impl Compiler {
             fonts,
             buffers: FxHashMap::default(),
             files: Mutex::default(),
-        } }
+        }, last: None }
     }
 
     /// Shadows a vault file with unsaved text.
@@ -84,9 +91,36 @@ impl Compiler {
             Ok(document) => (Some(document), Default::default()),
             Err(errors) => (None, errors),
         };
+        if document.is_some() { self.last = document.clone(); }
         let diagnostics = errors.iter().chain(&result.warnings).map(|d| self.world.diagnostic(d)).collect();
         comemo::evict(CACHE_AGE);
         Ok(Compilation { document, diagnostics })
+    }
+
+    /// Where byte `offset` of `path` appears: its page and height in points.
+    pub fn position_of(&self, path: &str, offset: usize) -> Option<(usize, f32)> {
+        let source = self.world.source(file_id(path).ok()?).ok()?;
+        let document = self.last.as_ref()?;
+        // Spaces and empty lines draw nothing: use the nearest text before them.
+        let start = offset.saturating_sub(NEAREST_TEXT);
+        let position = (start..=offset.min(source.text().len())).rev().filter(|at| source.text().is_char_boundary(*at))
+            .find_map(|at| typst_ide::jump_from_cursor(document, &source, at).into_iter().next())?;
+        Some((position.page.get() - 1, position.point.y.to_pt() as f32))
+    }
+
+    /// The source at a point on a page, in points: its vault path and byte offset.
+    pub fn source_at(&self, page: usize, x: f32, y: f32) -> Option<(String, usize)> {
+        let position = PagedPosition {
+            page: NonZeroUsize::new(page + 1)?,
+            point: Point::new(Abs::pt(x as f64), Abs::pt(y as f64)),
+        };
+        match typst_ide::jump_from_click(&self.world, self.last.as_ref()?, &position)? {
+            Jump::File(id, offset) => {
+                let id = self.world.resolved(id);
+                matches!(id.get().root(), VirtualRoot::Project).then(|| (id.get().vpath().get_without_slash().to_string(), offset))
+            }
+            _ => None,
+        }
     }
 
     /// For each page, whether it shows content from `path` or a file `path`
@@ -206,6 +240,10 @@ impl VaultWorld {
     }
 }
 
+impl IdeWorld for VaultWorld {
+    fn upcast(&self) -> &dyn World { self }
+}
+
 impl World for VaultWorld {
     fn library(&self) -> &LazyHash<Library> { &self.library }
     fn book(&self) -> &LazyHash<FontBook> { self.fonts.book() }
@@ -300,6 +338,26 @@ mod tests {
             assert_eq!(errors(&compilation), Vec::<String>::new(), "{main}");
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_preview_and_the_source_point_at_each_other() {
+        let page_of_text = "Word ".repeat(600);
+        let root = vault("jump", &[
+            ("main.typ", "#include \"chapters/one.typ\"\n#pagebreak()\n#include \"chapters/two.typ\"\n"),
+            ("chapters/one.typ", "First chapter.\n"),
+            ("chapters/two.typ", &format!("Second chapter.\n\n\n{page_of_text}\n")),
+        ]);
+        let mut compiler = Compiler::new(root);
+        assert!(errors(&compiler.compile("main.typ").unwrap()).is_empty());
+        let (page, y) = compiler.position_of("chapters/two.typ", 3).unwrap();
+        assert_eq!(page, 1);
+        let (path, offset) = compiler.source_at(page, 75., y - 3.).unwrap();
+        assert_eq!(path, "chapters/two.typ");
+        assert!(offset < "Second chapter.".len(), "{offset}");
+        // The blank lines draw nothing, so the text before them stands in.
+        assert_eq!(compiler.position_of("chapters/two.typ", 17).map(|(page, _)| page), Some(1));
+        assert_eq!(compiler.source_at(page, 1., 1.), None);
     }
 
     #[test]

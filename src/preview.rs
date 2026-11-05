@@ -10,6 +10,11 @@ use thesio_core::compiler::{Compiler, Diagnostic, render_changed};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
+const FOLLOW_DELAY: Duration = Duration::from_millis(120);
+/// A followed spot lands this far down the view, with text above it to read.
+const FOLLOW_AT: f32 = 1. / 3.;
+/// Closer than this to an edge counts as out of view.
+const FOLLOW_MARGIN: f32 = 48.;
 /// Pixels per typographic point: sharp on a 2x screen at full page width.
 const RENDER_SCALE: f32 = 2.;
 /// Pages of other files only need to read as pages, so they render small.
@@ -69,6 +74,8 @@ struct Page {
 pub enum PreviewEvent {
     /// A diagnostic was clicked: jump to this byte offset of the open file.
     Jump(usize),
+    /// A page was clicked: go to this file and byte offset.
+    Source(String, usize),
 }
 
 pub struct Preview {
@@ -89,6 +96,12 @@ pub struct Preview {
     unsettled: bool,
     /// The page to scroll to once the pane has a width.
     reveal: Option<usize>,
+    /// The editor's caret, which the preview stays near.
+    follow: Option<usize>,
+    /// Bumped by each caret move, so that only the last one scrolls.
+    follow_generation: u64,
+    /// Where to scroll once the pane is laid out: a page and a height in points.
+    follow_target: Option<(usize, f32)>,
     first_compile: Option<Task<Option<CompileResult>>>,
 }
 
@@ -109,6 +122,9 @@ impl Preview {
             took: None,
             unsettled: false,
             reveal: None,
+            follow: None,
+            follow_generation: 0,
+            follow_target: None,
             first_compile: None,
         }
     }
@@ -117,6 +133,62 @@ impl Preview {
     pub fn set_path(&mut self, path: String, main: String) {
         self.open_path = path;
         self.main = main;
+    }
+
+    /// Keeps the caret's place in view, shortly after it stops moving.
+    pub fn follow(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.follow = Some(offset);
+        self.locate(FOLLOW_DELAY, cx);
+    }
+
+    fn locate(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        let Some(offset) = self.follow else { return };
+        self.follow_generation += 1;
+        let generation = self.follow_generation;
+        let (compiler, path) = (self.compiler.clone(), self.open_path.clone());
+        let executor = cx.background_executor().clone();
+        let work = cx.background_spawn(async move {
+            executor.timer(delay).await;
+            compiler.lock().unwrap().position_of(&path, offset)
+        });
+        cx.spawn(async move |this, cx| {
+            let target = work.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.follow_generation != generation || target.is_none() { return; }
+                this.follow_target = target;
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    /// Scrolls to a place in the document unless it is already in view.
+    fn scroll_to_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let measured = *self.width.lock().unwrap();
+        let view = f32::from(self.scroll.bounds().size.height);
+        let Some((page, y)) = self.follow_target else { return };
+        if self.pages.is_empty() { return; }
+        if measured <= 0. || view <= 0. {
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+            return;
+        }
+        self.follow_target = None;
+        let zoom = |page: &Page| ((measured - 2. * PAD) / page.width).max(0.2);
+        let above: f32 = self.pages.iter().take(page).map(|page| page.height * zoom(page) + PAGE_GAP).sum();
+        let target = PAD + above + y * self.pages.get(page).map_or(1., zoom);
+        let top = -f32::from(self.scroll.offset().y);
+        if target < top + FOLLOW_MARGIN || target > top + view - FOLLOW_MARGIN {
+            self.scroll.set_offset(point(px(0.), px(-(target - view * FOLLOW_AT).max(0.))));
+        }
+    }
+
+    /// Goes to the source of what was clicked on `page`.
+    fn page_clicked(&mut self, page: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let (Some(bounds), Some(width)) = (self.scroll.bounds_for_item(page), self.pages.get(page).map(|page| page.width)) else { return };
+        let origin = bounds.origin + self.scroll.offset();
+        let zoom = f32::from(bounds.size.width) / width;
+        let (x, y) = (f32::from(position.x - origin.x) / zoom, f32::from(position.y - origin.y) / zoom);
+        let Some((path, offset)) = self.compiler.lock().unwrap().source_at(page, x, y) else { return };
+        cx.emit(PreviewEvent::Source(path, offset));
     }
 
     /// Compiles `text` as the open file, superseding any pending compile.
@@ -182,12 +254,14 @@ impl Preview {
         // A failed compile keeps the last good pages on screen.
         if let Some((rendered, sizes)) = pages {
             let mut old = std::mem::take(&mut self.pages);
-            if old.is_empty() { self.reveal = Some(file_start(&sizes)); }
+            if old.is_empty() && self.follow.is_none() { self.reveal = Some(file_start(&sizes)); }
             for ((hash, image), (width, height, _)) in rendered.into_iter().zip(sizes) {
                 let image = image.or_else(|| old.iter().position(|p| p.hash == hash).map(|i| old.remove(i).image));
                 if let Some(image) = image { self.pages.push(Page { hash, image, width, height }); }
             }
             for page in old { cx.drop_image(page.image, None); }
+            // Pages moved, and the caret's place may be on a page that just arrived.
+            self.locate(Duration::ZERO, cx);
         }
         cx.notify();
     }
@@ -214,10 +288,13 @@ impl Render for Preview {
         self.await_first_compile(cx);
         if std::mem::take(&mut self.unsettled) { window.on_next_frame(|_, _| crate::startup::settled()); }
         let measured = *self.width.lock().unwrap();
+        self.scroll_to_target(window, cx);
         if measured > 0. && let Some(page) = self.reveal.take() && page > 0 { self.scroll.scroll_to_top_of_item(page); }
-        let pages = self.pages.iter().map(|page| {
+        let pages = self.pages.iter().enumerate().map(|(i, page)| {
             let zoom = if measured > 0. { ((measured - 2. * PAD) / page.width).max(0.2) } else { 1. };
-            img(page.image.clone()).flex_none().w(px(page.width * zoom)).h(px(page.height * zoom)).shadow_sm()
+            div().id(("preview-page", i)).flex_none().w(px(page.width * zoom)).h(px(page.height * zoom)).shadow_sm()
+                .child(img(page.image.clone()).size_full())
+                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| this.page_clicked(i, ev.position(), cx)))
         }).collect::<Vec<_>>();
         let width = self.width.clone();
         let entity = cx.entity();

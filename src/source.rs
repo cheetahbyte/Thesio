@@ -80,6 +80,8 @@ const COMPLETION_WAIT: u8 = 3;
 
 pub enum SourceEvent {
     Changed,
+    /// The caret moved, by typing or otherwise.
+    Caret,
     /// A citation was started: the editor wants fresh `sources`.
     Citing,
     /// A citation was completed.
@@ -278,6 +280,7 @@ impl SourceEditor {
         cx.notify();
         self.refresh_completion(false, cx);
         cx.emit(SourceEvent::Changed);
+        cx.emit(SourceEvent::Caret);
     }
 
     /// Follows the caret. Only typing opens the popup, so moving through
@@ -388,6 +391,7 @@ impl SourceEditor {
         if !self.painted.borrow().contains_key(&line) { self.list.scroll_to_reveal_item(line); }
         self.reveal_tries = REVEAL_TRIES;
         self.reveal_margin = 0.;
+        cx.emit(SourceEvent::Caret);
         cx.notify();
     }
 

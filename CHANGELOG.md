@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the preview near the caret: it scrolls when the caret's place is out of view.
+- Click text in the preview to go to its source, opening the chapter it came from.
 - Stop looking up papers during a BibLaTeX import. Find Missing Papers in the Library's "…" menu does that on request.
 - Stop offering a second bibliography in a chapter whose main document has one.
 - Rename or delete a tag across the Library by right-clicking it in the filter bar. Renaming to a tag in use merges the two.
