@@ -634,6 +634,9 @@ impl Workspace {
             .items_center()
             .when(selected || checked, |d| d.bg(Theme::sidebar_selected()))
             .pl(px(6. + 16. * depth as f32))
+            .relative()
+            // One guide per ancestor, under its chevron; the extra point bridges ROW_GAP.
+            .children((0..if batch.is_none() { depth } else { 0 }).map(|level| div().absolute().top(px(-ROW_GAP)).bottom_0().left(px(14. + 16. * level as f32)).w(px(1.)).bg(Theme::sidebar_guide())))
             .when(key == "doc" && !renaming && batch.is_none(), |d| {
                 // Dropping on a file means the folder it sits in.
                 let target = if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() };

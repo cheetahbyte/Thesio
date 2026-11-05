@@ -295,6 +295,8 @@ impl Theme {
     /// they don't pull the eye from the labels and the page. Inferred: the
     /// SF Symbols sit near secondary label; this is between N700 and N600.
     pub fn icon() -> Hsla { ca(craft::N900, 0.6) }
+    /// Indent guides in the file tree.
+    pub fn sidebar_guide() -> Hsla { ca(craft::N1000, 0.1) }
     /// Line above the sidebar footer (1pt, black 3.5%, #E8E8E9 on the sidebar).
     pub fn sidebar_divider() -> Hsla { ca(craft::N1000, 0.035) }
     /// Line under the page title.
