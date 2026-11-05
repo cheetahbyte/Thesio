@@ -190,7 +190,8 @@ impl Citations {
 
 impl Workspace {
     pub(crate) fn reload_library(&mut self) {
-        match Library::load(&self.store.root()) {
+        let result = Library::load(self.store.borrow().root());
+        match result {
             Ok(library) => {
                 self.citations.library = Some(library);
                 self.citations.error = None;
@@ -386,7 +387,7 @@ impl Workspace {
     /// Every key cited in a document and the files it includes.
     fn cited_in(&self, id: &str) -> BTreeSet<String> {
         let mut keys = BTreeSet::new();
-        for (_, text) in Project::open(id, &mut |file| self.store.load(file).ok()).files() {
+        for (_, text) in Project::open(id, &mut |file| self.store.borrow().load(file).ok()).files() {
             keys.extend(cited_keys(text));
         }
         keys
@@ -394,7 +395,7 @@ impl Workspace {
 
     /// Every document, for asking which includes which.
     fn documents(&self) -> Documents {
-        Documents::load(self.entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |file| self.store.load(file).ok())
+        Documents::load(self.entries.iter().filter(|e| e.typst).map(|e| e.id.as_str()), &mut |file| self.store.borrow().load(file).ok())
     }
 
     /// Rewrites each generated block to hold what its document cites.
@@ -404,14 +405,15 @@ impl Workspace {
         let mut updates = vec![];
         for id in documents {
             let keys: BTreeSet<String> = self.cited_in(&id).into_iter().filter(|k| library.contains(k)).collect();
-            let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.store.load(&id)) else { continue };
+            let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.store.borrow().load(&id)) else { continue };
             if let Some(updated) = bibliography::sync_block(&text, &yaml) {
                 updates.push((id, updated));
             }
         }
         let changed = !updates.is_empty();
         for (id, text) in updates {
-            if let Err(e) = self.store.save(&id, &text) {
+            let result = self.store.borrow_mut().save(&id, &text);
+            if let Err(e) = result {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the bibliography in {id}: {e}"), cx);
                 continue;
             }
@@ -465,7 +467,7 @@ impl Workspace {
     fn text_of_saved(&self, id: &str, cx: &App) -> Option<String> {
         match (&self.current, &self.editor) {
             (Some(current), Some(editor)) if current == id => Some(editor.read(cx).buffer.text().to_string()),
-            _ => self.store.load(id).ok(),
+            _ => self.store.borrow().load(id).ok(),
         }
     }
 
@@ -478,7 +480,8 @@ impl Workspace {
             editor.update(cx, |e, cx| e.reload(&updated, cx));
             self.flush(cx);
         } else {
-            if let Err(e) = self.store.save(&doc, &updated) {
+            let result = self.store.borrow_mut().save(&doc, &updated);
+            if let Err(e) = result {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
             }
             if let Some(entry) = self.entries.iter_mut().find(|e| e.id == doc) { entry.body = updated; }
@@ -507,9 +510,11 @@ impl Workspace {
             let Some(editor) = self.editor.clone() else { return };
             let text = bibliography::embed(editor.read(cx).buffer.text(), "");
             editor.update(cx, |e, cx| e.sync_text(&text, cx));
-        } else if let Ok(text) = self.store.load(&top) {
+        } else {
+            let Ok(text) = self.store.borrow().load(&top) else { return };
             let text = bibliography::embed(&text, "");
-            if let Err(e) = self.store.save(&top, &text) {
+            let result = self.store.borrow_mut().save(&top, &text);
+            if let Err(e) = result {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not add a bibliography to {top}: {e}"), cx);
             }
             if let Some(entry) = self.entries.iter_mut().find(|e| e.id == top) { entry.body = text; }
@@ -759,10 +764,11 @@ impl Workspace {
             let open = self.editor.clone().filter(|_| self.current.as_deref() == Some(id.as_str()));
             let text = match &open {
                 Some(editor) => editor.read(cx).buffer.text().to_string(),
-                None => self.store.load(&id).unwrap_or_default(),
+                None => self.store.borrow().load(&id).unwrap_or_default(),
             };
             let Some(updated) = rename_citation(&text, old, new) else { continue };
-            if let Err(e) = self.store.save(&id, &updated) {
+            let result = self.store.borrow_mut().save(&id, &updated);
+            if let Err(e) = result {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not update the citation in {id}: {e}"), cx);
                 continue;
             }
@@ -821,7 +827,7 @@ impl Workspace {
     }
 
     fn refresh_after_library_change(&mut self, cx: &mut Context<Self>) {
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
         self.sync_bibliographies(cx);
     }
@@ -974,7 +980,7 @@ impl Workspace {
 
     fn export_bib(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self.citations.library.as_ref().map(Library::export_biblatex) else { return };
-        let root = self.store.root();
+        let root = self.store.borrow().root().to_path_buf();
         let picked = crate::devtools::take_pick().and_then(|p| p.into_iter().next());
         let prompt = picked.is_none().then(|| cx.prompt_for_new_path(&root, Some("library.bib")));
         cx.spawn(async move |this, cx| {
@@ -1171,7 +1177,7 @@ impl Workspace {
 
     /// Scripted runs must not start other apps.
     pub(crate) fn open_paper_externally(&self, id: &str, cx: &App) {
-        if std::env::var_os("THESIO_SCRIPT").is_none() { cx.open_with_system(&self.store.root().join(id)); }
+        if std::env::var_os("THESIO_SCRIPT").is_none() { cx.open_with_system(&self.store.borrow().root().join(id)); }
     }
 
     /// The name a paper goes by: its source's title, or its file name.
@@ -1214,9 +1220,10 @@ impl Workspace {
         if !result.is_ok_and(|head| head == *b"%PDF-") {
             return self.show_toast_kind(ToastKind::Error, "That file is not a PDF", cx);
         }
-        match self.store.attach(path, id) {
+        let result = self.store.borrow_mut().attach(path, id);
+        match result {
             Ok(()) => {
-                self.entries = self.store.list();
+                self.entries = self.store.borrow_mut().list();
                 self.sort();
                 self.show_toast("Added the paper", cx);
             }
@@ -1243,14 +1250,15 @@ impl Workspace {
     fn follow_key(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
         if from == to || !self.entries.iter().any(|e| e.id == from) { return; }
         let name = base_name(to).to_string();
-        match self.store.rename(from, &name) {
+        let result = self.store.borrow_mut().rename(from, &name);
+        match result {
             Ok(moved) => {
                 self.path_changed(from, &moved.id, &moved.rewritten, cx);
                 self.show_warnings(&moved.warnings, cx);
             }
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename {from}: {e}"), cx),
         }
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
     }
 
@@ -1261,7 +1269,7 @@ impl Workspace {
         let email = Some(crate::settings::prefs().unpaywall_email).filter(|email| email.split_once('@').is_some_and(|(name, host)| !name.is_empty() && host.contains('.')));
         let jobs: Vec<_> = keys.iter().filter(|key| !self.has_paper(key)).filter_map(|key| {
             let ids = library.paper_ids(key);
-            let dest = self.store.path(&paper_file(key)).ok()?;
+            let dest = self.store.borrow().path(&paper_file(key)).ok()?;
             (ids.doi.is_some() || ids.arxiv.is_some()).then_some((ids, dest))
         }).collect();
         if jobs.is_empty() {
@@ -1282,7 +1290,7 @@ impl Workspace {
                 let _ = this.update(cx, |w, cx| {
                     w.citations.fetching -= 1;
                     if downloaded {
-                        w.entries = w.store.list();
+                        w.entries = w.store.borrow_mut().list();
                         w.sort();
                     }
                     cx.notify();

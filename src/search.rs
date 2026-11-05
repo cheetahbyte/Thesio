@@ -269,7 +269,7 @@ impl Workspace {
     fn index_papers(&mut self, cx: &mut Context<Self>) {
         if self.indexing_papers { return; }
         let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| e.id.ends_with(".pdf"))
-            .filter_map(|e| Some((e.id.clone(), self.store.path(&e.id).ok()?)))
+            .filter_map(|e| Some((e.id.clone(), self.store.borrow().path(&e.id).ok()?)))
             .filter(|(id, path)| stamp(path).is_some_and(|now| self.paper_index.get(id).is_none_or(|known| known.stamp != now))).collect();
         if papers.is_empty() { return; }
         self.indexing_papers = true;

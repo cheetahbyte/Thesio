@@ -34,7 +34,7 @@ impl Workspace {
             self.flush(cx);
             return self.editor.as_ref().map(|ed| ed.read(cx).buffer.text().to_string());
         }
-        self.store.load(id).ok()
+        self.store.borrow().load(id).ok()
     }
 
     /// Duplicates a document beside the original and opens the copy.
@@ -42,7 +42,7 @@ impl Workspace {
         self.close_doc_menu(cx);
         self.row_menu = None;
         if let Some(new) = self.copy_doc(id, cx) {
-            self.entries = self.store.list();
+            self.entries = self.store.borrow_mut().list();
             self.sort();
             self.open(&new, window, cx);
         }
@@ -53,7 +53,8 @@ impl Workspace {
         let text = self.text_of(id, cx)?;
         let entry = self.entries.iter().find(|e| e.id == id)?;
         let (title, parent) = (format!("{} copy", entry.title), entry.parent.clone());
-        match self.store.create_from(parent.as_deref(), &title, &text) {
+        let result = self.store.borrow_mut().create_from(parent.as_deref(), &title, &text);
+        match result {
             Ok(new) => Some(new),
             Err(e) => {
                 self.status = crate::app::SaveStatus::Failed(format!("Could not duplicate document: {}", crate::settings::diagnostic(&e.to_string())));

@@ -28,14 +28,14 @@ pub struct History {
 impl Workspace {
     /// Keeps the open text as a version; while writing, at most every few minutes.
     pub(crate) fn keep_version(&mut self, id: &str, text: &str, now: bool, cx: &mut Context<Self>) {
-        let kept = self.store.versions(id).and_then(|versions| if now { versions.keep(text) } else { versions.keep_paced(text) });
+        let kept = self.store.borrow().versions(id).and_then(|versions| if now { versions.keep(text) } else { versions.keep_paced(text) });
         if let Err(e) = kept { self.show_toast_kind(ToastKind::Error, &format!("Could not keep a version of {id}: {e}"), cx); }
     }
 
     pub(crate) fn open_history(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
         if !self.flush(cx) { return; }
-        let versions = self.store.versions(&id).map_or(vec![], |versions| versions.list());
+        let versions = self.store.borrow().versions(&id).map_or(vec![], |versions| versions.list());
         self.history = Some(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
         self.show_version(0, cx);
     }
@@ -59,7 +59,7 @@ impl Workspace {
     fn version_text(&self, time: u64) -> anyhow::Result<String> {
         match (self.history.as_ref().is_some_and(|history| history.library), &self.citations.library, &self.current) {
             (true, Some(library), _) => library.versions().read(time),
-            (false, _, Some(id)) => self.store.versions(id)?.read(time),
+            (false, _, Some(id)) => self.store.borrow().versions(id)?.read(time),
             _ => anyhow::bail!("Nothing is open"),
         }
     }

@@ -54,7 +54,7 @@ impl Workspace {
     pub(crate) fn load_paper_notes(&mut self, id: &str, cx: &mut Context<Self>) {
         self.flush(cx);
         let note = note_file(id);
-        let text = self.store.load(&note).unwrap_or_else(|_| format!("= {}\n\n", self.paper_title(id)));
+        let text = self.store.borrow().load(&note).unwrap_or_else(|_| format!("= {}\n\n", self.paper_title(id)));
         let editor = cx.new(|cx| {
             let mut editor = SourceEditor::new(text, true, cx);
             // Inside the panel: the viewer would hide what crosses onto it.
@@ -74,11 +74,11 @@ impl Workspace {
     fn save_note(&mut self, id: &str, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
         let text = editor.read(cx).buffer.text().to_string();
         let new = !self.entries.iter().any(|e| e.id == id);
-        if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.save(id, &text)) {
+        if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.borrow_mut().save(id, &text)) {
             return self.show_toast_kind(ToastKind::Error, &format!("Could not save the notes: {e}"), cx);
         }
         if new {
-            self.entries = self.store.list();
+            self.entries = self.store.borrow_mut().list();
             self.sort();
         }
         // The same file may be open as a document too.
@@ -95,7 +95,7 @@ impl Workspace {
     }
 
     fn ensure_notes_dir(&self) -> anyhow::Result<()> {
-        Ok(std::fs::create_dir_all(self.store.root().join(NOTES_DIR))?)
+        Ok(std::fs::create_dir_all(self.store.borrow().root().join(NOTES_DIR))?)
     }
 
     /// Opens the notes of `key` as a document, starting them if there are none.
@@ -103,10 +103,10 @@ impl Workspace {
         let id = note_file(&paper_file(key));
         if !self.entries.iter().any(|e| e.id == id) {
             let title = self.paper_title(&paper_file(key));
-            if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.save(&id, &format!("= {title}\n\n"))) {
+            if let Err(e) = self.ensure_notes_dir().and_then(|()| self.store.borrow_mut().save(&id, &format!("= {title}\n\n"))) {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not create the notes: {e}"), cx);
             }
-            self.entries = self.store.list();
+            self.entries = self.store.borrow_mut().list();
             self.sort();
         }
         self.open(&id, window, cx);
@@ -211,10 +211,11 @@ impl Workspace {
         let Some((target, editor)) = self.quote_target() else { return };
         self.paper_panel.quote = None;
         if let (Some(offset), Some(id)) = (offset, self.paper.clone()) {
-            if let Err(e) = self.store.set_page_offset(&id, offset) {
+            let result = self.store.borrow_mut().set_page_offset(&id, offset);
+            if let Err(e) = result {
                 self.show_toast_kind(ToastKind::Error, &format!("Could not save the page numbering: {e}"), cx);
             }
-            self.entries = self.store.list();
+            self.entries = self.store.borrow_mut().list();
             self.sort();
         }
         editor.update(cx, |e, cx| e.insert_quote(&markup, block, cx));
@@ -332,7 +333,7 @@ impl Workspace {
                     })))
                 .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
                     .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx)))));
-        let (pdf, covered, path) = (self.pdf.clone(), self.paper_covered(window), self.store.path(&id).ok());
+        let (pdf, covered, path) = (self.pdf.clone(), self.paper_covered(window), self.store.borrow().path(&id).ok());
         let failed = self.paper_failed.clone();
         let unreadable = failed.get();
         let pane = canvas(|_, _, _| (), move |bounds, _, window, _| {

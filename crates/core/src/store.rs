@@ -456,8 +456,11 @@ impl Store {
         load_json(&self.state_file(SETTINGS_FILE), "settings", &mut warnings)
     }
 
-    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
-        save_json(&self.state_file(SETTINGS_FILE), settings)
+    /// Changes the settings as they are on disk: other windows and copies write them too.
+    pub fn update_settings(&self, change: impl FnOnce(&mut Settings)) -> Result<()> {
+        let mut settings = self.settings();
+        change(&mut settings);
+        save_json(&self.state_file(SETTINGS_FILE), &settings)
     }
 
     /// Records that a document was opened.

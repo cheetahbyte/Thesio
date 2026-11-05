@@ -342,9 +342,8 @@ impl Workspace {
         }
         let end = |ws: &mut Workspace, cx: &mut Context<Workspace>| {
             ws.sidebar_drag = false;
-            let mut s = ws.store.settings();
-            s.sidebar_width = Some(ws.sidebar_width);
-            let _ = ws.store.save_settings(&s);
+            let width = ws.sidebar_width;
+            let _ = ws.store.borrow().update_settings(|s| s.sidebar_width = Some(width));
             cx.notify();
         };
         Some(
@@ -474,7 +473,7 @@ impl Workspace {
         for id in ids.iter().filter(|id| thesio_core::paths::is_document(id)) {
             self.copy_doc(id, cx);
         }
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
         self.batch = None;
         self.row_menu = None;
@@ -704,7 +703,7 @@ impl Workspace {
             cx.notify();
         });
         let mut menu = popover().id("row-menu").occlude().w(px(ROW_MENU_W)).px(px(5.)).py(px(crate::ui::MENU_PAD_Y)).on_mouse_down_out(close);
-        let root = self.store.root();
+        let root = self.store.borrow().root().to_path_buf();
         let reveal = id.clone();
         let reveal_item = item("rm-reveal", Icon::Move, if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in file manager" }).on_click(cx.listener(move |w, _, _, cx| {
             w.row_menu = None;

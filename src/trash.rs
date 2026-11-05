@@ -222,7 +222,8 @@ impl Workspace {
 
     fn restore_doc(&mut self, id: &str, cx: &mut Context<Self>) {
         let mut warnings = vec![];
-        match self.store.restore(id) {
+        let result = self.store.borrow_mut().restore(id);
+        match result {
             Ok(restored) => {
                 warnings = restored.warnings;
                 self.show_toast(if restored.renamed { "Restored. Some documents were moved to My documents because their original location no longer exists." } else { "Restored successfully" }, cx);
@@ -234,14 +235,15 @@ impl Workspace {
                 self.status = crate::app::SaveStatus::Failed(msg);
             }
         }
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
         self.refresh_trash(cx);
         self.show_warnings(&warnings, cx);
     }
 
     fn purge_doc(&mut self, id: &str, cx: &mut Context<Self>) {
-        match self.store.purge(id) {
+        let result = self.store.borrow_mut().purge(id);
+        match result {
             Ok(()) => self.show_toast("Permanently deleted", cx),
             Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not delete document: {}", crate::settings::diagnostic(&e.to_string()))),
         }
@@ -250,8 +252,8 @@ impl Workspace {
 
     /// Lists the Trash, emptying what is past its time.
     pub(crate) fn refresh_trash(&mut self, cx: &mut Context<Self>) {
-        let warnings = self.store.purge_expired();
-        self.trash = self.store.list_trash();
+        let warnings = self.store.borrow_mut().purge_expired();
+        self.trash = self.store.borrow().list_trash();
         self.show_warnings(&warnings, cx);
     }
 

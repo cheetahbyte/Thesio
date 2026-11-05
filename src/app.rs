@@ -113,7 +113,7 @@ pub fn bind_keys(cx: &mut App) {
             // Key dispatch already borrows this window; close after it returns.
             cx.defer(move |cx| {
                 if let Err(e) = handle.update(cx, |ws, window, cx| {
-                    crate::window_size::persist(cx);
+                    crate::window_size::persist(&ws.store, cx);
                     if ws.save_before(cx, |_, window, _| window.remove_window()) { window.remove_window(); }
                 }) { eprintln!("Could not close document window: {e}"); }
             });
@@ -290,8 +290,8 @@ impl Workspace {
     pub fn new(document: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::settings::load();
         if !cx.has_global::<SharedStore>() { cx.set_global(SharedStore::open().expect("open document library")); }
-        let mut store = cx.global::<SharedStore>().clone();
-        let entries = store.list();
+        let store = cx.global::<SharedStore>().clone();
+        let entries = store.borrow_mut().list();
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search", cx);
             f.placeholder_color = Theme::text_disabled();
@@ -303,7 +303,7 @@ impl Workspace {
             cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.entries = this.store.list(); this.sort(); this.reload_library(); cx.notify(); }
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.entries = this.store.borrow_mut().list(); this.sort(); this.reload_library(); cx.notify(); }
                 else { this.flush(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -327,19 +327,22 @@ impl Workspace {
             // Last resort (the system logging out): ⌘Q and the close button
             // go through `save_before` and ask when the save fails.
             cx.on_app_quit(|this, cx| {
-                crate::window_size::persist(cx);
+                crate::window_size::persist(&this.store, cx);
                 this.flush(cx);
                 async {}
             }),
         ];
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
-            crate::window_size::persist(cx);
-            this.update(cx, |w, cx| w.save_before(cx, |_, window, _| window.remove_window())).unwrap_or(true)
+            this.update(cx, |w, cx| {
+                crate::window_size::persist(&w.store, cx);
+                w.save_before(cx, |_, window, _| window.remove_window())
+            }).unwrap_or(true)
         });
-        let sidebar_width = store.settings().sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
-        let store_expanded: HashSet<String> = store.settings().expanded.into_iter().collect();
-        let citations = crate::citations::Citations::new(&store.root(), cx);
+        let settings = store.borrow().settings();
+        let sidebar_width = settings.sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
+        let store_expanded: HashSet<String> = settings.expanded.into_iter().collect();
+        let citations = crate::citations::Citations::new(store.borrow().root(), cx);
         let mut ws = Workspace {
             settings_page: Default::default(),
             store,
@@ -443,12 +446,13 @@ impl Workspace {
             self.open_paper(id, cx);
             return false;
         }
-        let text = match self.store.load(id) {
+        let loaded = self.store.borrow().load(id);
+        let text = match loaded {
             Ok(text) => text,
             Err(e) => {
                 // Binary files belong to the system's apps; scripted runs must not start any.
                 if !paths::is_document(id) && std::env::var_os("THESIO_SCRIPT").is_none() {
-                    cx.open_with_system(&self.store.root().join(id));
+                    cx.open_with_system(&self.store.borrow().root().join(id));
                 } else {
                     self.show_toast_kind(ToastKind::Error, &format!("Could not open {id}: {}", crate::settings::diagnostic(&e.to_string())), cx);
                 }
@@ -459,7 +463,7 @@ impl Workspace {
         let typst = paths::is_document(id);
         let opened_text = text.clone();
         let editor = cx.new(|cx| SourceEditor::new(text.clone(), typst, cx));
-        let root = self.store.root();
+        let root = self.store.borrow().root().to_path_buf();
         let main = self.top_document(id);
         let preview = typst.then(|| cx.new(|_| Preview::new(root, id.to_string(), main)));
         if let Some(preview) = &preview { preview.update(cx, |p, cx| p.update(text, cx)); }
@@ -499,7 +503,7 @@ impl Workspace {
         if !self.search_open {
             editor.read(cx).focus(window);
         }
-        if self.store.touch(id).is_ok()
+        if self.store.borrow_mut().touch(id).is_ok()
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
                 e.meta.opened = crate::time::now();
             }
@@ -523,7 +527,7 @@ impl Workspace {
         let moved = self.current.as_deref().and_then(|c| paths::moved(c, old, new));
         if let Some(path) = moved {
             self.current = Some(path.clone());
-            self.entries = self.store.list();
+            self.entries = self.store.borrow_mut().list();
             let main = self.top_document(&path);
             self.outline_root = Some(main.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
@@ -537,11 +541,11 @@ impl Workspace {
         self.save_expanded();
         // The open document's paths changed on disk: its editor takes them in.
         if let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone())
-            && rewritten.contains(&id)
-            && let Ok(text) = self.store.load(&id) {
-                editor.update(cx, |e, cx| e.reload(&text, cx));
+            && rewritten.contains(&id) {
+                let text = self.store.borrow().load(&id);
+                if let Ok(text) = text { editor.update(cx, |e, cx| e.reload(&text, cx)); }
             }
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
     }
 
@@ -595,10 +599,11 @@ impl Workspace {
         if !self.save_before(cx, |w, window, cx| w.new_doc(window, cx)) {
             return;
         }
-        match self.store.create(None) {
+        let result = self.store.borrow_mut().create(None);
+        match result {
             Ok(id) => {
                 self.search_open = false;
-                self.entries = self.store.list();
+                self.entries = self.store.borrow_mut().list();
                 self.sort();
                 self.search.update(cx, |s, cx| s.set_text("", cx));
                 self.open(&id, window, cx);
@@ -613,9 +618,10 @@ impl Workspace {
 
     /// A new folder, with its name ready to edit.
     pub fn new_folder(&mut self, parent: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
-        match self.store.create_folder(parent, "New folder") {
+        let result = self.store.borrow_mut().create_folder(parent, "New folder");
+        match result {
             Ok(id) => {
-                self.entries = self.store.list();
+                self.entries = self.store.borrow_mut().list();
                 self.sort();
                 self.start_rename(&id, window, cx);
             }
@@ -646,7 +652,8 @@ impl Workspace {
         let mut deleted: Vec<String> = vec![];
         let mut errors = vec![];
         for id in topmost {
-            match self.store.delete(id) {
+            let result = self.store.borrow_mut().delete(id);
+            match result {
                 Ok(warnings) => {
                     deleted.push(id.clone());
                     errors.extend(warnings);
@@ -662,7 +669,7 @@ impl Workspace {
             self.preview = None;
             self.editor_subs.clear();
         }
-        self.entries = self.store.list();
+        self.entries = self.store.borrow_mut().list();
         self.sort();
         if let Some(b) = self.batch.as_mut() {
             b.retain(|id| !deleted.iter().any(|d| inside(id, d)));
@@ -678,8 +685,8 @@ impl Workspace {
             self.view = view;
         }
         if self.view == View::Trash {
-            errors.extend(self.store.purge_expired());
-            self.trash = self.store.list_trash();
+            errors.extend(self.store.borrow_mut().purge_expired());
+            self.trash = self.store.borrow().list_trash();
         }
         if errors.is_empty() {
             self.show_toast("Deleted successfully", cx);
@@ -695,7 +702,7 @@ impl Workspace {
     pub fn export_pdf(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(text) = self.text_of(id, cx) else { return };
         let name = format!("{}.pdf", self.entries.iter().find(|e| e.id == id).map_or(crate::store::UNTITLED, |e| e.title.as_str()));
-        let (root, id) = (self.store.root(), id.to_string());
+        let (root, id) = (self.store.borrow().root().to_path_buf(), id.to_string());
         let picked = crate::devtools::take_pick().and_then(|p| p.into_iter().next());
         let prompt = picked.is_none().then(|| cx.prompt_for_new_path(&root, Some(&name)));
         cx.spawn(async move |this, cx| {
@@ -735,12 +742,13 @@ impl Workspace {
             let _ = this.update_in(cx, |w, window, cx| {
                 let mut first = None;
                 for path in &paths {
-                    match w.store.import(path) {
+                    let result = w.store.borrow_mut().import(path);
+                    match result {
                         Ok(id) => if paths::is_document(&id) { first.get_or_insert(id); },
                         Err(e) => w.show_toast_kind(ToastKind::Error, &format!("Could not import {}: {e}", path.display()), cx),
                     }
                 }
-                w.entries = w.store.list();
+                w.entries = w.store.borrow_mut().list();
                 w.sort();
                 if let Some(id) = first { w.open(&id, window, cx); }
                 cx.notify();
@@ -753,7 +761,7 @@ impl Workspace {
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
             e.meta.pinned = !e.meta.pinned;
             on = e.meta.pinned;
-            let _ = self.store.set_pinned(id, e.meta.pinned);
+            let _ = self.store.borrow_mut().set_pinned(id, e.meta.pinned);
         }
         self.sort();
         self.row_menu = None;
@@ -765,7 +773,7 @@ impl Workspace {
     pub fn toggle_star(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { return };
         let on = e.meta.starred == 0;
-        if let Ok(t) = self.store.set_starred(id, on) {
+        if let Ok(t) = self.store.borrow_mut().set_starred(id, on) {
             e.meta.starred = t;
         }
         self.row_menu = None;
@@ -844,7 +852,8 @@ impl Workspace {
         let old = self.entries.iter().find(|e| e.id == r.id).map(|e| e.title.trim().to_string());
         if commit && old.is_some_and(|o| o != title) {
             self.flush(cx);
-            match self.store.rename(&r.id, &title) {
+            let result = self.store.borrow_mut().rename(&r.id, &title);
+            match result {
                 Ok(moved) => {
                     self.path_changed(&r.id, &moved.id, &moved.rewritten, cx);
                     if !moved.rewritten.is_empty() { self.show_toast(&updated_paths(moved.rewritten.len()), cx); }
@@ -894,7 +903,8 @@ impl Workspace {
         };
         let text = ed.read(cx).buffer.text().to_string();
         let saved_text = text.clone();
-        match self.store.save(&id, &text) {
+        let result = self.store.borrow_mut().save(&id, &text);
+        match result {
             Ok(()) => {
                 if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
                     e.body = text;
@@ -1241,7 +1251,7 @@ impl Render for Workspace {
             // Window keys act on the window they were pressed in, not on
             // whichever window macOS considers active.
             .on_action(cx.listener(|w, _: &CloseWindow, window, cx| {
-                crate::window_size::persist(cx);
+                crate::window_size::persist(&w.store, cx);
                 if w.save_before(cx, |_, window, _| window.remove_window()) { window.remove_window(); }
             }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())

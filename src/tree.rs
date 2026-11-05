@@ -117,9 +117,10 @@ impl Workspace {
         if !self.save_before(cx, move |w, window, cx| match &p { Some(p) => w.new_child(p, window, cx), None => w.new_doc(window, cx) }) {
             return;
         }
-        match self.store.create(parent) {
+        let result = self.store.borrow_mut().create(parent);
+        match result {
             Ok(id) => {
-                self.entries = self.store.list();
+                self.entries = self.store.borrow_mut().list();
                 self.sort();
                 if let Some(parent) = parent { self.set_expanded(parent, true); }
                 self.open(&id, window, cx);
@@ -167,7 +168,8 @@ impl Workspace {
             if inside || parent == target {
                 continue;
             }
-            match self.store.set_parent(id, target.as_deref()) {
+            let result = self.store.borrow_mut().set_parent(id, target.as_deref());
+            match result {
                 Ok(outcome) => {
                     self.path_changed(id, &outcome.id, &outcome.rewritten, cx);
                     moved += 1;
@@ -202,10 +204,9 @@ impl Workspace {
     }
 
     pub(crate) fn save_expanded(&self) {
-        let mut settings = self.store.settings();
-        settings.expanded = self.expanded.iter().cloned().collect();
-        settings.expanded.sort();
-        let _ = self.store.save_settings(&settings);
+        let mut expanded: Vec<String> = self.expanded.iter().cloned().collect();
+        expanded.sort();
+        let _ = self.store.borrow().update_settings(|s| s.expanded = expanded);
     }
 
     /// The Move to dialog: My documents on the left, its page tree on the right.

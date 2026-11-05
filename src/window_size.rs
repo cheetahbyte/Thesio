@@ -1,3 +1,4 @@
+use crate::shared_store::SharedStore;
 use gpui::*;
 
 #[derive(Clone, Copy, Default)]
@@ -10,14 +11,12 @@ pub fn remember(window: &Window, cx: &mut App) {
     }
 }
 
-pub fn persist(cx: &mut App) {
-    let (Some(size), Some(store)) = (cx.try_global::<Size>().copied(), cx.try_global::<crate::shared_store::SharedStore>()) else { return };
-    let mut settings = store.settings();
-    if size.0.is_some() { settings.window_size = size.0 }
-    if let Err(e) = store.save_settings(&settings) { eprintln!("Could not save window size: {e}"); }
+pub fn persist(store: &SharedStore, cx: &App) {
+    let Some(Size(Some(size))) = cx.try_global::<Size>().copied() else { return };
+    if let Err(e) = store.borrow().update_settings(|settings| settings.window_size = Some(size)) { eprintln!("Could not save window size: {e}"); }
 }
 
 pub fn main_window_size(cx: &App) -> gpui::Size<Pixels> {
-    let s = cx.global::<crate::shared_store::SharedStore>().settings().window_size.unwrap_or([1280., 800.]);
+    let s = cx.global::<SharedStore>().borrow().settings().window_size.unwrap_or([1280., 800.]);
     size(px(s[0].max(480.)), px(s[1].max(480.)))
 }
