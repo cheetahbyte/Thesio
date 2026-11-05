@@ -2,7 +2,7 @@
 
 usage: python3 tools/harness/run.py <script.txt> [lib_dir] [work_dir]
   lib_dir  default: tools/harness/lib_clean  (copied fresh every run, never mutated)
-  work_dir default: /tmp/thesio-run             (shots/*.png and `log` land here)
+  work_dir default: /tmp/thesio-run             (<name>.png shots and `log` land here)
   THESIO_BIN  default: target/release/thesio of this checkout
 Bench numbers: grep -a bench <work_dir>/log
 """

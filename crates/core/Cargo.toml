@@ -1,10 +1,10 @@
-# The document engine: model, DocxXML, the editing core, the library on
-# disk, import and export. No GPUI, so it builds and tests on its own.
+# The document engine: the vault, the Typst compiler, the editing core, the
+# citation library, import and export. No GPUI, so it builds and tests on its own.
 [package]
 name = "thesio_core"
 version = "0.1.0"
 edition = "2024"
-description = "The document engine behind Thesio: model, DocxXML, editing core, library"
+description = "The document engine behind Thesio: vault, Typst compiler, editing core, library"
 license = "MIT"
 readme = "../../README.md"
 
