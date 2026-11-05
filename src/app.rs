@@ -236,6 +236,8 @@ pub struct Workspace {
     pub doc_menu: bool,
     /// The citation style menu.
     pub style_menu: bool,
+    /// The Word Count dialog.
+    pub words_open: bool,
     pub list_scroll: ScrollHandle,
     pub search_scroll: ScrollHandle,
     /// Selection mode: checked documents in My documents, in check order.
@@ -354,6 +356,7 @@ impl Workspace {
             files_menu: None,
             doc_menu: false,
             style_menu: false,
+            words_open: false,
             list_scroll: ScrollHandle::new(),
             search_scroll: ScrollHandle::new(),
             batch: None,
@@ -1190,6 +1193,7 @@ impl Render for Workspace {
         let tag_editor = self.render_tag_editor(window, cx);
         let type_menu = self.render_inspector_type_menu(cx);
         let history = self.render_history(cx);
+        let words = self.render_word_count(cx);
         let tag_menu = self.render_tag_menu(window, cx);
         let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
@@ -1247,6 +1251,11 @@ impl Render for Workspace {
             // Esc leaves Selection mode (closing its menu or confirmation first), even from the editor.
             .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
                 // Esc cancels a confirmation dialog.
+                if ev.keystroke.key == "escape" && w.words_open {
+                    w.words_open = false;
+                    cx.stop_propagation();
+                    return cx.notify();
+                }
                 if ev.keystroke.key == "escape" && w.history.is_some() {
                     w.close_history(cx);
                     cx.stop_propagation();
@@ -1293,6 +1302,7 @@ impl Render for Workspace {
             .children(tag_editor)
             .children(type_menu)
             .children(history)
+            .children(words)
             .children(tag_menu)
             .children(column_drag)
             .children(search)

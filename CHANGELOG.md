@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show the word count of the open file and the whole document under the preview, with every file's count in Word Count in the "…" menu.
 - Keep versions of `library.yaml` before changes, and restore them from Version History in the Library's "…" menu.
 - Keep earlier versions of each document automatically, and compare or restore them from Version History in its "…" menu.
 - Add an Outline to the sidebar: the headings of the whole document in reading order, through its included files, with the current one marked. Click one to go there.

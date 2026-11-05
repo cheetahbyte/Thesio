@@ -96,6 +96,8 @@ pub struct Preview {
     unsettled: bool,
     /// The page to scroll to once the pane has a width.
     reveal: Option<usize>,
+    /// The document's words by file, as of the last good compile.
+    pub words: Vec<(String, usize)>,
     /// The editor's caret, which the preview stays near.
     follow: Option<usize>,
     /// Bumped by each caret move, so that only the last one scrolls.
@@ -122,6 +124,7 @@ impl Preview {
             took: None,
             unsettled: false,
             reveal: None,
+            words: vec![],
             follow: None,
             follow_generation: 0,
             follow_target: None,
@@ -260,6 +263,7 @@ impl Preview {
                 if let Some(image) = image { self.pages.push(Page { hash, image, width, height }); }
             }
             for page in old { cx.drop_image(page.image, None); }
+            if let Ok(compiler) = self.compiler.try_lock() { self.words = compiler.word_counts().to_vec(); }
             // Pages moved, and the caret's place may be on a page that just arrived.
             self.locate(Duration::ZERO, cx);
         }
@@ -278,9 +282,33 @@ fn file_start(pages: &[(f32, f32, bool)]) -> usize {
     best
 }
 
+/// A count with thousands set apart: 18,420.
+pub fn format_count(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) { out.push(','); }
+        out.push(digit);
+    }
+    out
+}
+
 fn format_took(took: Duration) -> String {
     let ms = took.as_millis();
     if ms < 1000 { format!("{ms} ms") } else { format!("{:.1} s", took.as_secs_f32()) }
+}
+
+impl Preview {
+    /// The corner's text: the open file's words of the whole, and the compile time.
+    fn status(&self, took: Duration) -> String {
+        let total: usize = self.words.iter().map(|(_, words)| words).sum();
+        let own = self.words.iter().find(|(path, _)| *path == self.open_path).map(|(_, words)| *words);
+        let words = match own {
+            Some(own) if own != total => format!("{} of {} words", format_count(own), format_count(total)),
+            _ => format!("{} words", format_count(total)),
+        };
+        format!("{words} · {}", format_took(took))
+    }
 }
 
 impl Render for Preview {
@@ -311,7 +339,7 @@ impl Render for Preview {
             .child(div().relative().flex().flex_col().flex_1().min_h_0()
                 .child(div().id("preview-pages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
                     .flex().flex_col().items_center().gap(px(PAGE_GAP)).p(px(PAD)).children(pages))
-                .children(self.took.map(|took| div().absolute().right(px(12.)).bottom(px(8.)).text_size(px(11.)).line_height(px(14.)).text_color(Theme::text_caption()).child(format_took(took)))))
+                .children(self.took.map(|took| div().absolute().right(px(12.)).bottom(px(8.)).text_size(px(11.)).line_height(px(14.)).text_color(Theme::text_caption()).child(self.status(took)))))
             .when(!problems.is_empty(), |d| d.child(div().id("preview-problems").flex_none().max_h(px(160.)).overflow_y_scroll().py(px(6.)).bg(Theme::bg_body()).children(problems)))
             .child(canvas(move |bounds, _, cx| {
                 let mut stored = width.lock().unwrap();

@@ -62,6 +62,31 @@ impl Workspace {
         }
     }
 
+    /// Words by file, with the open file marked.
+    pub(crate) fn render_word_count(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.words_open { return None; }
+        let words = self.preview.as_ref()?.read(cx).words.clone();
+        let total: usize = words.iter().map(|(_, words)| words).sum();
+        let row = |name: String, count: usize, strong: bool| {
+            div().h(px(28.)).flex().items_center().gap(px(16.)).text_size(px(13.))
+                .when(strong, |d| d.font_weight(FontWeight::SEMIBOLD))
+                .child(div().flex_1().min_w_0().truncate().child(crate::ui::ui_text(name)))
+                .child(div().flex_none().text_color(Theme::text_caption()).child(crate::preview::format_count(count)))
+        };
+        let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current.as_ref() == Some(path))).collect::<Vec<_>>();
+        let panel = crate::trash::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(div().mb(px(10.)).text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Word Count"))
+            .child(div().id("word-count-files").max_h(px(320.)).overflow_y_scroll().children(rows))
+            .child(div().mt(px(6.)).pt(px(6.)).border_t_1().border_color(Theme::line_border()).child(row("Total".to_string(), total, true)))
+            .child(div().mt(px(8.)).text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption()).child("Counts the text the document draws. The bibliography and page numbers are left out."))
+            .child(div().mt(px(14.)).flex().justify_end().child(crate::trash::secondary_button("word-count-close", "Close").on_click(cx.listener(|w, _, _, cx| {
+                w.words_open = false;
+                cx.notify();
+            }))));
+        Some(deferred(div().id("word-count-scrim").absolute().inset_0().bg(crate::trash::scrim()).flex().items_center().justify_center().occlude().child(panel)).with_priority(3).into_any_element())
+    }
+
     pub(crate) fn render_style_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.style_menu { return None; }
         let (_, current) = self.style_owner(cx)?;
@@ -126,6 +151,11 @@ impl Workspace {
                 .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star_id, cx))))
             .when(typst, |d| d.child(divider())
                 .child(menu_item("dm-copy", Icon::Copy, "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))))
+                .child(menu_item("dm-words", Icon::Notes, "Word Count").on_click(cx.listener(|w, _, _, cx| {
+                    w.close_doc_menu(cx);
+                    w.words_open = true;
+                    cx.notify();
+                })))
                 .child(menu_item("dm-history", Icon::Restore, "Version History…").on_click(cx.listener(|w, _, _, cx| {
                     w.close_doc_menu(cx);
                     w.open_history(cx);

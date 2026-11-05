@@ -57,6 +57,8 @@ pub struct Compiler {
     world: VaultWorld,
     /// The last document that compiled, for moving between it and the source.
     last: Option<PagedDocument>,
+    /// Its words by file, in the order the files first appear.
+    words: Vec<(String, usize)>,
 }
 
 impl Compiler {
@@ -70,7 +72,7 @@ impl Compiler {
             fonts,
             buffers: FxHashMap::default(),
             files: Mutex::default(),
-        }, last: None }
+        }, last: None, words: vec![] }
     }
 
     /// Shadows a vault file with unsaved text.
@@ -91,11 +93,18 @@ impl Compiler {
             Ok(document) => (Some(document), Default::default()),
             Err(errors) => (None, errors),
         };
-        if document.is_some() { self.last = document.clone(); }
+        if let Some(document) = &document {
+            self.words = self.world.count_words(document);
+            self.last = Some(document.clone());
+        }
         let diagnostics = errors.iter().chain(&result.warnings).map(|d| self.world.diagnostic(d)).collect();
         comemo::evict(CACHE_AGE);
         Ok(Compilation { document, diagnostics })
     }
+
+    /// The last document's words by vault file. Text with no file, such as a
+    /// bibliography or page numbers, does not count.
+    pub fn word_counts(&self) -> &[(String, usize)] { &self.words }
 
     /// Where byte `offset` of `path` appears: its page and height in points.
     pub fn position_of(&self, path: &str, offset: usize) -> Option<(usize, f32)> {
@@ -241,6 +250,31 @@ impl VaultWorld {
     }
 }
 
+impl VaultWorld {
+    fn count_words(&self, document: &PagedDocument) -> Vec<(String, usize)> {
+        fn visit(frame: &Frame, found: &mut Vec<(FileId, usize)>) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Group(group) => visit(&group.frame, found),
+                    FrameItem::Text(text) => {
+                        let (Some(id), words) = (text.glyphs.first().and_then(|glyph| glyph.span.0.id()), text.text.split_whitespace().count()) else { continue };
+                        match found.iter_mut().find(|(file, _)| *file == id) {
+                            Some((_, count)) => *count += words,
+                            None => found.push((id, words)),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut found = vec![];
+        for page in document.pages() { visit(&page.frame, &mut found); }
+        found.into_iter().map(|(id, words)| (self.resolved(id), words))
+            .filter(|(id, _)| matches!(id.get().root(), VirtualRoot::Project))
+            .map(|(id, words)| (id.get().vpath().get_without_slash().to_string(), words)).collect()
+    }
+}
+
 impl IdeWorld for VaultWorld {
     fn upcast(&self) -> &dyn World { self }
 }
@@ -362,6 +396,17 @@ mod tests {
         // Nor does a heading's marker, at the very start of a file.
         assert_eq!(compiler.position_of("chapters/three.typ", 0).map(|(page, _)| page), Some(2));
         assert_eq!(compiler.source_at(page, 1., 1.), None);
+    }
+
+    #[test]
+    fn words_count_what_is_drawn_by_file() {
+        let root = vault("words", &[
+            ("main.typ", "#set page(numbering: \"1\")\n= Main heading\nOne two three. // not this\n#include \"ch.typ\"\n#let hidden = [nor this]\n"),
+            ("ch.typ", "#strong[Four] five `six`\n"),
+        ]);
+        let mut compiler = Compiler::new(root);
+        assert!(errors(&compiler.compile("main.typ").unwrap()).is_empty());
+        assert_eq!(compiler.word_counts(), [("main.typ".to_string(), 5), ("ch.typ".to_string(), 3)]);
     }
 
     #[test]
