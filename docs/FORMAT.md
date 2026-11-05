@@ -1,6 +1,6 @@
 # Vault format
 
-A vault is a plain folder, by default `~/Documents/Thesio`. Set `THESIO_HOME` to use another location. The vault root is the Typst project root, so `#include`, `#image`, and `#bibliography` can reach any file in it.
+A vault is a plain folder, by default `~/Documents/Thesio`. Set `THESIO_HOME` to use another location. The vault root is the Typst project root, and paths starting with `/` try the folders above the compiled document first, so `#include`, `#image`, and `#bibliography` can reach any file in it.
 
 ```
 Thesio/

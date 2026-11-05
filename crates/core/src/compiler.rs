@@ -1,5 +1,6 @@
 //! Compiles Typst documents from a vault: a plain folder whose root is the
-//! Typst project root, so `#include`, `#image`, and `#bibliography` reach any
+//! Typst project root (paths starting with `/` also try the main file's
+//! folders; see `VaultWorld::resolved`), so `#include`, `#image`, and `#bibliography` reach any
 //! file in it. Unsaved editor text is held in buffers that shadow the disk.
 
 use anyhow::{Context, Result};
@@ -123,6 +124,23 @@ struct VaultWorld {
 }
 
 impl VaultWorld {
+    /// The file `id` means. Typst runs one project per root, but a vault holds
+    /// several: `/template.typ` is sought from the main file's folder upward,
+    /// then at the vault root, as `typst compile` run in that project would.
+    fn resolved(&self, id: FileId) -> FileId {
+        let (Some(main), VirtualRoot::Project) = (self.main, id.get().root()) else { return id };
+        let main = main.get().vpath().get_without_slash().to_string();
+        let file = id.get().vpath().get_without_slash();
+        let mut dir = main.as_str();
+        while let Some((parent, _)) = dir.rsplit_once('/') {
+            dir = parent;
+            let candidate = format!("{dir}/{file}");
+            let Ok(found) = file_id(&candidate) else { continue };
+            if self.buffers.contains_key(&found) || self.root.join(&candidate).is_file() { return found; }
+        }
+        id
+    }
+
     fn path(&self, id: FileId) -> FileResult<PathBuf> {
         let rooted = id.get();
         // Packages download from the network; the vault stays offline for now.
@@ -165,6 +183,7 @@ impl World for VaultWorld {
     fn main(&self) -> FileId { self.main.expect("compile sets the main file") }
 
     fn source(&self, id: FileId) -> FileResult<Source> {
+        let id = self.resolved(id);
         let mut files = self.files.lock().unwrap();
         let slot = files.entry(id).or_default();
         let text = match self.buffers.get(&id) {
@@ -184,6 +203,7 @@ impl World for VaultWorld {
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
+        let id = self.resolved(id);
         if let Some(text) = self.buffers.get(&id) { return Ok(Bytes::from_string(text.clone())); }
         let mut files = self.files.lock().unwrap();
         self.disk_bytes(id, files.entry(id).or_default())
@@ -213,4 +233,67 @@ pub fn render_changed(document: &PagedDocument, scale: f32, known: &[u128]) -> V
         let hash = typst::utils::hash128(&document.pages()[i]);
         (hash, (!known.contains(&hash)).then(|| render_page(document, i, scale)).flatten())
     }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vault(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("thesio-compiler-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (path, text) in files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        root
+    }
+
+    fn errors(compilation: &Compilation) -> Vec<String> {
+        compilation.diagnostics.iter().filter(|d| d.error).map(|d| format!("{:?}: {}", d.path, d.message)).collect()
+    }
+
+    #[test]
+    fn root_paths_start_at_the_project_folder() {
+        let root = vault("project", &[
+            ("template.typ", "#let who = \"wrong folder\""),
+            ("Thesis/template.typ", "#let who = read(\"name.txt\")"),
+            ("Thesis/name.txt", "right folder"),
+            ("Thesis/thesis.typ", "#include \"chapters/one.typ\""),
+            ("Thesis/chapters/one.typ", "#import \"/template.typ\": who\n#assert(who == \"right folder\")"),
+            ("Thesis/exposes/1.typ", "#import \"/template.typ\": who\n#assert(who == \"right folder\")"),
+        ]);
+        let mut compiler = Compiler::new(&root);
+        for main in ["Thesis/thesis.typ", "Thesis/exposes/1.typ"] {
+            let compilation = compiler.compile(main).unwrap();
+            assert_eq!(errors(&compilation), Vec::<String>::new(), "{main}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn root_paths_see_unsaved_text_and_report_the_real_file() {
+        let root = vault("buffer", &[
+            ("Thesis/template.typ", "#let who = 1"),
+            ("Thesis/thesis.typ", "#import \"/template.typ\": who\n#who"),
+        ]);
+        let mut compiler = Compiler::new(&root);
+        compiler.set_buffer("Thesis/template.typ", "#let who = 1\n#panic(\"unsaved\")").unwrap();
+        let compilation = compiler.compile("Thesis/thesis.typ").unwrap();
+        let found = errors(&compilation);
+        assert!(found.iter().any(|e| e.contains("Thesis/template.typ") && e.contains("unsaved")), "{found:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn root_paths_outside_a_project_still_reach_the_vault() {
+        let root = vault("shared", &[
+            ("shared.typ", "#let who = 1"),
+            ("Thesis/thesis.typ", "#import \"/shared.typ\": who\n#who"),
+        ]);
+        let compilation = Compiler::new(&root).compile("Thesis/thesis.typ").unwrap();
+        assert_eq!(errors(&compilation), Vec::<String>::new());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
