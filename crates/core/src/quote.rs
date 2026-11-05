@@ -1,5 +1,7 @@
 //! Turns a PDF highlight into a Typst quotation with a page citation.
 
+use crate::typst_source::escape_markup;
+
 /// Quotes of this many words or more stand as a block.
 const BLOCK_WORDS: usize = 40;
 
@@ -43,39 +45,16 @@ pub fn page_offset(label: &str, index: usize, entered: &str) -> Option<i32> {
     Some(entered.trim().parse::<i32>().ok()? - base_page(label, index)?)
 }
 
-/// `text` as Typst markup that renders literally.
-fn escape(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
-    for (i, &c) in chars.iter().enumerate() {
-        let next = chars.get(i + 1).copied();
-        let special = match c {
-            '\\' | '#' | '$' | '*' | '_' | '`' | '@' | '<' | '>' | '[' | ']' | '~' => true,
-            // Comments, and a term list at the start.
-            '/' => i == 0 || matches!(next, Some('/' | '*')),
-            // Lists, dashes, soft hyphens, and minus signs.
-            '-' => i == 0 || i > 0 && chars[i - 1] == '-' || next.is_some_and(|n| matches!(n, '-' | '?') || n.is_ascii_digit()),
-            '+' | '=' => i == 0,
-            // A numbered list at the start, and the ellipsis shorthand.
-            '.' => (i > 0 && chars[..i].iter().all(char::is_ascii_digit)) || chars[i..].starts_with(&['.', '.', '.']),
-            _ => false,
-        };
-        if special { out.push('\\'); }
-        out.push(c);
-    }
-    out
-}
-
 /// The quotation as markup, and whether it stands as a block.
 pub fn quote_markup(text: &str, key: &str, page: &str) -> (String, bool) {
     let words = text.split_whitespace().collect::<Vec<_>>();
-    let body = escape(&words.join(" "));
+    let body = escape_markup(&words.join(" "));
     let page = page.trim();
     let cite = if page.is_empty() {
         format!("@{key}")
     } else {
         let unit = if page.contains(['-', '–', ',']) { "pp." } else { "p." };
-        format!("@{key}[{unit} {}]", escape(page))
+        format!("@{key}[{unit} {}]", escape_markup(page))
     };
     if words.len() >= BLOCK_WORDS { (format!("#quote(block: true, attribution: [{cite}])[{body}]"), true) } else { (format!("#quote[{body}] {cite}"), false) }
 }

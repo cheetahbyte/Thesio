@@ -4,7 +4,8 @@
 use crate::app::{Confirm, View, Workspace};
 use crate::input::{TextField, TextFieldEvent};
 use crate::app::RowMenu;
-use crate::library::{self, Added, Library, Mode, PAPERS_DIR, Row, note_file, paper_file};
+use crate::library::{Added, Library, PAPERS_DIR, Row, note_file, paper_file};
+use thesio_core::bibliography::{self, Mode};
 use crate::source::SourceEditor;
 use thesio_core::lookup::{self, Identifier};
 use thesio_core::source_type::{Field, SOURCE_TYPES, SourceType};
@@ -17,7 +18,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use thesio_core::project::{Documents, Project};
-use thesio_core::references::{bibliography_style, cited_keys, citations_of, note_link, rename_citation, set_bibliography_style};
+use thesio_core::references::{cited_keys, citations_of, note_link, rename_citation};
 
 const ROW_H: f32 = 32.;
 /// Rows inset their cells, so cell text lines up with the page title.
@@ -402,12 +403,12 @@ impl Workspace {
     /// Rewrites each generated block to hold what its document cites.
     pub(crate) fn sync_bibliographies(&mut self, cx: &mut Context<Self>) {
         let Some(library) = &self.citations.library else { return };
-        let documents: Vec<String> = self.entries.iter().filter(|e| e.typst && e.body.contains(library::BLOCK_MARKER)).map(|e| e.id.clone()).collect();
+        let documents: Vec<String> = self.entries.iter().filter(|e| e.typst && bibliography::block_range(&e.body).is_some()).map(|e| e.id.clone()).collect();
         let mut updates = vec![];
         for id in documents {
             let keys: BTreeSet<String> = self.cited_in(&id).into_iter().filter(|k| library.contains(k)).collect();
             let (Ok(yaml), Ok(text)) = (library.subset(&keys), self.store.load(&id)) else { continue };
-            if let Some(updated) = library::sync_block(&text, &yaml) {
+            if let Some(updated) = bibliography::sync_block(&text, &yaml) {
                 updates.push((id, updated));
             }
         }
@@ -431,7 +432,7 @@ impl Workspace {
 
     pub(crate) fn bibliography_mode(&self, cx: &App) -> Mode {
         match (&self.current, &self.editor) {
-            (Some(id), Some(editor)) => library::mode(editor.read(cx).buffer.text(), id),
+            (Some(id), Some(editor)) => bibliography::mode(editor.read(cx).buffer.text(), id),
             _ => Mode::None,
         }
     }
@@ -439,10 +440,10 @@ impl Workspace {
     /// Switches the open document's bibliography as one undoable edit.
     pub(crate) fn set_bibliography(&mut self, target: Mode, cx: &mut Context<Self>) {
         let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone()) else { return };
-        let text = library::remove(editor.read(cx).buffer.text(), &id);
+        let text = bibliography::remove(editor.read(cx).buffer.text(), &id);
         let text = match target {
-            Mode::Embedded => library::embed(&text, ""),
-            Mode::Linked => library::link(&text, &id),
+            Mode::Embedded => bibliography::embed(&text, ""),
+            Mode::Linked => bibliography::link(&text, &id),
             _ => text,
         };
         editor.update(cx, |e, cx| e.reload(&text, cx));
@@ -455,9 +456,9 @@ impl Workspace {
         let id = self.current.clone()?;
         [id.clone(), self.top_document(&id)].into_iter().find_map(|doc| {
             let text = self.text_of_saved(&doc, cx)?;
-            let mode = library::mode(&text, &doc);
+            let mode = bibliography::mode(&text, &doc);
             (mode != Mode::None).then(|| {
-                let style = bibliography_style(&text, &doc).unwrap_or_else(|| library::DEFAULT_STYLE.to_string());
+                let style = bibliography::style(&text).unwrap_or_else(|| bibliography::DEFAULT_STYLE.to_string());
                 (doc, style)
             })
         })
@@ -475,7 +476,7 @@ impl Workspace {
     pub(crate) fn set_citation_style(&mut self, style: &str, cx: &mut Context<Self>) {
         self.style_menu = false;
         let Some((doc, _)) = self.style_owner(cx) else { return cx.notify() };
-        let Some(updated) = self.text_of_saved(&doc, cx).and_then(|text| set_bibliography_style(&text, &doc, style)) else { return };
+        let Some(updated) = self.text_of_saved(&doc, cx).and_then(|text| bibliography::set_style(&text, style)) else { return };
         if self.current.as_deref() == Some(doc.as_str()) && let Some(editor) = self.editor.clone() {
             editor.update(cx, |e, cx| e.reload(&updated, cx));
             self.flush(cx);
@@ -503,14 +504,14 @@ impl Workspace {
     fn ensure_bibliography(&mut self, id: &str, cx: &mut Context<Self>) {
         let body = |w: &Self, doc: &str| w.entries.iter().find(|e| e.id == doc).map_or(String::new(), |e| e.body.clone());
         if self.bibliography_mode(cx) != Mode::None { return; }
-        if self.documents().includers(id).iter().any(|doc| library::mode(&body(self, doc), doc) != Mode::None) { return; }
+        if self.documents().includers(id).iter().any(|doc| bibliography::mode(&body(self, doc), doc) != Mode::None) { return; }
         let top = self.top_document(id);
         if top == id {
             let Some(editor) = self.editor.clone() else { return };
-            let text = library::embed(editor.read(cx).buffer.text(), "");
+            let text = bibliography::embed(editor.read(cx).buffer.text(), "");
             editor.update(cx, |e, cx| e.sync_text(&text, cx));
         } else if let Ok(text) = self.store.load(&top) {
-            let text = library::embed(&text, "");
+            let text = bibliography::embed(&text, "");
             if let Err(e) = self.store.save(&top, &text) {
                 return self.show_toast_kind(ToastKind::Error, &format!("Could not add a bibliography to {top}: {e}"), cx);
             }
@@ -817,7 +818,7 @@ impl Workspace {
         self.citations.inspector = None;
         self.citations.selected.clear();
         self.refresh_after_library_change(cx);
-        if self.current.as_deref() == Some(library::LIBRARY_FILE) && let Some(editor) = self.editor.clone() {
+        if self.current.as_deref() == Some(bibliography::LIBRARY_FILE) && let Some(editor) = self.editor.clone() {
             editor.update(cx, |e, cx| e.reload(text, cx));
         }
     }

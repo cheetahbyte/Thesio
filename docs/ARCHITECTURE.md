@@ -29,10 +29,12 @@ main.rs: window
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. It keeps the last good document, and `typst-ide` maps between that document and the source for the preview. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
-| `library.rs` | The citation library, BibLaTeX import and export, and the generated bibliography block. |
+| `library.rs` | The citation library, and BibLaTeX import and export. |
+| `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
 | `source_type.rs` | The Library's source types, their fields, and where each field lives in an entry. |
 | `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
-| `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
+| `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
+| `references.rs` | Note links, citations, and rewriting path arguments after a move. |
 | `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
 | `time.rs` | Local dates without a time zone database. |
 
@@ -94,7 +96,7 @@ On macOS papers open in `native_pdf.rs`, a PDFKit `PDFView` above the GPUI surfa
 
 Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `paper.rs` and renamed with the key.
 
-A document has one of three bibliography modes, read from its text (`library::mode`):
+A document has one of three bibliography modes, read from its text (`bibliography::mode`):
 
 - **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`. The editor folds it into one row and keeps the caret out of it, and Show bibliography data in the document menu reveals it. Home cards and search ignore it.
 - **Linked:** `#bibliography("library.yaml")`, with a path relative to the document.

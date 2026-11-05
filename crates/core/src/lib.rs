@@ -1,6 +1,7 @@
 //! Thesio's engine, free of any UI: the vault on disk, the Typst compiler,
 //! the source buffer, and syntax highlighting.
 
+pub mod bibliography;
 pub mod buffer;
 pub mod compiler;
 pub mod history;
@@ -13,3 +14,4 @@ pub mod source_type;
 pub mod store;
 pub mod syntax;
 pub mod time;
+mod typst_source;

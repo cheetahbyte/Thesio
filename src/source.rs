@@ -8,7 +8,7 @@ use crate::ui::{MENU_PAD_Y, ROW_RADIUS, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 use thesio_core::buffer::{Buffer, EditKind};
-use thesio_core::library;
+use thesio_core::bibliography;
 use thesio_core::references::{citation_at, note_link_at};
 use thesio_core::syntax::{SyntaxTag, highlights};
 
@@ -168,7 +168,7 @@ impl SourceEditor {
 
     fn refold(&mut self) {
         let text = self.buffer.text();
-        self.folded = library::block_range(text).filter(|_| self.typst && !self.block_shown).map(|bytes| {
+        self.folded = bibliography::block_range(text).filter(|_| self.typst && !self.block_shown).map(|bytes| {
             let first = self.buffer.line_of(bytes.start);
             // At the end of the file the empty last line goes too, so nothing
             // can be typed below the bibliography.

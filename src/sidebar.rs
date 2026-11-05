@@ -116,7 +116,8 @@ impl Workspace {
     /// What the file list shows and "select all" takes: a hidden file must not
     /// be caught by a batch delete or move the user cannot see.
     fn listed_entries(&self) -> impl Iterator<Item = &Entry> {
-        use crate::library::{LIBRARY_FILE, PAPERS_DIR};
+        use crate::library::PAPERS_DIR;
+        use thesio_core::bibliography::LIBRARY_FILE;
         let hide = crate::settings::prefs().hide_library_files;
         let inside = format!("{PAPERS_DIR}/");
         // A `sources` folder holding anything else is the user's own.

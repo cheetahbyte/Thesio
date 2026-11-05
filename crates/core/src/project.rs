@@ -1,8 +1,8 @@
 //! A document and the files it includes, found the way the compiler finds
 //! them, and which document opens at launch.
 
-use crate::references::{dir_of, resolve, walk};
 use crate::store::visit_vault;
+use crate::typst_source::{dir_of, include_literal, vault_path, walk};
 use std::collections::HashMap;
 use std::path::Path;
 use typst::syntax::ast::{self, AstNode};
@@ -49,10 +49,7 @@ fn parse(path: String, text: String) -> File {
             let title = body.split(" <").next().unwrap_or_default().trim().to_string();
             if !title.is_empty() { headings.push(Heading { path: path.clone(), offset: node.offset(), level: heading.depth().get(), title }); }
         }
-        SyntaxKind::Str if node.parent_kind() == Some(SyntaxKind::ModuleInclude) => {
-            if let Some(file) = ast::Str::from_untyped(node.get()).and_then(|value| resolve(&dir, &value.get())) { includes.push((node.offset(), file)); }
-        }
-        _ => {}
+        _ => if let Some(file) = include_literal(node).and_then(|literal| vault_path(&dir, &literal)) { includes.push((node.offset(), file)); }
     });
     let text = source.text().to_string();
     File { path, text, includes, headings }

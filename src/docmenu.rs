@@ -1,7 +1,7 @@
 //! The header "…" menu: move, pin, star, duplicate, export, and delete.
 
 use crate::app::Workspace;
-use crate::library::{CITATION_STYLES, Mode};
+use thesio_core::bibliography::{CITATION_STYLES, Mode};
 use crate::theme::{self, Theme};
 use crate::ui::{Icon, popover};
 use gpui::{prelude::FluentBuilder, *};

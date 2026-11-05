@@ -3,7 +3,8 @@
 
 use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
-use crate::library::{self, Mode, NOTES_DIR, note_file, paper_file};
+use crate::library::{NOTES_DIR, note_file, paper_file};
+use thesio_core::bibliography::{self, Mode};
 use crate::native_pdf::Highlight;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::theme::Theme;
@@ -87,8 +88,8 @@ impl Workspace {
     /// Notes that cite the library read it directly, so they compile on their own.
     fn link_note_library(&mut self, id: &str, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
         let text = editor.read(cx).buffer.text().to_string();
-        if library::mode(&text, id) != Mode::None { return; }
-        let linked = library::link(&text, id);
+        if bibliography::mode(&text, id) != Mode::None { return; }
+        let linked = bibliography::link(&text, id);
         editor.update(cx, |e, cx| e.sync_text(&linked, cx));
         self.save_note(id, editor, cx);
     }

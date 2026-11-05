@@ -354,7 +354,7 @@ impl Workspace {
                 if e.folder { return None; }
                 if e.title.to_lowercase().contains(&q) {
                     Some((0, e))
-                } else if crate::library::without_block(&e.body).to_lowercase().contains(&q) {
+                } else if thesio_core::bibliography::without_block(&e.body).to_lowercase().contains(&q) {
                     Some((1, e))
                 } else {
                     None
@@ -367,7 +367,7 @@ impl Workspace {
 
     fn search_row(&self, hit: &Hit, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (glyph, info) = match hit {
-            Hit::Doc(e) => (entry_icon(e), result_info(e, q, snippet(&crate::library::without_block(&e.body), q), INFO_W, window)),
+            Hit::Doc(e) => (entry_icon(e), result_info(e, q, snippet(&thesio_core::bibliography::without_block(&e.body), q), INFO_W, window)),
             Hit::Source(row) => {
                 let title = if row.title.is_empty() { row.key.clone() } else { row.title.clone() };
                 let detail = ["Source", row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
