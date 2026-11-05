@@ -269,11 +269,19 @@ impl Theme {
     /// A light gray tint separates the sidebar from the white page while keeping wallpaper colors quiet.
     /// The document pane paints its own opaque white surface.
     pub fn window() -> Hsla { if crate::native_header::supported() { ca(craft::WINDOW, 0.) } else { ca(craft::WINDOW, 0.84) } }
-    /// Sidebar row label: text at 85%.
-    pub fn sidebar_text() -> Hsla { ca(craft::N900, 0.85) }
-    pub fn sidebar_hover() -> Hsla { ca(craft::N1000, 0.045) }
-    /// Selected sidebar row (measured #DEDEDF).
-    pub fn sidebar_selected() -> Hsla { ca(craft::N1000, 0.072) }
+    /// Lifts the sidebar off the glass behind it. Fully clear glass settles
+    /// near mid gray, where no text colour alone stays readable over a busy
+    /// wallpaper.
+    pub fn sidebar_veil() -> Hsla { ca(craft::N00, 0.5) }
+    /// Sidebar row label.
+    pub fn sidebar_text() -> Hsla { c(craft::N900) }
+    /// Sidebar glyphs: rows, folders, and the header buttons.
+    pub fn sidebar_icon() -> Hsla { ca(craft::N900, 0.8) }
+    /// A sidebar button that cannot be used.
+    pub fn sidebar_disabled() -> Hsla { ca(craft::N900, 0.45) }
+    pub fn sidebar_hover() -> Hsla { ca(craft::N1000, 0.07) }
+    /// Selected sidebar row.
+    pub fn sidebar_selected() -> Hsla { ca(craft::N1000, 0.11) }
     /// Section headers on the sidebar.
     pub fn sidebar_section() -> Hsla { c(0x333739) }
     /// Chrome glyphs (sidebar rows, header buttons): lighter than text so

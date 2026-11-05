@@ -53,7 +53,7 @@ pub(crate) fn footer_row(id: &'static str, glyph: &'static str, label: &'static 
         .line_height(px(20.))
         .text_color(Theme::sidebar_text())
         .hover(|s| s.bg(Theme::sidebar_hover()))
-        .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::icon())))
+        .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::sidebar_icon())))
         .child(label)
 }
 
@@ -141,7 +141,7 @@ impl Workspace {
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::sidebar_hover()))
                     .tip("Hide sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                    .child(icon("panel-left-close", 17., Theme::icon()))
+                    .child(icon("panel-left-close", 17., Theme::sidebar_icon()))
                     .on_click(cx.listener(|w, _, _, cx| {
                         w.sidebar_open = false;
                         cx.notify();
@@ -169,7 +169,7 @@ impl Workspace {
                 .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(
                     if on { on_glyph } else { glyph },
                     ROW_ICON,
-                    if on { Theme::text_code() } else { Theme::icon() },
+                    if on { Theme::text_code() } else { Theme::sidebar_icon() },
                 )))
                 .child(label)
                 .on_click(cx.listener(move |w, _, _, cx| w.show_view(view, cx)))
@@ -222,7 +222,7 @@ impl Workspace {
                         .child(match (on, enabled) {
                             (true, _) => icon(&format!("{name}-filled"), 17., Theme::text()),
                             (false, true) => icon(name, 17., Theme::text_code()),
-                            (false, false) => icon(name, 17., Theme::text_disabled()),
+                            (false, false) => icon(name, 17., Theme::sidebar_disabled()),
                         }),
                 )
         };
@@ -251,6 +251,7 @@ impl Workspace {
 
         div()
             .w(px(self.sidebar_w(window)))
+            .bg(Theme::sidebar_veil())
             .flex_none()
             .h_full()
             .flex()
@@ -356,7 +357,7 @@ impl Workspace {
                 .rounded(px(6.))
                 .cursor_pointer()
                 .hover(|s| s.bg(Theme::sidebar_hover()))
-                .child(icon(name, 16., Theme::text_caption()))
+                .child(icon(name, 16., Theme::sidebar_icon()))
         };
         let row = div().h(px(SECTION_H)).pl(px(4.)).pt(px(SECTION_TOP)).flex().items_center().group(group.clone());
         if let (1, Some(sel)) = (idx, self.batch.as_ref()) {
@@ -425,7 +426,7 @@ impl Workspace {
                 .child(
                     div()
                         .when(!folded, |d| d.opacity(0.).group_hover(group, |s| s.opacity(1.)))
-                        .child(icon(if folded { "chevron-right" } else { "chevron-down" }, 10., Theme::text_caption())),
+                        .child(icon(if folded { "chevron-right" } else { "chevron-down" }, 10., Theme::sidebar_icon())),
                 )
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.folded[idx] = !w.folded[idx];
@@ -663,7 +664,7 @@ impl Workspace {
                     let toggle = e.id.clone();
                     let open = self.expanded.contains(&e.id);
                     slot.hover(|s| s.bg(Theme::sidebar_selected()))
-                        .child(icon("tree-triangle", 9., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
+                        .child(icon("tree-triangle", 9., Theme::sidebar_icon()).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |w, _, _, cx| {
                             cx.stop_propagation();
@@ -681,7 +682,7 @@ impl Workspace {
                     _ => "file",
                 },
                 ROW_ICON,
-                if selected { Theme::text() } else { Theme::text_caption() },
+                if selected { Theme::text() } else { Theme::sidebar_icon() },
             )))
             .child(title)
             .when(!renaming && batch.is_none() && key == "doc" && e.folder, |d| d.child(self.add_button(e, key, cx)))
