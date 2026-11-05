@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `just start` to build and run a debug version.
+
 - Add a Library page for citations, backed by Hayagriva, with BibLaTeX import and export.
 - Add a citation picker, and embed cited entries in the top-level document or link the library file.
 - Preview an included file through the document that includes it.

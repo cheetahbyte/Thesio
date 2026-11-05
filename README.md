@@ -14,6 +14,8 @@ cargo build --release
 scripts/preview.sh                            # bundle and launch dist-preview/Thesio.app
 ```
 
+To build and run a debug version, install `just` and run `just start`.
+
 To build without the Metal Toolchain, compile shaders at startup instead: `cargo build --release --features gpui/runtime_shaders`.
 
 The default vault is `~/Documents/Thesio`. Set `THESIO_HOME` to use another folder.
