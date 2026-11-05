@@ -1,13 +1,13 @@
 //! The Library page: the table of entries, its selection, columns, and menus.
 
 use super::inspector::INSPECTOR_W;
-use crate::app::{Confirm, Workspace};
+use crate::confirm::Confirm;
+use crate::app::Workspace;
 use crate::library::{Library, Row, paper_file};
 use crate::input::TextField;
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme};
-use crate::trash::{list_header_text, list_line, menu_label, page_header};
-use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, menu_action, menu_glyph, menu_panel, menu_row, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
+use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, anchored_menu, icon, list_header_text, list_line, menu_action, menu_glyph, menu_label, menu_panel, menu_row, page_header, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -225,7 +225,7 @@ impl Workspace {
         let total = self.citations.library.as_ref().map_or(0, Library::len);
         let can_edit = self.citations.library.is_some();
         let menu_open = matches!(self.overlay, Some(Overlay::LibraryMenu));
-        let header = page_header(self, "Library", (total > 0).then_some(total), 26., cx)
+        let header = page_header(self, "Library", (total > 0).then_some(total), cx)
             .child(div().id("library-search").no_drag().w(px(220.)).mr(px(8.)).child(search_well(&self.citations.table.search, window, cx)))
             .when(can_edit, |d| d
                 .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).no_drag().tip(if self.citations.details.hidden { "Show details" } else { "Hide details" }, None)
@@ -260,7 +260,7 @@ impl Workspace {
                 .child(format!("{error}. Fix the file to use the Library; Thesio won't change it until it can be read."))).into_any_element();
         }
         if total == 0 {
-            return page.child(crate::trash::empty_state(Icon::Library, "Your library is empty", "Add an entry by identifier, or import a BibLaTeX file.")).into_any_element();
+            return page.child(crate::ui::empty_state(Icon::Library, "Your library is empty", "Add an entry by identifier, or import a BibLaTeX file.")).into_any_element();
         }
         if !tags.is_empty() {
             let chip = |id: ElementId, label: String, count: usize, filter: Option<String>, on: bool| {
@@ -313,7 +313,7 @@ impl Workspace {
         let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line()).children(headers).child(div().w(px(CITE_W)).flex_none());
         let count = rows.len();
         if count == 0 {
-            return page.child(table_header).child(crate::trash::empty_state(Icon::Search, "No results", "Try a different title, author, year, or key.")).into_any_element();
+            return page.child(table_header).child(crate::ui::empty_state(Icon::Search, "No results", "Try a different title, author, year, or key.")).into_any_element();
         }
         let can_cite = self.can_cite();
         let selected = self.citations.table.selected.clone();

@@ -57,12 +57,12 @@ impl Workspace {
                 .child(div().flex_none().text_color(Theme::text_caption()).child(crate::preview::format_count(count)))
         };
         let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current.as_ref() == Some(path))).collect::<Vec<_>>();
-        let panel = crate::trash::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()
+        let panel = crate::ui::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()
             .child(div().mb(px(10.)).text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Word Count"))
             .child(div().id("word-count-files").max_h(px(320.)).overflow_y_scroll().children(rows))
             .child(div().mt(px(6.)).pt(px(6.)).border_t_1().border_color(Theme::line_border()).child(row("Total".to_string(), total, true)))
             .child(div().mt(px(8.)).text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption()).child("Counts the text the document draws. The bibliography and page numbers are left out."))
-            .child(div().mt(px(14.)).flex().justify_end().child(crate::trash::secondary_button("word-count-close", "Close").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))));
+            .child(div().mt(px(14.)).flex().justify_end().child(crate::ui::secondary_button("word-count-close", "Close").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))));
         Some(modal("word-count-scrim", ModalAt::Center, false, panel, cx))
     }
 

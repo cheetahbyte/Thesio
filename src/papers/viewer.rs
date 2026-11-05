@@ -6,8 +6,7 @@ use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::native_pdf::Highlight;
 use crate::theme::Theme;
-use crate::trash::page_header;
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, toolbar_group, toolbar_icon, ui_para};
+use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, page_header, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::quote::printed_page;
 
@@ -148,7 +147,7 @@ impl Workspace {
         let title = self.paper_title(&id);
         let external = id.clone();
         let hidden = self.papers.panel.hidden;
-        let header = page_header(self, &title, None, 26., cx)
+        let header = page_header(self, &title, None, cx)
             .child(toolbar_group()
                 .child(toolbar_icon("paper-highlight", Icon::Highlight).no_drag().tip_label("Highlight Selection".to_string(), TipSide::Right)
                     .on_click(cx.listener(|w, _, _, cx| w.highlight_selection(cx))))

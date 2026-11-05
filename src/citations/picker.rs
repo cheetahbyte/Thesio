@@ -5,8 +5,7 @@ use crate::input::{TextField, TextFieldEvent};
 use crate::library::{PAPERS_DIR, Row, paper_file};
 use crate::overlay::Overlay;
 use crate::theme::Theme;
-use crate::trash::dialog;
-use crate::ui::{ModalAt, modal, plain_button, search_well, ui_text};
+use crate::ui::{ModalAt, dialog, modal, plain_button, search_well, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::path::PathBuf;
 

@@ -8,8 +8,7 @@ use crate::settings::display_title;
 use crate::store::Entry;
 use thesio_core::bibliography::without_block;
 use crate::theme::Theme;
-use crate::trash::{empty_state, page_header, primary_button, secondary_button};
-use crate::ui::{Icon, TipExt, format_visit};
+use crate::ui::{Icon, TipExt, empty_state, format_visit, page_header, primary_button, secondary_button};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -101,7 +100,7 @@ impl Workspace {
         // Too narrow for the search box: a search icon beside +, in the same style.
         let search = self.header_search(window, cx);
         let narrow = search.is_none();
-        let header = page_header(self, "Home", None, 26., cx).relative().children(search)
+        let header = page_header(self, "Home", None, cx).relative().children(search)
             .child(crate::ui::toolbar_group()
                 .when(narrow, |d| d.child(crate::ui::header_icon("home-search", Icon::Search)
                     .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))

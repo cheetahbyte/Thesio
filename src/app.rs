@@ -2,6 +2,7 @@
 //! (see `sidebar.rs`) and the editor on the right, with the
 //! 64px top bar (breadcrumb title + save status) above the page.
 
+use crate::confirm::Confirm;
 use crate::document::Edit;
 use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
@@ -145,17 +146,6 @@ pub enum SaveStatus {
     Failed(String),
 }
 
-/// Right-click / "…" menu on a sidebar row.
-#[derive(Clone, Debug)]
-pub struct RowMenu {
-    pub id: String,
-    pub pos: Point<Pixels>,
-    /// Which corner of the menu sits at `pos`.
-    pub corner: Corner,
-    /// The selection menu for the checked rows.
-    pub batch: bool,
-}
-
 /// What the main pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -168,28 +158,6 @@ pub enum View {
     Trash,
     Settings,
 }
-
-/// A confirmation dialog and the pages it is about.
-pub enum Confirm {
-    /// Delete to Trash; `batch` for the selected rows.
-    Delete { ids: Vec<String>, batch: bool },
-    /// Trash → Restore.
-    Restore(String),
-    /// Trash → Delete permanently.
-    Purge(String),
-    /// Library → delete these entries.
-    DeleteEntries(Vec<String>),
-    /// Library → change an entry to a type without a parent.
-    ChangeSourceType { key: String, kind: &'static thesio_core::source_type::SourceType },
-    /// Library → remove a tag from every entry.
-    DeleteTag(String),
-    /// The open document could not be written before it was to be replaced
-    /// (another document, New, Quit): Retry / Discard changes, then carry on.
-    SaveFailed(AfterSave),
-}
-
-/// What to do once the open document is safely on disk (or its changes given up).
-pub type AfterSave = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
 /// Inline rename of a sidebar row.
 pub struct Rename {
@@ -749,6 +717,12 @@ impl Workspace {
         self.clear_overlay(cx);
         self.view = view;
         if view != View::Paper { self.papers.pdf.close(); }
+    }
+
+    pub(crate) fn show_warnings(&mut self, warnings: &[String], cx: &mut Context<Self>) {
+        if !warnings.is_empty() {
+            self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx);
+        }
     }
 
     /// A success toast (Deleted successfully, Moved successfully …).

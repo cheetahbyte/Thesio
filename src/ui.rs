@@ -157,6 +157,62 @@ pub fn menu_action(cx: &Context<Workspace>, action: impl Fn(&mut Workspace, &mut
     })
 }
 
+/// The page header, as tall as the document's so the header pills sit in
+/// the same place: a 17pt semibold view title, and the open-sidebar
+/// button when the sidebar is hidden.
+pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx: &mut Context<Workspace>) -> Stateful<Div> {
+    div()
+        .id("page-header")
+        .h(px(crate::app::HEADER_H))
+        .flex_none()
+        .flex()
+        .items_center()
+        // Clear of the traffic lights, like the document header.
+        .pl(if ws.sidebar_open { px(26.) } else { px(theme::TRAFFIC_LIGHTS_W) })
+        .pr(px(header_right_inset()))
+        .title_bar()
+        .when(!ws.sidebar_open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
+        .when(!ws.sidebar_open && !cfg!(target_os = "windows"), |d| {
+            d.child(
+                div()
+                    .id("open-sidebar")
+                    .no_drag()
+                    .flex_none()
+                    .ml(px(4.))
+                    .mr(px(12.))
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(8.))
+                    .cursor_pointer()
+                    .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
+                    .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
+                    .on_click(cx.listener(|w, _, _, cx| {
+                        w.sidebar_open = true;
+                        cx.notify();
+                    })),
+            )
+        })
+        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
+        .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
+        .child(div().flex_1())
+}
+
+/// Centred empty state: a large glyph, a title, and a caption.
+pub fn empty_state(glyph: Icon, title: &'static str, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .pb(px(64.))
+        .child(icon(glyph, 44., Theme::text_placeholder()))
+        .child(div().mt(px(14.)).text_size(px(15.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().mt(px(2.)).text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(text))
+}
+
 /// The primary button: a flat accent fill, a white 13pt label.
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     colored_button(id, label, false)

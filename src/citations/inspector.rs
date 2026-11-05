@@ -1,11 +1,11 @@
 //! The panel beside the table that edits the selected entry.
 
-use crate::app::{Confirm, View, Workspace};
+use crate::app::{View, Workspace};
+use crate::confirm::Confirm;
 use crate::input::{TextField, TextFieldEvent};
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme, craft};
-use crate::trash::{list_line, menu_label};
-use crate::ui::{Icon, ToastKind, anchored_menu, icon, menu_action, menu_glyph, menu_panel, menu_row, ui_text};
+use crate::ui::{Icon, ToastKind, anchored_menu, icon, list_line, menu_action, menu_glyph, menu_label, menu_panel, menu_row, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::references::citations_of;
 use thesio_core::source_type::{Field, JOURNAL_ARTICLE, SOURCE_TYPES, SourceType};

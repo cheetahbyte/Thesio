@@ -1,12 +1,12 @@
 //! Tags: the filter chips' menu, renaming, and the tag editor popover.
 
-use crate::app::{Confirm, Workspace};
+use crate::confirm::Confirm;
+use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::library::Row;
 use crate::overlay::Overlay;
 use crate::theme::Theme;
-use crate::trash::menu_label;
-use crate::ui::{Icon, ToastKind, anchored_menu, field_well, icon, menu_action, menu_glyph, menu_panel, menu_row, popover};
+use crate::ui::{Icon, ToastKind, anchored_menu, field_well, icon, menu_action, menu_glyph, menu_label, menu_panel, menu_row, popover};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 

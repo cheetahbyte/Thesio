@@ -2,7 +2,8 @@
 //! no panel, border or shadow, straight on the window surface (only the note
 //! floats). 30pt rows on a 31pt pitch, selection pill radius 9.
 
-use crate::app::{Confirm, RowMenu, View, Workspace};
+use crate::app::{View, Workspace};
+use crate::confirm::Confirm;
 use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
@@ -63,6 +64,17 @@ pub(crate) fn footer_slot(row: impl IntoElement) -> Div {
 }
 
 pub(crate) fn footer_line() -> Div { div().flex_none().mx(px(17.)).h(px(1.)).bg(Theme::sidebar_divider()) }
+
+/// Right-click / "…" menu on a sidebar row.
+#[derive(Clone, Debug)]
+pub struct RowMenu {
+    pub id: String,
+    pub pos: Point<Pixels>,
+    /// Which corner of the menu sits at `pos`.
+    pub corner: Corner,
+    /// The selection menu for the checked rows.
+    pub batch: bool,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Check {

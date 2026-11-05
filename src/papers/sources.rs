@@ -1,13 +1,13 @@
 //! The Sources page: the papers in the vault.
 
-use crate::app::{RowMenu, Workspace};
+use crate::app::Workspace;
+use crate::sidebar::RowMenu;
 use crate::citations::picker::PickFor;
 use crate::citations::table::{CELL_X, Col, ROW_H, TABLE_X, column, column_spec};
 use crate::library::{Library, Row, paper_file};
 use crate::overlay::Overlay;
 use crate::theme::{self, Theme};
-use crate::trash::{list_header_text, list_line, page_header};
-use crate::ui::{Icon, TipExt, TitleBarExt, primary_icon_button, ui_text};
+use crate::ui::{Icon, TipExt, TitleBarExt, list_header_text, list_line, page_header, primary_icon_button, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::paths::{base_name, natural_cmp};
 
@@ -22,14 +22,14 @@ impl Workspace {
         }).collect();
         papers.sort_by(|a, b| natural_cmp(&a.2, &b.2));
         let fetching = self.papers.fetching;
-        let header = page_header(self, "Sources", (!papers.is_empty()).then_some(papers.len()), 26., cx)
+        let header = page_header(self, "Sources", (!papers.is_empty()).then_some(papers.len()), cx)
             .when(fetching > 0, |d| d.child(div().mr(px(12.)).text_size(px(13.)).text_color(Theme::text_caption()).child(if fetching == 1 { "Downloading 1 paper…".to_string() } else { format!("Downloading {fetching} papers…") })))
             .child(primary_icon_button("sources-add", Icon::Plus, "Add").no_drag().tip("Add a PDF", None).on_click(cx.listener(|w, _, window, cx| {
                 w.choose_pdf(window, cx, |w, path, window, cx| w.open_source_picker(PickFor::Attach(path), window, cx));
             })));
         let page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
         if papers.is_empty() {
-            return page.child(crate::trash::empty_state(Icon::Paper, "No papers yet", "Open-access papers download here, or add a PDF yourself.")).into_any_element();
+            return page.child(crate::ui::empty_state(Icon::Paper, "No papers yet", "Open-access papers download here, or add a PDF yourself.")).into_any_element();
         }
         let table_header = div().h(px(26.)).flex_none().mx(px(TABLE_X)).px(px(CELL_X)).flex().items_center().border_b_1().border_color(list_line())
             .text_size(px(12.)).line_height(px(24.)).text_color(list_header_text())

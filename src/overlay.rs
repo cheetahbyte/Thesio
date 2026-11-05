@@ -1,13 +1,14 @@
 //! What floats over the window: one menu or dialog at a time. Opening one
 //! replaces the last, Esc closes it, and focus goes back where it was.
 
-use crate::app::{AfterSave, Confirm, RowMenu, View, Workspace};
+use crate::app::{View, Workspace};
+use crate::confirm::{AfterSave, Confirm};
 use crate::citations::lookup::Lookup;
 use crate::citations::picker::CitePicker;
 use crate::citations::tags::{TagEditor, TagRename};
 use crate::history::History;
 use crate::papers::quote::QuoteDialog;
-use crate::sidebar::ROW_MENU_W;
+use crate::sidebar::{ROW_MENU_W, RowMenu};
 use crate::tree::MoveDialog;
 use gpui::*;
 

@@ -2,7 +2,8 @@
 //! document. A failed save keeps the changes pending and asks before anything
 //! replaces them. Everything else that fails says so in a toast.
 
-use crate::app::{AfterSave, SaveStatus, View, Workspace};
+use crate::app::{SaveStatus, View, Workspace};
+use crate::confirm::AfterSave;
 use crate::ui::ToastKind;
 use gpui::*;
 use std::time::Duration;

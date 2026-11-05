@@ -7,6 +7,7 @@ mod window_size;
 mod assets;
 mod citations;
 mod clipboard;
+mod confirm;
 mod devtools;
 mod docmenu;
 mod document;

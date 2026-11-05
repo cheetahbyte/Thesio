@@ -8,8 +8,7 @@ use crate::store::Entry;
 use thesio_core::paths::{is_within, natural_cmp};
 use crate::theme::{self, Theme, craft};
 use crate::overlay::Overlay;
-use crate::trash::{close_button, dialog, primary_button, secondary_button};
-use crate::ui::{Icon, ModalAt, ROW_RADIUS, icon, ui_text};
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, close_button, dialog, icon, primary_button, secondary_button, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::{HashMap, HashSet};
 

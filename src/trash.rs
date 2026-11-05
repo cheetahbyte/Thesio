@@ -1,17 +1,15 @@
-//! Trash page and the confirmation dialogs (Delete, Restore, Delete permanently).
-//! Deleted pages wait in the library's `trash/` for 30 days; each row is a
+//! The Trash page. Deleted pages wait in the library's `trash/` for 30 days; each row is a
 //! deleted page together with the child pages that went with it.
 
-use crate::app::{Confirm, Workspace};
+use crate::app::Workspace;
+use crate::confirm::Confirm;
 use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
-pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, secondary_button};
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::overlay::Overlay;
-use crate::ui::{Icon, ModalAt, ROW_RADIUS, TipExt, TitleBarExt, anchored_menu, icon, menu_panel, ui_para, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, TipExt, anchored_menu, empty_state, icon, list_header_text, list_line, menu_label, menu_panel, page_header, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use thesio_core::references::cited_keys;
 
 pub const TRASH_MENU_W: f32 = 160.;
 
@@ -20,62 +18,6 @@ fn remaining(deleted: u64) -> String {
     let end = deleted + TRASH_DAYS * 86_400;
     let left = end.saturating_sub(crate::time::now());
     if left < 86_400 { "Deleting soon".into() } else { format!("{} days", left.div_ceil(86_400)) }
-}
-
-/// The page header, as tall as the document's so the header pills sit in
-/// the same place: a 17pt semibold view title, and the open-sidebar
-/// button when the sidebar is hidden.
-pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, left: f32, cx: &mut Context<Workspace>) -> Stateful<Div> {
-    div()
-        .id("page-header")
-        .h(px(crate::app::HEADER_H))
-        .flex_none()
-        .flex()
-        .items_center()
-        // Clear of the traffic lights, like the document header.
-        .pl(if ws.sidebar_open { px(left) } else { px(theme::TRAFFIC_LIGHTS_W) })
-        .pr(px(crate::ui::header_right_inset()))
-        .title_bar()
-        .when(!ws.sidebar_open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
-        .when(!ws.sidebar_open && !cfg!(target_os = "windows"), |d| {
-            d.child(
-                div()
-                    .id("open-sidebar")
-                    .no_drag()
-                    .flex_none()
-                    .ml(px(4.))
-                    .mr(px(12.))
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.))
-                    .cursor_pointer()
-                    .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                    .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
-                    .on_click(cx.listener(|w, _, _, cx| {
-                        w.sidebar_open = true;
-                        cx.notify();
-                    })),
-            )
-        })
-        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
-        .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
-        .child(div().flex_1())
-}
-
-/// Centred empty state: a large glyph, a title, and a caption.
-pub(crate) fn empty_state(glyph: Icon, title: &'static str, text: &'static str) -> Div {
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .pb(px(64.))
-        .child(icon(glyph, 44., Theme::text_placeholder()))
-        .child(div().mt(px(14.)).text_size(px(15.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).child(title))
-        .child(div().mt(px(2.)).text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(text))
 }
 
 impl Workspace {
@@ -88,7 +30,7 @@ impl Workspace {
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let header = page_header(self, "Trash", None, 26., cx).child(crate::ui::toolbar_group().child(
+        let header = page_header(self, "Trash", None, cx).child(crate::ui::toolbar_group().child(
             crate::ui::header_icon("trash-search", Icon::Search)
                 .tip_label("Search (⌘ + J)".into(), crate::ui::TipSide::Below)
                 .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(crate::app::FocusSearch), cx))),
@@ -198,7 +140,7 @@ impl Workspace {
         anchored_menu(corner, position, menu)
     }
 
-    fn restore_doc(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn restore_doc(&mut self, id: &str, cx: &mut Context<Self>) {
         let mut warnings = vec![];
         let result = self.store.borrow_mut().restore(id);
         match result {
@@ -216,7 +158,7 @@ impl Workspace {
         self.show_warnings(&warnings, cx);
     }
 
-    fn purge_doc(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn purge_doc(&mut self, id: &str, cx: &mut Context<Self>) {
         let result = self.store.borrow_mut().purge(id);
         match result {
             Ok(()) => self.show_toast("Permanently deleted", cx),
@@ -230,101 +172,5 @@ impl Workspace {
         let warnings = self.store.borrow_mut().purge_expired();
         self.trash = self.store.borrow().list_trash();
         self.show_warnings(&warnings, cx);
-    }
-
-    pub(crate) fn show_warnings(&mut self, warnings: &[String], cx: &mut Context<Self>) {
-        if !warnings.is_empty() {
-            self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx);
-        }
-    }
-
-    /// The confirmation dialog: a modal (white, radius 16), a 15pt
-    /// semibold title, one line of 13pt body, Cancel and the action button on
-    /// the right.
-    pub(crate) fn render_confirm(&self, c: &Confirm, cx: &mut Context<Self>) -> AnyElement {
-        let title_of = |id: &str| {
-            self.entries
-                .iter()
-                .find(|e| e.id == id)
-                .map(|e| display_title(&e.title))
-                .or_else(|| self.trash.iter().find(|t| t.id == id).map(|t| display_title(&t.title)))
-                .unwrap_or_default()
-        };
-        let (title, body, action, danger) = match c {
-            Confirm::Delete { ids, batch } => (
-                if *batch || ids.len() > 1 { format!("Delete the {} selected items?", ids.len()) } else { format!("Delete {}?", title_of(&ids[0])) },
-                "Deleted items will be moved to Trash and permanently deleted after 30 days.".to_string(),
-                "Delete",
-                true,
-            ),
-            Confirm::Restore(_) => ("Restore this document?".to_string(), "The document will be restored to its original location.".to_string(), "Restore", false),
-            Confirm::Purge(_) => ("Delete permanently?".to_string(), "This page and its child pages cannot be recovered after permanent deletion.".to_string(), "Delete", true),
-            Confirm::DeleteEntries(keys) => {
-                let citing = self.entries.iter().filter(|e| e.typst && { let cited = cited_keys(&e.body); keys.iter().any(|key| cited.contains(key)) }).count();
-                let (it, title) = match keys.as_slice() {
-                    [key] => ("it", format!("Delete {key}?")),
-                    keys => ("them", format!("Delete {} entries?", keys.len())),
-                };
-                let effect = match citing {
-                    0 => format!("No document cites {it}."),
-                    1 => format!("1 document cites {it} and will show an error."),
-                    n => format!("{n} documents cite {it} and will show an error."),
-                };
-                (title, format!("This removes {it} from the library and cannot be undone. {effect}"), "Delete", true)
-            }
-            Confirm::ChangeSourceType { kind, .. } => (format!("Change to {}?", kind.label), "This removes the publication it appeared in, along with that publication's details. It cannot be undone.".to_string(), "Change", true),
-            Confirm::DeleteTag(tag) => {
-                let count = self.tag_count(tag);
-                let entries = if count == 1 { "1 entry".to_string() } else { format!("{count} entries") };
-                (format!("Delete the tag {tag}?"), format!("This removes it from {entries}. The entries stay in the library."), "Delete", true)
-            }
-            Confirm::SaveFailed(_) => (
-                "Could not save document".to_string(),
-                format!("{}. Retry, or cancel and export a copy using More → Export as PDF. Discarding changes will lose your unsaved work.", self.save_error()),
-                "Retry",
-                false,
-            ),
-        };
-        let ok = if danger { crate::ui::danger_button("confirm-ok", action) } else { primary_button("confirm-ok", action) };
-        let dialog = dialog("confirm-dialog")
-            .w(px(400.))
-            .px(px(24.))
-            .pt(px(20.))
-            .pb(px(24.))
-            .child(div().text_size(px(15.)).line_height(px(22.)).font_weight(FontWeight::SEMIBOLD).child(ui_para(title)))
-            .child(div().mt(px(8.)).text_size(px(13.)).line_height(px(20.)).text_color(Theme::text()).child(ui_para(body)))
-            .child(
-                div()
-                    .mt(px(24.))
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(div().flex_1())
-                    .child(secondary_button("confirm-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
-                    .when(matches!(c, Confirm::SaveFailed(_)), |d| {
-                        d.child(secondary_button("confirm-discard", "Discard changes").text_color(Theme::danger()).on_click(cx.listener(|w, _, window, cx| {
-                            if let Some(Overlay::Confirm(Confirm::SaveFailed(then))) = w.take_overlay(window, cx) { w.resolve_save_failed(false, then, window, cx); }
-                        })))
-                    })
-                    .child(ok.on_click(cx.listener(|w, _, window, cx| {
-                        let Some(Overlay::Confirm(c)) = w.take_overlay(window, cx) else { return };
-                        match c {
-                            Confirm::Delete { ids, batch } => {
-                                if batch {
-                                    w.batch = None;
-                                }
-                                w.delete_docs(&ids, window, cx);
-                            }
-                            Confirm::Restore(id) => w.restore_doc(&id, cx),
-                            Confirm::Purge(id) => w.purge_doc(&id, cx),
-                            Confirm::DeleteEntries(keys) => w.delete_entries(&keys, cx),
-                            Confirm::DeleteTag(tag) => w.delete_tag(&tag, cx),
-                            Confirm::ChangeSourceType { key, kind } => w.set_source_type(&key, kind, window, cx),
-                            Confirm::SaveFailed(then) => w.resolve_save_failed(true, then, window, cx),
-                        }
-                        cx.notify();
-                    }))),
-            );
-        crate::ui::modal("confirm-mask", ModalAt::Center, false, dialog, cx)
     }
 }
