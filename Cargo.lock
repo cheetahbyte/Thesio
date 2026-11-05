@@ -6353,7 +6353,6 @@ name = "thesio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "core-foundation 0.10.0",
  "core-graphics 0.24.0",
  "dirs 7.0.0",
  "foreign-types",
@@ -6365,7 +6364,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thesio_core",
- "unicode-segmentation",
 ]
 
 [[package]]
