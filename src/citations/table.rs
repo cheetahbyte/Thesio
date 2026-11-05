@@ -36,6 +36,18 @@ const COLS: [(Col, &str, Option<f32>); 6] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Col { Title, Authors, Year, Kind, Tags, Key }
 
+impl Col {
+    /// The name its width is saved under.
+    fn key(self) -> &'static str {
+        match self { Col::Title => "title", Col::Authors => "authors", Col::Year => "year", Col::Kind => "kind", Col::Tags => "tags", Col::Key => "key" }
+    }
+}
+
+/// Saved widths, by `Col::key`. Older preferences name a column by its label.
+fn saved_widths() -> BTreeMap<String, f32> {
+    crate::preferences::prefs().library_columns.into_iter().map(|(name, width)| (COLS.iter().find(|(_, label, _)| *label == name).map_or(name, |(col, ..)| col.key().to_string()), width)).collect()
+}
+
 /// A column's box in a header or row: a fixed width, or what is left.
 pub(crate) fn column(width: Option<f32>) -> Div {
     div().when_some(width, |d, w| d.w(px(w)).flex_none()).when(width.is_none(), |d| d.flex_1().min_w_0()).pr(px(CELL_X))
@@ -57,10 +69,10 @@ pub(crate) fn cell(row: &Row, col: Col) -> Cow<'_, str> {
     }
 }
 
-/// A column being resized: its name, and the pointer and width at the start.
+/// A column being resized, and the pointer and width at the start.
 #[derive(Clone, Copy)]
 pub(crate) struct ColumnDrag {
-    name: &'static str,
+    col: Col,
     start_x: Pixels,
     start_width: f32,
 }
@@ -85,7 +97,7 @@ pub(crate) struct Table {
 
 impl Table {
     pub(crate) fn new(search: Entity<TextField>, cx: &mut Context<Workspace>) -> Self {
-        Self { search, sort: (Col::Title, true), selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: crate::preferences::prefs().library_columns, column_drag: None }
+        Self { search, sort: (Col::Title, true), selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: saved_widths(), column_drag: None }
     }
 }
 
@@ -162,8 +174,8 @@ impl Workspace {
         self.table_changed(window, cx);
     }
 
-    pub(crate) fn column_width(&self, name: &str, default: f32) -> f32 {
-        self.citations.table.widths.get(name).copied().unwrap_or(default)
+    pub(crate) fn column_width(&self, col: Col, default: f32) -> f32 {
+        self.citations.table.widths.get(col.key()).copied().unwrap_or(default)
     }
 
     pub(crate) fn import_bib(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -213,9 +225,9 @@ impl Workspace {
         let header = page_header(self, "Library", (total > 0).then_some(total), cx)
             .child(div().id("library-search").no_drag().w(px(220.)).mr(px(8.)).child(search_well(&self.citations.table.search, window, cx)))
             .when(can_edit, |d| d
-                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).no_drag().tip(if self.citations.details.hidden { "Show details" } else { "Hide details" }, None)
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).tip(if self.citations.details.hidden { "Show details" } else { "Hide details" }, None)
                     .on_click(cx.listener(|w, _, window, cx| w.set_details_hidden(!w.citations.details.hidden, window, cx)))))
-                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(menu_open, |d| d.bg(Theme::fill_hover_strong())).tip("More", None)
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).when(menu_open, |d| d.bg(Theme::fill_hover_strong())).tip("More", None)
                     .on_click(cx.listener(move |w, _, window, cx| if menu_open { w.close_overlay(window, cx); } else { w.open_overlay(Overlay::LibraryMenu, window, cx); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
         let table = self.render_library_table(&tags, rows, total, window, cx);
@@ -230,7 +242,7 @@ impl Workspace {
         let panel = if self.citations.details.panel.is_some() { INSPECTOR_W } else { 0. };
         let sidebar = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
         let room = f32::from(window.viewport_size().width) - sidebar - panel - 2. * (TABLE_X + CELL_X) - CITE_W - MIN_TITLE_W;
-        let mut columns: Vec<_> = COLS.iter().map(|(col, label, width)| (*col, *label, width.map(|w| self.column_width(label, w)))).collect();
+        let mut columns: Vec<_> = COLS.iter().map(|(col, label, width)| (*col, *label, width.map(|w| self.column_width(*col, w)))).collect();
         for col in [Col::Key, Col::Kind, Col::Tags, Col::Year, Col::Authors] {
             if columns.iter().filter_map(|(.., width)| *width).sum::<f32>() <= room { break; }
             columns.retain(|(c, ..)| *c != col);
@@ -268,9 +280,9 @@ impl Workspace {
         }
         let (sort_col, ascending) = self.citations.table.sort;
         let visible = self.visible_columns(window);
-        let dragged = self.citations.table.column_drag.map(|drag| drag.name);
+        let dragged = self.citations.table.column_drag.map(|drag| drag.col);
         let headers = visible.iter().enumerate().map(|(i, (col, label, width))| {
-            let (col, name) = (*col, *label);
+            let col = *col;
             let sorted = sort_col == col;
             let start_width = *width;
             column(*width).id(*label).relative()
@@ -286,11 +298,11 @@ impl Workspace {
                 // Columns hang from the right edge, so a column's left edge is what moves.
                 .when_some(start_width, |d, start_width| d.child(
                     div().id(("library-column-resize", i)).absolute().top_0().bottom_0().left(px(-(CELL_X + 4.))).w(px(9.)).cursor(CursorStyle::ResizeLeftRight)
-                        .child(div().absolute().top_0().bottom_0().left(px(4.)).w(px(1.)).when(dragged == Some(name), |d| d.bg(Theme::primary())))
+                        .child(div().absolute().top_0().bottom_0().left(px(4.)).w(px(1.)).when(dragged == Some(col), |d| d.bg(Theme::primary())))
                         .on_click(|_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Left, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
                             cx.stop_propagation();
-                            w.citations.table.column_drag = Some(ColumnDrag { name, start_x: ev.position.x, start_width });
+                            w.citations.table.column_drag = Some(ColumnDrag { col, start_x: ev.position.x, start_width });
                             cx.notify();
                         }))
                 ))
@@ -406,7 +418,7 @@ impl Workspace {
             .on_mouse_move(cx.listener(move |w, ev: &MouseMoveEvent, _, cx| {
                 if ev.pressed_button != Some(MouseButton::Left) { return end(w, cx); }
                 let width = drag.start_width - f32::from(ev.position.x - drag.start_x);
-                w.citations.table.widths.insert(drag.name.to_string(), width.clamp(MIN_COLUMN_W, MAX_COLUMN_W));
+                w.citations.table.widths.insert(drag.col.key().to_string(), width.clamp(MIN_COLUMN_W, MAX_COLUMN_W));
                 cx.notify();
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))

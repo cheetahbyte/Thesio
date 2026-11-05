@@ -52,8 +52,8 @@ pub(crate) fn nav_row(id: impl Into<ElementId>, glyph: Icon, label: &'static str
         .cursor_pointer()
         .text_size(px(13.))
         .line_height(px(20.))
-        .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-        .when(!on, |d| d.text_color(Theme::sidebar_text()))
+        .text_color(Theme::text())
+        .when(on, |d| d.bg(Theme::sidebar_selected()))
         .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::sidebar_glyph())))
         .child(label)
 }
@@ -70,8 +70,6 @@ pub(crate) fn footer_line() -> Div { div().flex_none().mx(px(17.)).h(px(1.)).bg(
 pub struct RowMenu {
     pub id: String,
     pub pos: Point<Pixels>,
-    /// Which corner of the menu sits at `pos`.
-    pub corner: Corner,
     /// The selection menu for the checked rows.
     pub batch: bool,
 }
@@ -207,7 +205,7 @@ impl Workspace {
 
         // The footer holds one row: Settings (Storage and Trash live in Settings).
         // The Selection mode toolbar keeps the footer glyphs: bare on the sidebar.
-        let footer_btn = |id: &'static str, name: Icon, tip: &'static str, enabled: bool, on: bool| {
+        let footer_btn = |id: &'static str, name: Icon, tip: &'static str, enabled: bool| {
             div()
                 .id(id)
                 .flex_none()
@@ -215,20 +213,7 @@ impl Workspace {
                 .h(px(32.))
                 .when(enabled, |d| d.cursor_pointer())
                 .tip(tip, None)
-                .child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(8.))
-                        .when(on, |d| d.bg(Theme::sidebar_selected()))
-                        .child(match (on, enabled) {
-                            (true, _) => icon(name, 17., Theme::text()),
-                            (false, true) => icon(name, 17., Theme::text_code()),
-                            (false, false) => icon(name, 17., Theme::sidebar_disabled()),
-                        }),
-                )
+                .child(div().size_full().flex().items_center().justify_center().child(icon(name, 17., if enabled { Theme::text_code() } else { Theme::sidebar_disabled() })))
         };
         let some = self.batch.as_ref().is_some_and(|b| !b.is_empty());
         // Settings; in Settings the same row reads Back (`settings.rs`), so one spot toggles.
@@ -243,13 +228,13 @@ impl Workspace {
                         .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Settings, window, cx))),
                 ))
             })
-            // Selection mode toolbar: Duplicate | Move to | Delete, minus the cloud ones.
+            // Selection mode toolbar: Duplicate | Move to | Delete.
             .when(self.batch.is_some(), |d| {
                 d.child(
                     div().h(px(46.)).mx(px(SB_X + 6. + 10. - 18.)).flex().items_center().gap(px(4.))
-                        .child(footer_btn("bt-copy", Icon::Copy, "Duplicate", some, false).on_click(cx.listener(|w, _, _, cx| w.batch_copy(cx))))
-                        .child(footer_btn("bt-move", Icon::Move, "Move to", some, false).on_click(cx.listener(|w, _, window, cx| w.batch_move(window, cx))))
-                        .child(footer_btn("bt-delete", Icon::Delete, "Delete", some, false).on_click(cx.listener(|w, _, window, cx| w.ask_batch_delete(window, cx)))),
+                        .child(footer_btn("bt-copy", Icon::Copy, "Duplicate", some).on_click(cx.listener(|w, _, _, cx| w.batch_copy(cx))))
+                        .child(footer_btn("bt-move", Icon::Move, "Move to", some).on_click(cx.listener(|w, _, window, cx| w.batch_move(window, cx))))
+                        .child(footer_btn("bt-delete", Icon::Delete, "Delete", some).on_click(cx.listener(|w, _, window, cx| w.ask_batch_delete(window, cx)))),
                 )
             });
 
@@ -508,7 +493,7 @@ impl Workspace {
                     if batch && !w.batch.as_ref().is_some_and(|b| b.contains(&id2)) && !w.toggle_check(&id2) {
                         return;
                     }
-                    w.open_overlay(Overlay::RowMenu(RowMenu { id: id2.clone(), pos: ev.position, corner: Corner::TopLeft, batch }), window, cx);
+                    w.open_overlay(Overlay::RowMenu(RowMenu { id: id2.clone(), pos: ev.position, batch }), window, cx);
                 }),
             )
     }
@@ -529,7 +514,7 @@ impl Workspace {
                 .rounded(px(6.))
                 .bg(crate::theme::raised(Theme::bg_body()))
                 .border_1()
-                .border_color(Theme::primary_500())
+                .border_color(Theme::primary())
                 .text_size(px(13.))
                 .child(field)
                 .into_any_element(),
@@ -543,7 +528,7 @@ impl Workspace {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_color(if selected { Theme::text() } else { Theme::sidebar_text() })
+                .text_color(Theme::text())
                 .child(ui_text(display_title(&e.title)))
                 .into_any_element(),
         };
@@ -626,7 +611,7 @@ impl Workspace {
         let item = |id, ic, label| item_c(id, ic, label, Theme::text(), Theme::text_code());
         let divider = || div().mx(px(8.)).my(px(5.)).h(px(1.)).bg(Theme::line_border());
         if m.batch {
-            // Right-click in Selection mode: the batch menu minus Add shortcut to, Transfer ownership.
+            // Right-click in Selection mode: the batch menu.
             let n = self.batch.as_ref().map_or(0, |b| b.len());
             let menu = menu_panel("batch-menu", ROW_MENU_W, cx)
                 .px(px(5.))
@@ -634,7 +619,7 @@ impl Workspace {
                 .child(item("bm-copy", Icon::Copy, "Duplicate").on_click(menu_action(cx, |w, _, cx| w.batch_copy(cx))))
                 .child(item("bm-move", Icon::Move, "Move to").on_click(menu_action(cx, |w, window, cx| w.batch_move(window, cx))))
                 .child(item("bm-delete", Icon::Delete, "Delete").on_click(menu_action(cx, |w, window, cx| w.ask_batch_delete(window, cx))));
-            return Some(anchored_menu(m.corner, m.pos, menu));
+            return Some(anchored_menu(Corner::TopLeft, m.pos, menu));
         }
         let id = m.id.clone();
         let mut menu = menu_panel("row-menu", ROW_MENU_W, cx).px(px(5.));
@@ -677,6 +662,6 @@ impl Workspace {
                 .child(divider())
                 .child(item_c("rm-del", Icon::Delete, "Delete", Theme::danger(), Theme::danger()).on_click(menu_action(cx, move |w, window, cx| w.ask_delete(&del, window, cx))));
         }
-        Some(anchored_menu(m.corner, m.pos, menu))
+        Some(anchored_menu(Corner::TopLeft, m.pos, menu))
     }
 }

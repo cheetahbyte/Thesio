@@ -19,12 +19,10 @@ static DARK: AtomicBool = AtomicBool::new(false);
 static ACCENT: AtomicU32 = AtomicU32::new(craft::B500);
 
 thread_local! {
-    /// Exports and printing draw light whatever the window shows.
-    static FORCE_LIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ADAPTED: std::cell::RefCell<std::collections::HashMap<[u32; 4], Hsla>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-pub fn dark() -> bool { DARK.load(Ordering::Relaxed) && !FORCE_LIGHT.with(|f| f.get()) }
+pub fn dark() -> bool { DARK.load(Ordering::Relaxed) }
 /// The accent as `0xrrggbb`: the system's on macOS, else `craft::B500`.
 pub fn accent() -> u32 { ACCENT.load(Ordering::Relaxed) }
 
@@ -130,75 +128,36 @@ pub fn mix(a: u32, b: u32, t: f32) -> Hsla {
     ta(m(ch(16)), m(ch(8)), m(ch(0)), 1.)
 }
 
-/// The palette on the ramp names the code was written against
-/// (`N*` neutrals, `R*` / `O*` reds and oranges), so every
-/// `craft::N300` still means "border", `N600` "secondary text" and so on.
-/// Neutrals are measured greys; `R*` / `O*` are Tailwind v4 ramps.
-#[allow(dead_code)]
+/// The palette: `N*` neutrals are measured greys, `R*` a Tailwind v4 ramp.
 pub mod craft {
     pub const N00: u32 = 0xffffff;
-    /// Code block fill.
-    pub const N50: u32 = 0xfbfbfb;
-    /// Popover / quick-entry body.
+    /// Popover body.
     pub const N100: u32 = 0xf7f7f7;
-    /// Inactive chrome.
-    pub const N200: u32 = 0xf1f2f3;
-    /// Code block border, card hairlines (opaque on white).
-    pub const N300: u32 = 0xeaebeb;
-    /// Selected sidebar row, opaque.
-    pub const N350: u32 = 0xdedfe0;
-    pub const N400: u32 = 0xc9cacb;
     /// Quaternary text, inactive glyphs.
     pub const N500: u32 = 0x9c9fa0;
     /// Secondary text (dates, meta).
     pub const N600: u32 = 0x737477;
-    pub const N650: u32 = 0x5d6064;
     /// Sidebar rows (text at 85% on the sidebar).
     pub const N700: u32 = 0x3f4143;
     /// Toolbar glyphs.
     pub const N800: u32 = 0x303335;
     /// Text (`.page` color).
     pub const N900: u32 = 0x1f2225;
-    pub const N950: u32 = 0x141517;
     pub const N1000: u32 = 0x000000;
     /// The accent where the system offers none (see [`super::accent`]), and syntax and search hits.
     pub const B500: u32 = 0x4c6ef5;
     pub const B700: u32 = 0x3751c0;
-    pub const R50: u32 = 0xfef2f2;
-    pub const R100: u32 = 0xffe2e2;
-    pub const R200: u32 = 0xffc9c9;
-    pub const R300: u32 = 0xffa2a2;
-    pub const R350: u32 = 0xff6467;
     pub const R400: u32 = 0xfb2c36;
     pub const R500: u32 = 0xe7000b;
-    pub const R600: u32 = 0xc10007;
     pub const R700: u32 = 0x9f0712;
-    pub const R800: u32 = 0x82181a;
-    pub const R900: u32 = 0x460809;
-    pub const O50: u32 = 0xfff7ed;
-    pub const O100: u32 = 0xffedd4;
-    pub const O200: u32 = 0xffd6a8;
-    pub const O300: u32 = 0xffb86a;
-    pub const O350: u32 = 0xff8904;
-    pub const O400: u32 = 0xff6900;
-    pub const O500: u32 = 0xf54900;
-    pub const O600: u32 = 0xca3500;
-    pub const O700: u32 = 0x9f2d00;
-    pub const O800: u32 = 0x7e2a0c;
-    pub const O900: u32 = 0x441306;
 
-    /// The secondary colours some controls use: a green and an orange.
-    pub mod old {
-        pub const G500: u32 = 0x00c950;
-        pub const O500: u32 = 0xfe9a00;
-    }
+    /// Success.
+    pub const G500: u32 = 0x00c950;
 
     /// Window surfaces (measured on the key window).
     /// The sunken surface: the sidebar material, here the whole window
     /// behind the note.
     pub const WINDOW: u32 = 0xeff0f1;
-    /// The chrome between floating panels.
-    pub const CHROME: u32 = 0xe6e7e8;
 }
 
 /// Shadows stay black; on the dark page they need more weight to show.
@@ -222,7 +181,7 @@ pub fn shadow_dialog() -> Vec<BoxShadow> {
     vec![shadow(0.06, 2., 8., 0.), shadow(0.16, 24., 64., 0.)]
 }
 
-/// Larger menus (「…」, home menus, icon picker): same family as menus.
+/// Dragged rows: same family as menus.
 pub fn shadow_s4_down() -> Vec<BoxShadow> {
     vec![shadow(0.05, 1., 3., 0.), shadow(0.11, 10., 28., 0.)]
 }
@@ -248,7 +207,6 @@ impl Theme {
     /// text colour, #0F5492 measured.
     pub fn link() -> Hsla { mix(craft::B500, craft::N900, 0.5) }
     pub fn primary() -> Hsla { c(accent()) }
-    pub fn primary_500() -> Hsla { c(accent()) }
     /// The accent, darker: pressed buttons.
     pub fn primary_strong() -> Hsla { mix(accent(), craft::N1000, 0.2) }
     /// The note: white page.
@@ -273,13 +231,11 @@ impl Theme {
     // ---- Thesio shell
     /// A light gray tint separates the sidebar from the white page while keeping wallpaper colors quiet.
     /// The document pane paints its own opaque white surface.
-    pub fn window() -> Hsla { if crate::native_header::supported() { ca(craft::WINDOW, 0.) } else { ca(craft::WINDOW, 0.84) } }
+    pub fn window() -> Hsla { if crate::native_sidebar::supported() { ca(craft::WINDOW, 0.) } else { ca(craft::WINDOW, 0.84) } }
     /// Lifts the sidebar off the glass behind it. Fully clear glass settles
     /// near mid gray, where no text colour alone stays readable over a busy
     /// wallpaper.
     pub fn sidebar_veil() -> Hsla { ca(craft::N00, 0.5) }
-    /// Sidebar row label.
-    pub fn sidebar_text() -> Hsla { c(craft::N900) }
     /// Sidebar glyphs that stay neutral: the header buttons and chevrons.
     pub fn sidebar_icon() -> Hsla { ca(craft::N900, 0.8) }
     /// Row glyphs: the accent, as in Finder.
@@ -299,15 +255,11 @@ impl Theme {
     pub fn sidebar_guide() -> Hsla { ca(craft::N1000, 0.1) }
     /// Line above the sidebar footer (1pt, black 3.5%, #E8E8E9 on the sidebar).
     pub fn sidebar_divider() -> Hsla { ca(craft::N1000, 0.035) }
-    /// Line under the page title.
-    /// White pill buttons on the note (back / + / share): hairline.
+    /// White pill buttons on the note: hairline.
     pub fn button_border() -> Hsla { ca(craft::N1000, 0.075) }
-    /// Captions under media and code (weight 300).
-    #[allow(dead_code)]
-    pub fn caption() -> Hsla { c(0x7e8287) }
     /// Menu row highlight: quiet, so the label stays as it is.
     pub fn menu_highlight() -> Hsla { ca(craft::N1000, 0.07) }
-    /// Menus / popovers body (quick-entry & native menus).
+    /// Menus and popovers.
     pub fn popover_bg() -> Hsla { c(0xfafafa) }
 }
 

@@ -1,18 +1,18 @@
 use crate::shared_store::SharedStore;
 use gpui::*;
 
-#[derive(Clone, Copy, Default)]
-struct Size(Option<[f32; 2]>);
+#[derive(Clone, Copy)]
+struct Size([f32; 2]);
 impl Global for Size {}
 
 pub fn remember(window: &Window, cx: &mut App) {
     if let WindowBounds::Windowed(bounds) = window.window_bounds() {
-        cx.set_global(Size(Some([f32::from(bounds.size.width), f32::from(bounds.size.height)])));
+        cx.set_global(Size([f32::from(bounds.size.width), f32::from(bounds.size.height)]));
     }
 }
 
 pub fn persist(store: &SharedStore, cx: &App) {
-    let Some(Size(Some(size))) = cx.try_global::<Size>().copied() else { return };
+    let Some(Size(size)) = cx.try_global::<Size>().copied() else { return };
     if let Err(e) = store.borrow().update_settings(|settings| settings.window_size = Some(size)) { eprintln!("Could not save window size: {e}"); }
 }
 

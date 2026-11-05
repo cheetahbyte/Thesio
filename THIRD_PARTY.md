@@ -873,7 +873,7 @@ Thesio embeds the fonts bundled with Typst through `typst-assets`: Libertinus Se
 
 | Asset | License |
 |---|---|
-| `assets/icons/` (44 icons, compiled into non-macOS builds only) | Taken from Lucide 1.68.0 (ISC; see `LICENSE-lucide` in the same directory). `home-filled`, `pin-filled`, and `circle-filled` adapt Lucide shapes by filling them. macOS draws SF Symbols through AppKit and ships no icon files. |
+| `assets/icons/` (41 icons, compiled into non-macOS builds only) | Taken from Lucide 1.68.0 (ISC; see `LICENSE-lucide` in the same directory). `home-filled` and `circle-filled` adapt Lucide shapes by filling them. macOS draws SF Symbols through AppKit and ships no icon files. |
 | `assets/branding/app-icon.png`, `assets/branding/app-icon.ico` | Paper Heron artwork generated for Thesio. |
 
 ## Illustrations

@@ -6,7 +6,7 @@ use crate::app::Workspace;
 use crate::input::{TextField, TextFieldEvent};
 use crate::native_pdf::Highlight;
 use crate::theme::Theme;
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, page_header, toolbar_group, toolbar_icon, ui_para};
+use crate::ui::{Icon, TipExt, TipSide, ToastKind, field_well, icon, page_header, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::quote::printed_page;
 
@@ -149,14 +149,14 @@ impl Workspace {
         let hidden = self.papers.panel.hidden;
         let header = page_header(self, &title, None, cx)
             .child(toolbar_group()
-                .child(toolbar_icon("paper-highlight", Icon::Highlight).no_drag().tip_label("Highlight Selection".to_string(), TipSide::Right)
+                .child(toolbar_icon("paper-highlight", Icon::Highlight).tip_label("Highlight Selection".to_string(), TipSide::Right)
                     .on_click(cx.listener(|w, _, _, cx| w.highlight_selection(cx))))
-                .child(toolbar_icon("paper-panel", Icon::PanelToggle).no_drag().when(!hidden, |d| d.bg(Theme::fill_hover_strong())).tip_label("Notes and Highlights".to_string(), TipSide::Right)
+                .child(toolbar_icon("paper-panel", Icon::PanelToggle).when(!hidden, |d| d.bg(Theme::fill_hover_strong())).tip_label("Notes and Highlights".to_string(), TipSide::Right)
                     .on_click(cx.listener(|w, _, _, cx| {
                         w.papers.panel.hidden = !w.papers.panel.hidden;
                         cx.notify();
                     })))
-                .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
+                .child(toolbar_icon("paper-external", Icon::External).tip_label("Open in Default App".to_string(), TipSide::Right)
                     .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx)))));
         let (pdf, covered, path) = (self.papers.pdf.clone(), self.paper_covered(window), self.store.borrow().path(&id).ok());
         let failed = self.papers.failed.clone();

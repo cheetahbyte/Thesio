@@ -18,15 +18,15 @@ mod home;
 mod icon;
 mod input;
 #[cfg(target_os = "macos")]
-mod native_header;
-#[cfg(not(target_os = "macos"))]
-#[path = "native_header_fallback.rs"]
-mod native_header;
-#[cfg(target_os = "macos")]
 mod native_pdf;
 #[cfg(not(target_os = "macos"))]
 #[path = "native_pdf_fallback.rs"]
 mod native_pdf;
+#[cfg(target_os = "macos")]
+mod native_sidebar;
+#[cfg(not(target_os = "macos"))]
+#[path = "native_sidebar_fallback.rs"]
+mod native_sidebar;
 mod overlay;
 mod papers;
 mod preferences;

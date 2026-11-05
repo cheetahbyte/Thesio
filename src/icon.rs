@@ -7,6 +7,9 @@ macro_rules! icons {
         pub enum Icon { $($name,)* }
 
         impl Icon {
+            #[cfg(test)]
+            const ALL: &[Icon] = &[$(Icon::$name,)*];
+
             pub fn symbol(self) -> &'static str {
                 match self { $(Icon::$name => $symbol,)* }
             }
@@ -74,5 +77,18 @@ impl Icon {
     pub fn path(self, size: f32) -> String {
         if !cfg!(target_os = "macos") { return format!("icons/{}.svg", self.file()); }
         format!("sf/{}{}", self.symbol(), if size <= 12. { "/medium" } else { "" })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Icon;
+
+    #[test]
+    fn every_icon_has_its_file() {
+        for icon in Icon::ALL {
+            let file = format!("{}/assets/icons/{}.svg", env!("CARGO_MANIFEST_DIR"), icon.file());
+            assert!(std::path::Path::new(&file).is_file(), "{icon:?} names a missing {file}");
+        }
     }
 }

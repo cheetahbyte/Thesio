@@ -144,7 +144,7 @@ impl Workspace {
                     return div().h(px(LINE_H)).pl(px(16. + SIGN_W)).font_family(theme::MONO_FONT).text_size(px(12.)).text_color(Theme::text_placeholder()).child("…").into_any_element();
                 }
                 let (bg, sign) = match line.kind {
-                    LineKind::Added => (Some(theme::ca(craft::old::G500, 0.12)), "+"),
+                    LineKind::Added => (Some(theme::ca(craft::G500, 0.12)), "+"),
                     LineKind::Removed => (Some(theme::ca(craft::R500, 0.10)), "-"),
                     _ => (None, ""),
                 };

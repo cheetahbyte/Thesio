@@ -33,9 +33,9 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
     } else {
         1.
     };
-    let (fill, mark, mark_size) = match kind {
-        ToastKind::Success => (theme::c(craft::old::G500), Icon::Check, 10.),
-        ToastKind::Error => (Theme::danger(), Icon::Close, 10.),
+    let (fill, mark) = match kind {
+        ToastKind::Success => (theme::c(craft::G500), Icon::Check),
+        ToastKind::Error => (Theme::danger(), Icon::Close),
     };
     let vw = window.viewport_size().width;
     let card = div()
@@ -62,7 +62,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
                 .items_center()
                 .justify_center()
                 .child(icon(Icon::Circle, 16., fill).absolute().top_0().left_0())
-                .child(icon(mark, mark_size, gpui::white())),
+                .child(icon(mark, 10., gpui::white())),
         )
         .child(ui_text(msg.clone()));
     Some(
@@ -77,8 +77,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
     )
 }
 
-/// Popover shell shared by the slash menu, block menu and toolbar dropdowns:
-/// the light panel (macOS 26 menu material, near-white), hairline,
+/// Popover shell shared by menus and dropdowns: the light panel (macOS 26 menu material, near-white), hairline,
 /// radius 12, soft drop.
 pub fn popover() -> Div {
     div()
@@ -261,7 +260,7 @@ pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on:
 
 /// A glyph-only toolbar button.
 pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
-    div().id(id).flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+    div().id(id).no_drag().flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
         .active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
 }
 
@@ -399,12 +398,11 @@ pub struct Tooltip {
     side: TipSide,
 }
 
-/// Preferred side: chrome shows tooltips below, document controls above,
-/// menu items to the right. Flipped when there is no room.
+/// Preferred side: chrome shows tooltips below, menu items to the right.
+/// Flipped when there is no room.
 #[derive(Clone, Copy, PartialEq)]
 pub enum TipSide {
     Below,
-    Above,
     Right,
 }
 
@@ -452,9 +450,7 @@ impl Render for Tooltip {
             let x = if anchor.right() + gap + w <= vp.width || anchor.left() - gap - w < px(0.) { anchor.right() + gap } else { anchor.left() - gap - w };
             (x, (anchor.center().y - h / 2.).min(vp.height - h).max(px(0.)))
         } else {
-            let fits_below = anchor.bottom() + gap + h <= vp.height;
-            let fits_above = anchor.top() - gap - h >= px(0.);
-            let below = if self.side == TipSide::Above { !fits_above } else { fits_below };
+            let below = anchor.bottom() + gap + h <= vp.height;
             ((anchor.center().x - w / 2.).min(vp.width - w).max(px(0.)), if below { anchor.bottom() + gap } else { anchor.top() - gap - h })
         };
         let o = self.origin;
@@ -463,7 +459,7 @@ impl Render for Tooltip {
 }
 
 /// Tooltip anchored on the element rather than the mouse.
-pub trait TipExt: Sized {
+pub trait TipExt: ParentElement + StatefulInteractiveElement + Sized {
     /// Window chrome: below, with the shortcut in full-width parentheses.
     fn tip(self, text: &str, keys: Option<&str>) -> Self {
         let label = match keys {
@@ -476,8 +472,19 @@ pub trait TipExt: Sized {
     fn tip_action(self, text: &str, action: &dyn Action, cx: &App) -> Self {
         self.tip(text, crate::shortcuts::hint(action, cx).as_deref())
     }
-    fn tip_label(self, label: String, side: TipSide) -> Self;
+    fn tip_label(self, label: String, side: TipSide) -> Self {
+        let bounds = Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
+        let record = bounds.clone();
+        let label = SharedString::from(label);
+        self.child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0()).tooltip(move |window, cx| {
+            let origin = window.mouse_position() + point(px(1.), px(1.));
+            let (label, anchor) = (label.clone(), bounds.get());
+            cx.new(|_| Tooltip { label, anchor, origin, side }).into()
+        })
+    }
 }
+
+impl<E: ParentElement + StatefulInteractiveElement> TipExt for E {}
 
 /// Window chrome above the page's top line works like a native title bar: a
 /// press drags the window, a double press zooms it (per the system setting).
@@ -521,23 +528,6 @@ pub(crate) fn window_controls(window: &Window) -> Option<Div> {
         .child(button("window-close", WindowControlArea::Close, "Close")
             .child(icon(Icon::Close, 18., Theme::icon()))))
 }
-
-
-impl TipExt for Stateful<Div> {
-    fn tip_label(self, label: String, side: TipSide) -> Self {
-        let bounds = Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
-        let record = bounds.clone();
-        let label = SharedString::from(label);
-        self.child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0()).tooltip(move |window, cx| {
-            let origin = window.mouse_position() + point(px(1.), px(1.));
-            let (label, anchor) = (label.clone(), bounds.get());
-            cx.new(|_| Tooltip { label, anchor, origin, side }).into()
-        })
-    }
-}
-
-
-
 
 
 /// Format search result times relative to the current day.
@@ -828,8 +818,6 @@ impl Element for UiPara {
         }
     }
 }
-
-pub fn header_icon(id: &'static str, name: Icon) -> Stateful<Div> { toolbar_icon(id, name).no_drag() }
 
 /// A 28pt button in the window's title bar, beside the traffic lights.
 fn bar_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful<Div> {

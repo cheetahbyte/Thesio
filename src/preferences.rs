@@ -19,7 +19,7 @@ pub struct Preferences {
     pub hide_library_files: bool,
     /// Sent to Unpaywall, which requires one, to find open-access papers.
     pub unpaywall_email: String,
-    /// Library column widths by column name, where they were resized.
+    /// Library column widths by `Col::key`, where they were resized.
     pub library_columns: std::collections::BTreeMap<String, f32>,
     /// Keep the Library's details panel closed.
     pub library_details_hidden: bool,

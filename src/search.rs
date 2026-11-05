@@ -1,7 +1,5 @@
 //! Search dialog: a 540-wide white dialog with the input row, Recently viewed / hit
-//! rows and a gray footer. Locally there is one owner and no sessions or
-//! spaces, so each row's extra line is just Owner + the opened / modified
-//! times. Radius 16, quiet row fills, monochrome page glyphs.
+//! rows and a gray footer. Radius 16, quiet row fills, monochrome page glyphs.
 
 use crate::app::Workspace;
 use crate::library::Row;

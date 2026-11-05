@@ -1,11 +1,9 @@
 #!/bin/zsh
-# Assemble dist-preview/Thesio.app from target/release. It runs on THESIO_HOME,
-# the saved preview library, or ~/Documents/Thesio, fixed when bundled.
+# Assemble dist-preview/Thesio.app from target/release. It runs on THESIO_HOME
+# or ~/Documents/Thesio, fixed when bundled.
 set -e
 cd "$(dirname "$0")/.."
-preview_library="${THESIO_HOME:-$(cat dist-preview/library-path 2>/dev/null || printf '%s' "$HOME/Documents/Thesio")}"
-# An empty path would put the library in the current directory.
-[ -n "$preview_library" ] || { echo "bundle.sh: no preview library" >&2; exit 1; }
+preview_library="${THESIO_HOME:-$HOME/Documents/Thesio}"
 app="$PWD/dist-preview/Thesio.app"
 bin="$app/Contents/MacOS/thesio"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"

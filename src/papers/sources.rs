@@ -58,7 +58,7 @@ impl Workspace {
                             })),
                     )))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
-                        w.open_overlay(Overlay::RowMenu(RowMenu { id: menu.clone(), pos: ev.position, corner: Corner::TopLeft, batch: false }), window, cx);
+                        w.open_overlay(Overlay::RowMenu(RowMenu { id: menu.clone(), pos: ev.position, batch: false }), window, cx);
                     }))
                     .on_click(cx.listener(move |w, _, window, cx| w.open_paper(&open, window, cx)))
             }).collect()

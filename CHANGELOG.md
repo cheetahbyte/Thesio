@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show the Highlight button's icon outside macOS, where its file was missing.
 - Show keys from `shortcuts.json` in every tooltip, including Search, and no key for an action it unbinds.
 - Reach every citation and note in the completion popup: it scrolls now, instead of stopping at six. ⌃Space opens it where a citation or note link is being written.
 - Keep the caret two lines above the bottom edge when pressing Enter at the end of a document. A new empty line used to send the view to that line.

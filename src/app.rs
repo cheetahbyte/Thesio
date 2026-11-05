@@ -79,7 +79,7 @@ pub struct Rename {
 
 pub struct Workspace {
     pub settings: crate::settings::Settings,
-    native_sidebar: crate::native_header::NativeSidebar,
+    native_sidebar: crate::native_sidebar::NativeSidebar,
     pub(crate) papers: crate::papers::Papers,
     pub store: SharedStore,
     pub entries: Vec<Entry>,
@@ -743,7 +743,7 @@ impl Workspace {
     /// Opens search; the tooltip names the key.
     pub(crate) fn search_button(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
         let tip = crate::shortcuts::hint(&FocusSearch, cx).map_or("Search".to_string(), |keys| format!("Search ({keys})"));
-        crate::ui::header_icon(id, Icon::Search).tip_label(tip, TipSide::Below).on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx)))
+        crate::ui::toolbar_icon(id, Icon::Search).tip_label(tip, TipSide::Below).on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx)))
     }
 
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -753,7 +753,6 @@ impl Workspace {
             _ => None,
         };
         // Independent icon controls, with equal top and right insets.
-        let seg = crate::ui::header_icon;
         let divider = || div().flex_none().w(px(1.)).h(px(18.)).bg(Theme::line_divider());
         // Breadcrumbs: the parent pages, each linking to itself, with the
         // middle ones folded into "…" when the chain is long.
@@ -864,7 +863,7 @@ impl Workspace {
                         d.child(
                             // No tooltip while its dropdown is open; the menu hangs
                             // from this button's right edge.
-                            seg("doc-more", Icon::Ellipsis)
+                            crate::ui::toolbar_icon("doc-more", Icon::Ellipsis)
                                 .relative()
                                 .when(doc_menu, |d| d.bg(Theme::fill_hover()))
                                 .when(!doc_menu, |d| d.tip("More", None))
@@ -877,7 +876,7 @@ impl Workspace {
                     .child(self.search_button("doc-search", cx))
                     .child(
                         // Straight to a new document: no New menu, as Import is rare.
-                        seg("doc-new", Icon::Plus).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
+                        crate::ui::toolbar_icon("doc-new", Icon::Plus).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
                     ).into_any_element()
             )
     }
