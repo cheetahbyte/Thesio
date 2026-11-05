@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Close every menu with Esc, keep a menu from coming back when you return to a page, and return focus to where it was when a dialog closes. Opening a menu or dialog replaces the one before it.
+- Move the paper viewer aside for the sidebar list's menu.
 - Ask before ⌘Q quits with a document that could not be saved. It used to quit and lose the changes.
 - Report every failed operation in a toast, including failed pins, favorites, and saved folder state, and show a failed save away from the document too.
 - Keep unsaved text when the library changes after a failed save.

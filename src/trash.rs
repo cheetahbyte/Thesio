@@ -6,9 +6,10 @@ use crate::app::{Confirm, Workspace};
 use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
-pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, scrim, secondary_button};
+pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, secondary_button};
 use crate::theme::{self, Theme};
-use crate::ui::{Icon, ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
+use crate::overlay::Overlay;
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, TipExt, TitleBarExt, anchored_menu, icon, menu_panel, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::references::cited_keys;
 
@@ -123,7 +124,7 @@ impl Workspace {
         let mut list = div().id("trash-list").flex_1().min_h_0().overflow_y_scroll().px(px(24.)).pb(px(24.));
         for (i, t) in self.trash.iter().enumerate() {
             let (id, id2) = (t.id.clone(), t.id.clone());
-            let menu_open = self.trash_menu.as_ref().is_some_and(|(m, _, _)| *m == t.id);
+            let menu_open = matches!(&self.overlay, Some(Overlay::TrashMenu { id, .. }) if *id == t.id);
             let title = display_title(&t.title);
             let more = div()
                 .id(SharedString::from(format!("trash-more-{}", t.id)))
@@ -135,11 +136,10 @@ impl Workspace {
                 .cursor_pointer()
                 .when(menu_open, |d| d.bg(Theme::fill_hover_strong()))
                 .child(icon(Icon::Ellipsis, 16., Theme::text_caption()))
-                .on_click(cx.listener(move |w, ev: &ClickEvent, _, cx| {
+                .on_click(cx.listener(move |w, ev: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     let p = ev.position();
-                    w.trash_menu = Some((id.clone(), point(p.x + px(12.), p.y + px(14.)), Corner::TopRight));
-                    cx.notify();
+                    w.open_overlay(Overlay::TrashMenu { id: id.clone(), position: point(p.x + px(12.), p.y + px(14.)), corner: Corner::TopRight }, window, cx);
                 }));
             list = list.child(
                 div()
@@ -151,9 +151,8 @@ impl Workspace {
                     .when(menu_open, |d| d.bg(Theme::fill_hover()).border_color(transparent_black()).rounded(px(ROW_RADIUS)))
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                            w.trash_menu = Some((id2.clone(), ev.position, Corner::TopLeft));
-                            cx.notify();
+                        cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
+                            w.open_overlay(Overlay::TrashMenu { id: id2.clone(), position: ev.position, corner: Corner::TopLeft }, window, cx);
                         }),
                     )
                     .child(
@@ -185,39 +184,18 @@ impl Workspace {
         page.into_any_element()
     }
 
-    pub(crate) fn render_trash_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (id, pos, corner) = self.trash_menu.clone()?;
+    pub(crate) fn render_trash_menu(&self, id: &str, position: Point<Pixels>, corner: Corner, cx: &mut Context<Self>) -> AnyElement {
         let item = |key: &'static str, ic: Icon, label: &'static str, color: Hsla| {
             crate::ui::menu_row(key)
                 .text_color(color)
                 .child(icon(ic, 16., if color == Theme::text() { Theme::text_code() } else { color }))
                 .child(menu_label(label))
         };
-        let (a, b) = (id.clone(), id);
-        let menu = popover()
-            .id("trash-menu")
-            .occlude()
-            .w(px(TRASH_MENU_W))
-            .py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, _, cx| {
-                w.trash_menu = None;
-                cx.notify();
-            }))
-            .child(item("tm-restore", Icon::Restore, "Restore", Theme::text()).on_click(cx.listener(move |w, _, _, cx| {
-                w.trash_menu = None;
-                w.confirm = Some(Confirm::Restore(a.clone()));
-                cx.notify();
-            })))
-            .child(item("tm-purge", Icon::Delete, "Delete permanently", Theme::danger()).on_click(cx.listener(move |w, _, _, cx| {
-                w.trash_menu = None;
-                w.confirm = Some(Confirm::Purge(b.clone()));
-                cx.notify();
-            })));
-        Some(
-            deferred(anchored().anchor(corner).position(pos).snap_to_window_with_margin(px(8.)).child(menu))
-                .with_priority(2)
-                .into_any_element(),
-        )
+        let (a, b) = (id.to_string(), id.to_string());
+        let menu = menu_panel("trash-menu", TRASH_MENU_W, cx)
+            .child(item("tm-restore", Icon::Restore, "Restore", Theme::text()).on_click(cx.listener(move |w, _, window, cx| w.open_overlay(Overlay::Confirm(Confirm::Restore(a.clone())), window, cx))))
+            .child(item("tm-purge", Icon::Delete, "Delete permanently", Theme::danger()).on_click(cx.listener(move |w, _, window, cx| w.open_overlay(Overlay::Confirm(Confirm::Purge(b.clone())), window, cx))));
+        anchored_menu(corner, position, menu)
     }
 
     fn restore_doc(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -263,8 +241,7 @@ impl Workspace {
     /// The confirmation dialog: a modal (white, radius 16), a 15pt
     /// semibold title, one line of 13pt body, Cancel and the action button on
     /// the right.
-    pub(crate) fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let c = self.confirm.as_ref()?;
+    pub(crate) fn render_confirm(&self, c: &Confirm, cx: &mut Context<Self>) -> AnyElement {
         let title_of = |id: &str| {
             self.entries
                 .iter()
@@ -295,13 +272,13 @@ impl Workspace {
                 };
                 (title, format!("This removes {it} from the library and cannot be undone. {effect}"), "Delete", true)
             }
-            Confirm::ChangeSourceType(kind) => (format!("Change to {}?", kind.label), "This removes the publication it appeared in, along with that publication's details. It cannot be undone.".to_string(), "Change", true),
+            Confirm::ChangeSourceType { kind, .. } => (format!("Change to {}?", kind.label), "This removes the publication it appeared in, along with that publication's details. It cannot be undone.".to_string(), "Change", true),
             Confirm::DeleteTag(tag) => {
                 let count = self.tag_count(tag);
                 let entries = if count == 1 { "1 entry".to_string() } else { format!("{count} entries") };
                 (format!("Delete the tag {tag}?"), format!("This removes it from {entries}. The entries stay in the library."), "Delete", true)
             }
-            Confirm::SaveFailed => (
+            Confirm::SaveFailed(_) => (
                 "Could not save document".to_string(),
                 format!("{}. Retry, or cancel and export a copy using More → Export as PDF. Discarding changes will lose your unsaved work.", self.save_error()),
                 "Retry",
@@ -314,7 +291,6 @@ impl Workspace {
             .px(px(24.))
             .pt(px(20.))
             .pb(px(24.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().text_size(px(15.)).line_height(px(22.)).font_weight(FontWeight::SEMIBOLD).child(ui_para(title)))
             .child(div().mt(px(8.)).text_size(px(13.)).line_height(px(20.)).text_color(Theme::text()).child(ui_para(body)))
             .child(
@@ -324,19 +300,14 @@ impl Workspace {
                     .items_center()
                     .gap(px(12.))
                     .child(div().flex_1())
-                    .child(secondary_button("confirm-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
-                        w.confirm = None;
-                        w.after_save = None;
-                        cx.notify();
-                    })))
-                    .when(matches!(c, Confirm::SaveFailed), |d| {
+                    .child(secondary_button("confirm-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
+                    .when(matches!(c, Confirm::SaveFailed(_)), |d| {
                         d.child(secondary_button("confirm-discard", "Discard changes").text_color(Theme::danger()).on_click(cx.listener(|w, _, window, cx| {
-                            w.confirm = None;
-                            w.resolve_save_failed(false, window, cx);
+                            if let Some(Overlay::Confirm(Confirm::SaveFailed(then))) = w.take_overlay(window, cx) { w.resolve_save_failed(false, then, window, cx); }
                         })))
                     })
                     .child(ok.on_click(cx.listener(|w, _, window, cx| {
-                        let Some(c) = w.confirm.take() else { return };
+                        let Some(Overlay::Confirm(c)) = w.take_overlay(window, cx) else { return };
                         match c {
                             Confirm::Delete { ids, batch } => {
                                 if batch {
@@ -348,27 +319,12 @@ impl Workspace {
                             Confirm::Purge(id) => w.purge_doc(&id, cx),
                             Confirm::DeleteEntries(keys) => w.delete_entries(&keys, cx),
                             Confirm::DeleteTag(tag) => w.delete_tag(&tag, cx),
-                            Confirm::ChangeSourceType(kind) => w.set_source_type(kind, window, cx),
-                            Confirm::SaveFailed => w.resolve_save_failed(true, window, cx),
+                            Confirm::ChangeSourceType { key, kind } => w.set_source_type(&key, kind, window, cx),
+                            Confirm::SaveFailed(then) => w.resolve_save_failed(true, then, window, cx),
                         }
                         cx.notify();
                     }))),
             );
-        Some(
-            deferred(
-                div()
-                    .id("confirm-mask")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(scrim())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(dialog),
-            )
-            .with_priority(3)
-            .into_any_element(),
-        )
+        crate::ui::modal("confirm-mask", ModalAt::Center, false, dialog, cx)
     }
 }

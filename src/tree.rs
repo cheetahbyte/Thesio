@@ -7,8 +7,9 @@ use crate::input::{TextField, TextFieldEvent};
 use crate::store::Entry;
 use thesio_core::paths::{is_within, natural_cmp};
 use crate::theme::{self, Theme, craft};
-use crate::trash::{close_button, dialog, primary_button, scrim, secondary_button};
-use crate::ui::{Icon, ROW_RADIUS, icon, ui_text};
+use crate::overlay::Overlay;
+use crate::trash::{close_button, dialog, primary_button, secondary_button};
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::{HashMap, HashSet};
 
@@ -116,29 +117,22 @@ impl Workspace {
     }
 
     pub(crate) fn open_move(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.row_menu = None;
         let search = cx.new(|cx| {
             let mut f = TextField::new("Search destinations", cx);
             f.placeholder_color = Theme::text_placeholder();
             f
         });
-        let subs = vec![cx.subscribe_in(&search, window, |w, _, ev: &TextFieldEvent, window, cx| {
-            if let TextFieldEvent::Cancel = ev {
-                w.close_move(window, cx);
-            }
-            cx.notify();
-        })];
-        window.focus(&search.focus_handle(cx));
-        self.move_dlg = Some(MoveDialog { ids, target: None, expanded: HashSet::new(), search, scroll: ScrollHandle::new(), _subs: subs });
-        cx.notify();
+        let subs = vec![cx.subscribe(&search, |_, _, _: &TextFieldEvent, cx| cx.notify())];
+        let focus = search.focus_handle(cx);
+        self.open_overlay(Overlay::Move(MoveDialog { ids, target: None, expanded: HashSet::new(), search, scroll: ScrollHandle::new(), _subs: subs }), window, cx);
+        window.focus(&focus);
     }
 
-    fn close_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_dlg = None;
-        if let Some(ed) = &self.editor {
-            ed.read(cx).focus(window);
+    fn move_dialog(&mut self) -> Option<&mut MoveDialog> {
+        match &mut self.overlay {
+            Some(Overlay::Move(dialog)) => Some(dialog),
+            _ => None,
         }
-        cx.notify();
     }
 
     /// Moves files and folders into `target` (`None`: the vault root), skipping
@@ -197,8 +191,7 @@ impl Workspace {
 
     /// The Move to dialog: My documents on the left, its page tree on the right.
     /// Quiet selection fills, a 30pt search field, the modal buttons.
-    pub(crate) fn render_move_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let dlg = self.move_dlg.as_ref()?;
+    pub(crate) fn render_move_dialog(&self, dlg: &MoveDialog, cx: &mut Context<Self>) -> AnyElement {
         let tree = Tree::new(&self.entries);
         let hidden: HashSet<String> = dlg.ids.iter().flat_map(|id| tree.subtree(id)).collect();
         let q = dlg.search.read(cx).text.trim().to_lowercase();
@@ -266,7 +259,7 @@ impl Workspace {
                     .child(icon(Icon::Library, 16., Theme::text_caption()))
                     .child(title("Vault".into()))
                     .on_click(cx.listener(|w, _, _, cx| {
-                        if let Some(d) = w.move_dlg.as_mut() {
+                        if let Some(d) = w.move_dialog() {
                             d.target = Some(None);
                         }
                         cx.notify();
@@ -294,7 +287,7 @@ impl Workspace {
                                     d.child(icon(Icon::ChevronRight, 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                                         .on_click(cx.listener(move |w, _, _, cx| {
                                             cx.stop_propagation();
-                                            if let Some(d) = w.move_dlg.as_mut()
+                                            if let Some(d) = w.move_dialog()
                                                 && !d.expanded.remove(&toggle) {
                                                     d.expanded.insert(toggle.clone());
                                                 }
@@ -305,7 +298,7 @@ impl Workspace {
                         .child(page_icon(e))
                         .child(title(display_title(&e.title)))
                         .on_click(cx.listener(move |w, _, _, cx| {
-                            if let Some(d) = w.move_dlg.as_mut() {
+                            if let Some(d) = w.move_dialog() {
                                 d.target = Some(Some(pick.clone()));
                             }
                             cx.notify();
@@ -325,7 +318,7 @@ impl Workspace {
                         .child(page_icon(e))
                         .child(title(display_title(&e.title)))
                         .on_click(cx.listener(move |w, _, _, cx| {
-                            if let Some(d) = w.move_dlg.as_mut() {
+                            if let Some(d) = w.move_dialog() {
                                 d.target = Some(Some(pick.clone()));
                             }
                             cx.notify();
@@ -348,9 +341,8 @@ impl Workspace {
             .w(px(828.))
             .flex()
             .flex_col()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().pt(px(24.)).pr(px(56.)).pl(px(24.)).text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child("Move from My documents to"))
-            .child(close_button("move-close").absolute().top(px(27.)).right(px(25.)).on_click(cx.listener(|w, _, window, cx| w.close_move(window, cx))))
+            .child(close_button("move-close").absolute().top(px(27.)).right(px(25.)).on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
             .child(
                 div().px(px(24.)).mt(px(16.)).mb(px(24.)).child(
                     div()
@@ -371,31 +363,16 @@ impl Workspace {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(secondary_button("move-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_move(window, cx))))
+                    .child(secondary_button("move-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
                     .child(ok.on_click(cx.listener(|w, _, window, cx| {
-                        let Some(d) = w.move_dlg.as_ref() else { return };
+                        let Some(d) = w.move_dialog() else { return };
                         let Some(target) = d.target.clone() else { return };
                         let ids = d.ids.clone();
                         w.batch = None;
                         w.move_docs(&ids, target, cx);
-                        w.close_move(window, cx);
+                        w.close_overlay(window, cx);
                     }))),
             );
-        Some(
-            deferred(
-                div()
-                    .id("move-mask")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(scrim())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|w, _, window, cx| w.close_move(window, cx)))
-                    .child(dialog),
-            )
-            .with_priority(3)
-            .into_any_element(),
-        )
+        crate::ui::modal("move-mask", ModalAt::Center, true, dialog, cx)
     }
 }

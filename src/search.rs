@@ -9,8 +9,8 @@ use crate::native_pdf::{Highlight, read_highlights};
 use crate::settings::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
-use crate::trash::scrim;
-use crate::ui::{Icon, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
+use crate::overlay::Overlay;
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::ops::Range;
 
@@ -236,11 +236,9 @@ pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range
 
 impl Workspace {
     pub(crate) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search_open = true;
+        self.open_overlay(Overlay::Search, window, cx);
         self.search_sel = Some(0);
         self.index_papers(cx);
-        self.row_menu = None;
-        self.doc_menu = false;
         let search = self.search.clone();
         search.update(cx, |s, cx| {
             // The dialog's query reads at body size, above the 13pt rows.
@@ -250,17 +248,6 @@ impl Workspace {
         });
         window.focus(&search.focus_handle(cx));
         self.search_scroll.set_offset(point(px(0.), px(0.)));
-        cx.notify();
-    }
-
-    pub(crate) fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.search_open {
-            return;
-        }
-        self.search_open = false;
-        if let Some(ed) = &self.editor {
-            ed.read(cx).focus(window);
-        }
         cx.notify();
     }
 
@@ -293,7 +280,7 @@ impl Workspace {
 
     pub(crate) fn pick_search(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(hit) = self.search_results(cx).into_iter().nth(row) else { return };
-        self.close_search(window, cx);
+        self.close_overlay(window, cx);
         match hit {
             Hit::Doc(entry) => {
                 self.open(&entry.id, window, cx);
@@ -403,10 +390,7 @@ impl Workspace {
             .child(info)
     }
 
-    pub(crate) fn render_search(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.search_open {
-            return None;
-        }
+    pub(crate) fn render_search(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let q = self.query(cx);
         let has_text = !self.search.read(cx).text.is_empty();
         let results = self.search_results(cx);
@@ -504,7 +488,7 @@ impl Workspace {
             .overflow_hidden()
             .child(ui_text("Use ↑↓ to select, Enter to open"));
 
-        let modal = div()
+        let panel = div()
             .id("search-dialog")
             .occlude()
             .w(px(540.))
@@ -520,23 +504,7 @@ impl Workspace {
             .child(list)
             .child(footer);
 
-        Some(
-            deferred(
-                div()
-                    .id("search-mask")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .bg(scrim())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|w, _, window, cx| w.close_search(window, cx)))
-                    .child(modal),
-            )
-            .with_priority(3)
-            .into_any_element(),
-        )
+        crate::ui::modal("search-mask", ModalAt::Center, true, panel, cx)
     }
 }
 

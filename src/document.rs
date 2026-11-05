@@ -2,7 +2,7 @@
 //! document. A failed save keeps the changes pending and asks before anything
 //! replaces them. Everything else that fails says so in a toast.
 
-use crate::app::{AfterSave, Confirm, SaveStatus, View, Workspace};
+use crate::app::{AfterSave, SaveStatus, View, Workspace};
 use crate::ui::ToastKind;
 use gpui::*;
 use std::time::Duration;
@@ -126,45 +126,34 @@ impl Workspace {
     /// Saves before something replaces the open document. False when that
     /// failed: nothing is replaced, and the Save failed dialog offers Retry /
     /// Discard changes and runs `then` after either.
-    pub(crate) fn save_before(&mut self, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) -> bool {
+    pub(crate) fn save_before(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) -> bool {
         let saved = self.save_all(cx);
-        if !saved { self.ask_save_failed(Box::new(then), cx); }
+        if !saved { self.ask_save_failed(Box::new(then), window, cx); }
         saved
     }
 
     /// Runs `then` now if the open document saves, or from the Save failed dialog.
     pub(crate) fn when_saved(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
-        if self.save_all(cx) { then(self, window, cx); } else { self.ask_save_failed(Box::new(then), cx); }
-    }
-
-    fn ask_save_failed(&mut self, then: AfterSave, cx: &mut Context<Self>) {
-        self.after_save = Some(then);
-        self.confirm = Some(Confirm::SaveFailed);
-        cx.notify();
+        if self.save_all(cx) { then(self, window, cx); } else { self.ask_save_failed(Box::new(then), window, cx); }
     }
 
     /// True when this window may close now. Otherwise the Save failed dialog closes it.
-    pub(crate) fn ready_to_close(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn ready_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         crate::window_size::persist(&self.store, cx);
-        self.save_before(cx, |_, window, _| window.remove_window())
+        self.save_before(window, cx, |_, window, _| window.remove_window())
     }
 
     /// The Save failed dialog's choices: `retry` saves again, otherwise the
     /// changes are given up. Either way the held-back action runs once the
     /// document no longer needs saving.
-    pub(crate) fn resolve_save_failed(&mut self, retry: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn resolve_save_failed(&mut self, retry: bool, then: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         if retry {
-            if !self.flush(cx) {
-                self.confirm = Some(Confirm::SaveFailed);
-                return;
-            }
+            if !self.flush(cx) { return self.ask_save_failed(then, window, cx); }
         } else {
             self.unsaved = false;
             self.status = SaveStatus::Idle;
         }
-        if let Some(then) = self.after_save.take() {
-            then(self, window, cx);
-        }
+        then(self, window, cx);
         cx.notify();
     }
 

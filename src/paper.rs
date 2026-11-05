@@ -10,8 +10,9 @@ use thesio_core::paths::{is_document, moved};
 use crate::native_pdf::Highlight;
 use crate::source::{SourceEditor, SourceEvent};
 use crate::theme::Theme;
-use crate::trash::{dialog, page_header, primary_button, scrim, secondary_button};
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, toolbar_group, toolbar_icon, ui_para};
+use crate::overlay::Overlay;
+use crate::trash::{dialog, page_header, primary_button, secondary_button};
+use crate::ui::{Icon, ModalAt, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, modal, toolbar_group, toolbar_icon, ui_para};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::quote::{clean_quote, page_offset, printed_page, quote_markup};
 
@@ -28,7 +29,6 @@ pub struct PaperPanel {
     notes: Option<Notes>,
     /// The highlight whose comment is being written.
     comment: Option<(Highlight, Entity<TextField>, Subscription)>,
-    quote: Option<QuoteDialog>,
 }
 
 /// The paper's notes: `id` follows the file, which appears once something is written.
@@ -39,7 +39,7 @@ struct Notes {
 }
 
 /// The review step before a highlight enters a document: PDF text can be wrong.
-struct QuoteDialog {
+pub struct QuoteDialog {
     highlight: Highlight,
     key: String,
     /// The page as first shown, to tell a correction from a confirmation.
@@ -50,8 +50,6 @@ struct QuoteDialog {
 }
 
 impl PaperPanel {
-    pub(crate) fn quoting(&self) -> bool { self.quote.is_some() }
-
     pub(crate) fn notes_editor(&self, id: &str) -> Option<Entity<SourceEditor>> {
         self.notes.as_ref().filter(|notes| notes.id == id).map(|notes| notes.editor.clone())
     }
@@ -62,7 +60,7 @@ impl PaperPanel {
 }
 
 impl Default for PaperPanel {
-    fn default() -> Self { Self { hidden: false, tab: PaperTab::Notes, notes: None, comment: None, quote: None } }
+    fn default() -> Self { Self { hidden: false, tab: PaperTab::Notes, notes: None, comment: None } }
 }
 
 impl Workspace {
@@ -210,29 +208,22 @@ impl Workspace {
             f.set_text(&page, cx);
             f
         });
-        let on_event = |w: &mut Self, _: &Entity<TextField>, ev: &TextFieldEvent, window: &mut Window, cx: &mut Context<Self>| match ev {
-            TextFieldEvent::Submit => w.insert_quote(window, cx),
-            TextFieldEvent::Cancel => {
-                w.paper_panel.quote = None;
-                cx.notify();
-            }
-            _ => {}
-        };
+        let on_event = |w: &mut Self, _: &Entity<TextField>, ev: &TextFieldEvent, window: &mut Window, cx: &mut Context<Self>| if let TextFieldEvent::Submit = ev { w.insert_quote(window, cx); };
         let subs = vec![cx.subscribe_in(&text_field, window, on_event), cx.subscribe_in(&page_field, window, on_event)];
-        window.focus(&text_field.focus_handle(cx));
-        self.paper_panel.quote = Some(QuoteDialog { highlight, key, page, text_field, page_field, _subs: subs });
-        cx.notify();
+        let focus = text_field.focus_handle(cx);
+        self.open_overlay(Overlay::Quote(QuoteDialog { highlight, key, page, text_field, page_field, _subs: subs }), window, cx);
+        window.focus(&focus);
     }
 
-    fn insert_quote(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(dialog) = &self.paper_panel.quote else { return };
+    fn insert_quote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Overlay::Quote(dialog)) = &self.overlay else { return };
         let text = dialog.text_field.read(cx).text.clone();
         if text.trim().is_empty() { return; }
         let entered = dialog.page_field.read(cx).text.trim().to_string();
         let offset = (entered != dialog.page).then(|| page_offset(&dialog.highlight.label, dialog.highlight.page, &entered)).flatten();
         let (markup, block) = quote_markup(&text, &dialog.key, &entered);
         let Some((target, editor)) = self.quote_target() else { return };
-        self.paper_panel.quote = None;
+        self.close_overlay(window, cx);
         if let (Some(offset), Some(id)) = (offset, self.paper.clone()) {
             let result = self.store.borrow_mut().set_page_offset(&id, offset);
             if let Err(e) = result {
@@ -251,11 +242,9 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn render_quote_dialog(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let quote = self.paper_panel.quote.as_ref()?;
+    pub(crate) fn render_quote_dialog(&self, quote: &QuoteDialog, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let target = self.quote_target().map(|(id, _)| id).and_then(|id| self.entries.iter().find(|e| e.id == id).map(|e| e.title.clone())).unwrap_or_else(|| "the notes".to_string());
         let panel = dialog("quote-dialog").w(px(480.)).p(px(20.)).flex().flex_col().gap(px(10.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Insert Quote"))
             .child(div().text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(format!("Text read from a PDF can contain errors, so check it against the paper. It goes into {target}, cited as @{}.", quote.key)))
             .child(field_well(&quote.text_field, window, cx).id("quote-text").h(px(160.)).py(px(3.)).items_start().overflow_y_scroll())
@@ -264,12 +253,9 @@ impl Workspace {
                 .child(field_well(&quote.page_field, window, cx).w(px(96.)))
                 .child(div().flex_1().text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption()).child("Correct a number once and the rest of this paper follows.")))
             .child(div().mt(px(8.)).flex().justify_end().gap(px(8.))
-                .child(secondary_button("quote-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
-                    w.paper_panel.quote = None;
-                    cx.notify();
-                })))
+                .child(secondary_button("quote-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
                 .child(primary_button("quote-insert", "Insert").on_click(cx.listener(|w, _, window, cx| w.insert_quote(window, cx)))));
-        Some(deferred(div().id("quote-scrim").absolute().inset_0().bg(scrim()).flex().items_start().justify_center().pt(px(96.)).occlude().child(panel)).with_priority(3).into_any_element())
+        modal("quote-scrim", ModalAt::Top, false, panel, cx)
     }
 
     fn render_highlight(&self, index: usize, highlight: Highlight, window: &Window, cx: &mut Context<Self>) -> AnyElement {

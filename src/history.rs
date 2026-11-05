@@ -5,8 +5,9 @@ use crate::app::Workspace;
 use crate::document::Edit;
 use crate::library::Library;
 use crate::theme::{self, Theme, craft};
-use crate::trash::{dialog, list_line, primary_button, scrim, secondary_button};
-use crate::ui::{ToastKind, format_visit, ui_para, ui_text};
+use crate::overlay::Overlay;
+use crate::trash::{dialog, list_line, primary_button, secondary_button};
+use crate::ui::{ModalAt, ToastKind, format_visit, modal, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use thesio_core::diff::{DiffLine, LineKind, diff};
 use thesio_core::paths::base_name;
@@ -33,32 +34,46 @@ impl Workspace {
         if let Err(e) = kept { self.show_toast_kind(ToastKind::Error, &format!("Could not keep a version of {id}: {e}"), cx); }
     }
 
-    pub(crate) fn open_history(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
         if !self.flush(cx) { return; }
         let versions = self.store.borrow().versions(&id).map_or(vec![], |versions| versions.list());
-        self.history = Some(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
+        self.open_overlay(Overlay::History(History { library: false, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) }), window, cx);
         self.show_version(0, cx);
     }
 
-    pub(crate) fn open_library_history(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_library_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_inspector(cx);
         let Some(library) = &self.citations.library else { return };
         let versions = library.versions().list();
-        self.history = Some(History { library: true, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) });
+        self.open_overlay(Overlay::History(History { library: true, versions, selected: 0, diff: vec![], list: ListState::new(0, ListAlignment::Top, px(400.)) }), window, cx);
         self.show_version(0, cx);
+    }
+
+    fn history(&self) -> Option<&History> {
+        match &self.overlay {
+            Some(Overlay::History(history)) => Some(history),
+            _ => None,
+        }
+    }
+
+    fn history_mut(&mut self) -> Option<&mut History> {
+        match &mut self.overlay {
+            Some(Overlay::History(history)) => Some(history),
+            _ => None,
+        }
     }
 
     /// What the dialog compares against.
     fn history_text(&self, cx: &App) -> Option<String> {
-        match self.history.as_ref()?.library {
+        match self.history()?.library {
             true => self.citations.library.as_ref().map(Library::text),
             false => self.text_of(self.current.as_ref()?, cx).ok(),
         }
     }
 
     fn version_text(&self, time: u64) -> anyhow::Result<String> {
-        match (self.history.as_ref().is_some_and(|history| history.library), &self.citations.library, &self.current) {
+        match (self.history().is_some_and(|history| history.library), &self.citations.library, &self.current) {
             (true, Some(library), _) => library.versions().read(time),
             (false, _, Some(id)) => self.store.borrow().versions(id)?.read(time),
             _ => anyhow::bail!("Nothing is open"),
@@ -67,14 +82,14 @@ impl Workspace {
 
     fn show_version(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(current) = self.history_text(cx) else { return };
-        let Some(history) = &mut self.history else { return };
+        let Some(history) = self.history_mut() else { return };
         let Some(time) = history.versions.get(index).copied() else { return };
         history.selected = index;
         match self.version_text(time) {
             Ok(text) => {
                 // Read as: what restoring this version would change.
                 let lines = diff(&current, &text);
-                if let Some(history) = &mut self.history {
+                if let Some(history) = self.history_mut() {
                     history.list.reset(lines.len());
                     history.diff = lines;
                 }
@@ -84,15 +99,10 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn close_history(&mut self, cx: &mut Context<Self>) {
-        self.history = None;
-        cx.notify();
-    }
-
     /// Brings a version back. What it replaces becomes a version first, and
     /// the editor can undo it.
-    fn restore_version(&mut self, cx: &mut Context<Self>) {
-        let Some(history) = &self.history else { return };
+    fn restore_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(history) = self.history() else { return };
         let library = history.library;
         let Some(time) = history.versions.get(history.selected).copied() else { return };
         let text = match self.version_text(time) {
@@ -109,13 +119,12 @@ impl Workspace {
             self.keep_version(&id, &current, true, cx);
             if let Err(e) = self.write_document(&id, &text, Edit::Undoable, cx) { self.show_toast_kind(ToastKind::Error, &format!("Could not save {id}: {e}"), cx); }
         }
-        self.history = None;
+        self.close_overlay(window, cx);
         self.show_toast(&format!("Restored the version from {}", format_visit(time)), cx);
         cx.notify();
     }
 
-    pub(crate) fn render_history(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let history = self.history.as_ref()?;
+    pub(crate) fn render_history(&self, history: &History, cx: &mut Context<Self>) -> AnyElement {
         let rows = history.versions.iter().enumerate().map(|(i, time)| {
             let on = i == history.selected;
             div().id(("version", i)).h(px(30.)).mx(px(8.)).px(px(10.)).flex().items_center().rounded(px(crate::ui::ROW_RADIUS)).cursor_pointer().text_size(px(13.))
@@ -151,15 +160,14 @@ impl Workspace {
         let title = if history.library { "the Library".to_string() } else { self.current.as_deref().map_or("", base_name).to_string() };
         let can_restore = !history.diff.is_empty();
         let panel = dialog("history").w(px(WIDTH)).h(px(HEIGHT)).flex().flex_col()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().flex_none().px(px(20.)).py(px(14.)).border_b_1().border_color(list_line()).flex().flex_col().gap(px(2.))
                 .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(ui_text(format!("Version History of {title}"))))
                 .child(div().text_size(px(12.)).text_color(Theme::text_caption()).child("Green is what restoring brings back. Red is what it replaces.")))
             .child(div().flex_1().min_h_0().flex().child(list).child(body))
             .child(div().flex_none().px(px(20.)).py(px(12.)).border_t_1().border_color(list_line()).flex().items_center().justify_end().gap(px(8.))
-                .child(secondary_button("history-close", "Close").on_click(cx.listener(|w, _, _, cx| w.close_history(cx))))
+                .child(secondary_button("history-close", "Close").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
                 .child(primary_button("history-restore", "Restore This Version").when(!can_restore, |d| d.opacity(0.5))
-                    .on_click(cx.listener(move |w, _, _, cx| if can_restore { w.restore_version(cx); }))));
-        Some(deferred(div().id("history-scrim").absolute().inset_0().bg(scrim()).flex().items_center().justify_center().occlude().child(panel)).with_priority(3).into_any_element())
+                    .on_click(cx.listener(move |w, _, window, cx| if can_restore { w.restore_version(window, cx); }))));
+        modal("history-scrim", ModalAt::Center, false, panel, cx)
     }
 }

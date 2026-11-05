@@ -408,7 +408,7 @@ impl SourceEditor {
                 .on_click(cx.listener(move |e, _, _, cx| e.complete(i, cx)))
         }).collect::<Vec<_>>();
         let menu = popover().id("completion").occlude().w(px(self.completion_w)).py(px(MENU_PAD_Y)).flex().flex_col().shadow(theme::shadow_panel()).children(rows);
-        Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(1).into_any_element())
+        Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
     }
 
     fn reveal(&mut self, cx: &mut Context<Self>) {

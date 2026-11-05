@@ -3,6 +3,7 @@
 
 use crate::app::{Confirm, View, Workspace};
 use crate::document::Edit;
+use crate::overlay::Overlay;
 use crate::input::{TextField, TextFieldEvent};
 use crate::app::RowMenu;
 use crate::library::{Added, Library, PAPERS_DIR, Row, note_file, paper_file};
@@ -13,8 +14,8 @@ use thesio_core::lookup;
 use thesio_core::source_type::{Field, JOURNAL_ARTICLE, SOURCE_TYPES, SourceType};
 use thesio_core::paths::{base_name, is_document, natural_cmp};
 use crate::theme::{self, Theme, craft};
-use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
-use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
+use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, secondary_button};
+use crate::ui::{Icon, ModalAt, TipExt, TitleBarExt, ToastKind, anchored_menu, field_well, icon, menu_action, menu_glyph, menu_panel, menu_row, modal, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,8 +71,6 @@ pub struct Inspector {
     key_field: Entity<TextField>,
     fields: Vec<(Field, Entity<TextField>)>,
     error: Option<String>,
-    /// The type menu, and where it opened.
-    type_menu: Option<Point<Pixels>>,
     /// The documents citing this entry: file, times cited, and where it first is.
     cited_in: Vec<(String, usize, usize)>,
     _subs: Vec<Subscription>,
@@ -83,6 +82,14 @@ pub struct TagEditor {
     field: Entity<TextField>,
     position: Point<Pixels>,
     _subs: Vec<Subscription>,
+}
+
+/// The popover that renames a tag, opened from its menu.
+pub struct TagRename {
+    tag: String,
+    field: Entity<TextField>,
+    position: Point<Pixels>,
+    _subscription: Subscription,
 }
 
 /// A column being resized: its name, and the pointer and width at the start.
@@ -128,12 +135,6 @@ pub struct Citations {
     inspector: Option<Inspector>,
     /// The user closed the details panel.
     details_hidden: bool,
-    picker: Option<CitePicker>,
-    lookup: Option<Lookup>,
-    /// The toolbar's Import and Export menu.
-    menu: bool,
-    /// The context menu: an entry's key and where it was opened.
-    row_menu: Option<(String, Point<Pixels>)>,
     /// The selected rows, by key.
     selected: BTreeSet<String>,
     /// Where a shift-selection extends from.
@@ -144,11 +145,6 @@ pub struct Citations {
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     tag_filter: Option<String>,
-    tag_editor: Option<TagEditor>,
-    /// A filter chip's menu: its tag and where it was opened.
-    tag_menu: Option<(String, Point<Pixels>)>,
-    /// The tag being renamed, with its field and where it opened.
-    tag_rename: Option<(String, Entity<TextField>, Point<Pixels>, Subscription)>,
     /// Widths of resized columns, by column name.
     widths: BTreeMap<String, f32>,
     column_drag: Option<ColumnDrag>,
@@ -185,7 +181,7 @@ impl Citations {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        Self { library, error, search, sort: (Col::Title, true), inspector: None, details_hidden: crate::settings::prefs().library_details_hidden, picker: None, lookup: None, menu: false, row_menu: None, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, tag_editor: None, tag_menu: None, tag_rename: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
+        Self { library, error, search, sort: (Col::Title, true), inspector: None, details_hidden: crate::settings::prefs().library_details_hidden, selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), tag_filter: None, widths: crate::settings::prefs().library_columns, column_drag: None, email, fetching: 0, _subs: subs }
     }
 }
 
@@ -278,7 +274,7 @@ impl Workspace {
             }
             "backspace" | "delete" => {
                 let selected = self.selected_in(&rows);
-                if !selected.is_empty() { self.confirm = Some(Confirm::DeleteEntries(selected)); }
+                if !selected.is_empty() { self.open_overlay(Overlay::Confirm(Confirm::DeleteEntries(selected)), window, cx); }
             }
             "escape" => self.citations.selected.clear(),
             _ => return,
@@ -293,24 +289,18 @@ impl Workspace {
             f.placeholder_color = Theme::text_disabled();
             f
         });
-        let subs = vec![cx.subscribe_in(&field, window, |w, field, ev: &TextFieldEvent, window, cx| match ev {
+        let tagged = keys.clone();
+        let subs = vec![cx.subscribe(&field, move |w, field, ev: &TextFieldEvent, cx| match ev {
             TextFieldEvent::Submit => {
                 let tag = field.read(cx).text.clone();
                 if tag.trim().is_empty() { return; }
-                if w.set_tag(&tag, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+                if w.set_tag(&tagged, &tag, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
             }
-            TextFieldEvent::Cancel => w.close_tag_editor(window, cx),
             _ => cx.notify(),
         })];
-        window.focus(&field.focus_handle(cx));
-        self.citations.tag_editor = Some(TagEditor { keys, field, position, _subs: subs });
-        cx.notify();
-    }
-
-    fn close_tag_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.citations.tag_editor = None;
-        window.focus(&self.citations.focus);
-        cx.notify();
+        let focus = field.focus_handle(cx);
+        self.open_overlay(Overlay::TagEditor(TagEditor { keys, field, position, _subs: subs }), window, cx);
+        window.focus(&focus);
     }
 
     fn open_tag_rename(&mut self, tag: String, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
@@ -319,24 +309,15 @@ impl Workspace {
             f.set_text(&tag, cx);
             f
         });
-        let sub = cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| match ev {
-            TextFieldEvent::Submit => w.finish_tag_rename(window, cx),
-            TextFieldEvent::Cancel => {
-                w.citations.tag_rename = None;
-                window.focus(&w.citations.focus);
-                cx.notify();
-            }
-            _ => {}
-        });
-        window.focus(&field.focus_handle(cx));
-        self.citations.tag_rename = Some((tag, field, position, sub));
-        cx.notify();
+        let subscription = cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| if let TextFieldEvent::Submit = ev { w.finish_tag_rename(window, cx); });
+        let focus = field.focus_handle(cx);
+        self.open_overlay(Overlay::TagRename(TagRename { tag, field, position, _subscription: subscription }), window, cx);
+        window.focus(&focus);
     }
 
     fn finish_tag_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((old, field, ..)) = self.citations.tag_rename.take() else { return };
+        let Some(Overlay::TagRename(TagRename { tag: old, field, .. })) = self.take_overlay(window, cx) else { return };
         let new = field.read(cx).text.trim().to_string();
-        window.focus(&self.citations.focus);
         let Some(library) = &mut self.citations.library else { return };
         if new != old {
             match library.rename_tag(&old, &new) {
@@ -360,11 +341,10 @@ impl Workspace {
         self.citations.library.as_ref().map_or(0, |library| library.tags().into_iter().find(|(name, _)| name == tag).map_or(0, |(_, count)| count))
     }
 
-    /// Applies `tag` to the entries in the tag editor. False if it was refused.
-    fn set_tag(&mut self, tag: &str, on: bool, cx: &mut Context<Self>) -> bool {
-        let Some(keys) = self.citations.tag_editor.as_ref().map(|editor| editor.keys.clone()) else { return false };
+    /// Applies `tag` to the entries `keys`. False if it was refused.
+    fn set_tag(&mut self, keys: &[String], tag: &str, on: bool, cx: &mut Context<Self>) -> bool {
         let Some(library) = &mut self.citations.library else { return false };
-        let result = library.set_tag(&keys, tag, on);
+        let result = library.set_tag(keys, tag, on);
         if let Err(e) = &result { self.show_toast_kind(ToastKind::Error, &format!("Could not change tags: {e}"), cx); }
         cx.notify();
         result.is_ok()
@@ -453,8 +433,7 @@ impl Workspace {
 
     /// Gives the open file's bibliography a citation style.
     pub(crate) fn set_citation_style(&mut self, style: &str, cx: &mut Context<Self>) {
-        self.style_menu = false;
-        let Some((doc, _)) = self.style_owner(cx) else { return cx.notify() };
+        let Some((doc, _)) = self.style_owner(cx) else { return };
         let Some(updated) = self.text_of(&doc, cx).ok().and_then(|text| bibliography::set_style(&text, style)) else { return };
         if let Err(e) = self.write_document(&doc, &updated, Edit::Undoable, cx) {
             self.show_toast_kind(ToastKind::Error, &format!("Could not change the style in {doc}: {e}"), cx);
@@ -514,29 +493,30 @@ impl Workspace {
             f
         });
         let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| {
-            let shown = w.picker_rows(cx).len();
-            let Some(picker) = w.citations.picker.as_mut() else { return };
+            let rows = match &w.overlay {
+                Some(Overlay::Picker(picker)) => w.picker_rows(picker, cx),
+                _ => return,
+            };
+            let Some(Overlay::Picker(picker)) = &mut w.overlay else { return };
             match ev {
                 TextFieldEvent::Changed => picker.selected = 0,
                 TextFieldEvent::Up => picker.selected = picker.selected.saturating_sub(1),
-                TextFieldEvent::Down => picker.selected = (picker.selected + 1).min(shown.saturating_sub(1)),
-                TextFieldEvent::Cancel => w.close_cite_picker(window, cx),
+                TextFieldEvent::Down => picker.selected = (picker.selected + 1).min(rows.len().saturating_sub(1)),
                 TextFieldEvent::Submit => {
                     let selected = picker.selected;
-                    if let Some(row) = w.picker_rows(cx).get(selected).cloned() { w.pick_source(&row.key, window, cx); }
+                    if let Some(row) = rows.get(selected) { w.pick_source(&row.key, window, cx); }
                 }
                 _ => {}
             }
             cx.notify();
         })];
-        window.focus(&field.focus_handle(cx));
-        self.citations.picker = Some(CitePicker { field, selected: 0, purpose, _subs: subs });
-        cx.notify();
+        let focus = field.focus_handle(cx);
+        self.open_overlay(Overlay::Picker(CitePicker { field, selected: 0, purpose, _subs: subs }), window, cx);
+        window.focus(&focus);
     }
 
     fn pick_source(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(purpose) = self.citations.picker.as_ref().map(|p| p.purpose.clone()) else { return };
-        self.close_cite_picker(window, cx);
+        let Some(Overlay::Picker(CitePicker { purpose, .. })) = self.take_overlay(window, cx) else { return };
         match purpose {
             PickFor::Cite => self.insert_citation(key, window, cx),
             PickFor::Attach(path) => self.attach_paper(&path, &paper_file(key), cx),
@@ -544,24 +524,17 @@ impl Workspace {
         }
     }
 
-    fn close_cite_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.citations.picker = None;
-        if let Some(editor) = &self.editor { editor.read(cx).focus(window); }
-        cx.notify();
-    }
-
-    fn picker_rows(&self, cx: &App) -> Vec<Row> {
-        let query = self.citations.picker.as_ref().map_or(String::new(), |p| p.field.read(cx).text.trim().to_lowercase());
+    fn picker_rows(&self, picker: &CitePicker, cx: &App) -> Vec<Row> {
+        let query = picker.field.read(cx).text.trim().to_lowercase();
         let mut rows = self.visible_rows(&query);
         // A source holds one paper.
-        if self.citations.picker.as_ref().is_some_and(|p| !matches!(p.purpose, PickFor::Cite)) { rows.retain(|row| !self.has_paper(&row.key)); }
+        if !matches!(picker.purpose, PickFor::Cite) { rows.retain(|row| !self.has_paper(&row.key)); }
         rows.truncate(PICKER_ROWS);
         rows
     }
 
-    pub(crate) fn render_cite_picker(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let picker = self.citations.picker.as_ref()?;
-        let rows = self.picker_rows(cx);
+    pub(crate) fn render_cite_picker(&self, picker: &CitePicker, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let rows = self.picker_rows(picker, cx);
         let empty = rows.is_empty();
         let list = rows.into_iter().enumerate().map(|(i, row)| {
             let key = row.key.clone();
@@ -579,13 +552,11 @@ impl Workspace {
             .when(empty, |d| d.child(div().px(px(12.)).py(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child("No matching entries")))
             .children(list)
             .when_some(unlinked, |d, path| d.child(div().flex().child(plain_button("picker-unlinked", "Add Without a Source").on_click(cx.listener(move |w, _, window, cx| {
-                w.close_cite_picker(window, cx);
+                w.close_overlay(window, cx);
                 let name = path.file_stem().map_or("paper".into(), |name| name.to_string_lossy().into_owned());
                 w.attach_paper(&path, &format!("{PAPERS_DIR}/{name}.pdf"), cx);
             })))));
-        Some(deferred(div().id("cite-scrim").absolute().inset_0().bg(scrim()).flex().items_start().justify_center().pt(px(96.)).occlude()
-            .on_mouse_down(MouseButton::Left, cx.listener(|w, _, window, cx| w.close_cite_picker(window, cx)))
-            .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))).with_priority(3).into_any_element())
+        modal("cite-scrim", ModalAt::Top, true, panel, cx)
     }
 
     /// Shows `key` in the inspector and puts the caret in its first field, or
@@ -676,7 +647,7 @@ impl Workspace {
             let places = citations_of(&e.body, &key);
             places.first().map(|first| (e.id.clone(), places.len(), *first))
         }).collect();
-        Some(Inspector { key, key_field, fields, error: None, type_menu: None, cited_in, _subs: subs })
+        Some(Inspector { key, key_field, fields, error: None, cited_in, _subs: subs })
     }
 
     /// Esc: back to what the file holds.
@@ -736,22 +707,18 @@ impl Workspace {
 
     /// Changes the type, asking first if that would lose data.
     fn choose_source_type(&mut self, kind: &'static SourceType, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(inspector) = &mut self.citations.inspector else { return };
-        inspector.type_menu = None;
-        let key = inspector.key.clone();
+        let Some(key) = self.citations.inspector.as_ref().map(|inspector| inspector.key.clone()) else { return };
         if self.citations.library.as_ref().is_some_and(|library| library.type_change_drops_parent(&key, kind)) {
-            self.confirm = Some(Confirm::ChangeSourceType(kind));
-            return cx.notify();
+            return self.open_overlay(Overlay::Confirm(Confirm::ChangeSourceType { key, kind }), window, cx);
         }
-        self.set_source_type(kind, window, cx);
+        self.set_source_type(&key, kind, window, cx);
     }
 
-    pub(crate) fn set_source_type(&mut self, kind: &'static SourceType, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_source_type(&mut self, key: &str, kind: &'static SourceType, window: &mut Window, cx: &mut Context<Self>) {
         self.save_inspector(cx);
-        let Some(key) = self.citations.inspector.take().map(|inspector| inspector.key) else { return };
         let Some(library) = &mut self.citations.library else { return };
-        if let Err(e) = library.set_source_type(&key, kind) { self.show_toast_kind(ToastKind::Error, &format!("Could not change the type: {e}"), cx); }
-        self.citations.inspector = self.build_inspector(key, window, cx);
+        if let Err(e) = library.set_source_type(key, kind) { self.show_toast_kind(ToastKind::Error, &format!("Could not change the type: {e}"), cx); }
+        if self.citations.inspector.as_ref().is_some_and(|inspector| inspector.key == key) { self.citations.inspector = self.build_inspector(key.to_string(), window, cx); }
         self.refresh_after_library_change(cx);
         cx.notify();
     }
@@ -787,22 +754,15 @@ impl Workspace {
             f.placeholder_color = Theme::text_disabled();
             f
         });
-        let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| match ev {
-            TextFieldEvent::Submit => w.run_lookup(window, cx),
-            TextFieldEvent::Cancel => {
-                w.citations.lookup = None;
-                cx.notify();
-            }
-            _ => {}
-        })];
-        window.focus(&field.focus_handle(cx));
-        self.citations.lookup = Some(Lookup { field, busy: false, problems: vec![], _subs: subs });
-        cx.notify();
+        let subs = vec![cx.subscribe_in(&field, window, |w, _, ev: &TextFieldEvent, window, cx| if let TextFieldEvent::Submit = ev { w.run_lookup(window, cx); })];
+        let focus = field.focus_handle(cx);
+        self.open_overlay(Overlay::Lookup(Lookup { field, busy: false, problems: vec![], _subs: subs }), window, cx);
+        window.focus(&focus);
     }
 
     /// Fetches everything in the field, then adds what came back.
     fn run_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(dialog) = &mut self.citations.lookup else { return };
+        let Some(Overlay::Lookup(dialog)) = &mut self.overlay else { return };
         if dialog.busy { return; }
         let text = dialog.field.read(cx).text.clone();
         let parsed = identifiers(&text);
@@ -820,11 +780,11 @@ impl Workspace {
                     Err(text) => (None, Err(format!("{text}: not a DOI, arXiv ID, PMID, or ISBN"))),
                 }).collect()
             }).await;
-            let _ = this.update(cx, |w, cx| w.finish_lookup(fetched, cx));
+            let _ = this.update_in(cx, |w, window, cx| w.finish_lookup(fetched, window, cx));
         }).detach();
     }
 
-    fn finish_lookup(&mut self, fetched: Vec<(Option<Identifier>, Result<serde_yaml::Mapping, String>)>, cx: &mut Context<Self>) {
+    fn finish_lookup(&mut self, fetched: Vec<(Option<Identifier>, Result<serde_yaml::Mapping, String>)>, window: &mut Window, cx: &mut Context<Self>) {
         self.reload_library();
         let (mut added, mut already) = (0, 0);
         let mut problems = vec![];
@@ -861,38 +821,31 @@ impl Workspace {
             (n, k) => Some(format!("Added {n}, {k} already in the library")),
         };
         if let Some(summary) = summary { self.show_toast(&summary, cx); }
-        match &mut self.citations.lookup {
-            Some(dialog) if !problems.is_empty() => {
+        match &mut self.overlay {
+            Some(Overlay::Lookup(dialog)) if !problems.is_empty() => {
                 dialog.busy = false;
                 dialog.problems = problems;
             }
-            _ => self.citations.lookup = None,
+            Some(Overlay::Lookup(_)) => self.close_overlay(window, cx),
+            _ => {}
         }
         cx.notify();
     }
 
-    pub(crate) fn render_lookup(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let lookup = self.citations.lookup.as_ref()?;
+    pub(crate) fn render_lookup(&self, lookup: &Lookup, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let problems = lookup.problems.iter().map(|p| div().text_size(px(13.)).line_height(px(18.)).text_color(theme::c(craft::R400)).child(p.clone())).collect::<Vec<_>>();
         let panel = dialog("lookup").w(px(480.)).p(px(20.)).flex().flex_col().gap(px(10.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Add by identifier"))
             .child(div().text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child("Enter one or more DOIs, arXiv IDs, PMIDs, or ISBNs. Each is sent to doi.org, NCBI, or Open Library, and Thesio looks for an open-access PDF through arXiv and Unpaywall."))
             .child(field_well(&lookup.field, window, cx))
             .children(problems)
             .child(div().mt(px(8.)).flex().items_center().gap(px(8.))
-                .child(plain_button("lookup-manual", "Enter Manually…").on_click(cx.listener(|w, _, window, cx| {
-                    w.citations.lookup = None;
-                    w.open_entry(None, window, cx);
-                })))
+                .child(plain_button("lookup-manual", "Enter Manually…").on_click(menu_action(cx, |w, window, cx| w.open_entry(None, window, cx))))
                 .child(div().flex_1())
-                .child(secondary_button("lookup-cancel", "Cancel").on_click(cx.listener(|w, _, _, cx| {
-                    w.citations.lookup = None;
-                    cx.notify();
-                })))
+                .child(secondary_button("lookup-cancel", "Cancel").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
                 .when(lookup.busy, |d| d.child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_caption()).child("Looking up…")))
                 .when(!lookup.busy, |d| d.child(primary_button("lookup-add", "Add").on_click(cx.listener(|w, _, window, cx| w.run_lookup(window, cx))))));
-        Some(deferred(div().id("lookup-scrim").absolute().inset_0().bg(scrim()).flex().items_start().justify_center().pt(px(96.)).occlude().child(panel)).with_priority(3).into_any_element())
+        modal("lookup-scrim", ModalAt::Top, false, panel, cx)
     }
 
     fn import_bib(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -953,13 +906,14 @@ impl Workspace {
         let rows = self.library_rows(cx);
         let total = self.citations.library.as_ref().map_or(0, Library::len);
         let can_edit = self.citations.library.is_some();
+        let menu_open = matches!(self.overlay, Some(Overlay::LibraryMenu));
         let header = page_header(self, "Library", (total > 0).then_some(total), 26., cx)
             .child(div().id("library-search").no_drag().w(px(220.)).mr(px(8.)).child(search_well(&self.citations.search, window, cx)))
             .when(can_edit, |d| d
                 .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-details", Icon::Details).no_drag().tip(if self.citations.details_hidden { "Show details" } else { "Hide details" }, None)
                     .on_click(cx.listener(|w, _, window, cx| w.set_details_hidden(!w.citations.details_hidden, window, cx)))))
-                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(self.citations.menu, |d| d.bg(Theme::fill_hover_strong())).tip("More", None)
-                    .on_click(cx.listener(|w, _, _, cx| { w.citations.menu = !w.citations.menu; cx.notify(); }))))
+                .child(toolbar_group().mr(px(8.)).child(toolbar_icon("library-more", Icon::Ellipsis).no_drag().when(menu_open, |d| d.bg(Theme::fill_hover_strong())).tip("More", None)
+                    .on_click(cx.listener(move |w, _, window, cx| if menu_open { w.close_overlay(window, cx); } else { w.open_overlay(Overlay::LibraryMenu, window, cx); }))))
                 .child(primary_icon_button("library-add", Icon::Plus, "Add").no_drag().on_click(cx.listener(|w, _, window, cx| w.open_lookup(window, cx)))));
         let table = self.render_library_table(&tags, rows, total, window, cx);
         let inspector = self.render_inspector(cx);
@@ -998,10 +952,7 @@ impl Workspace {
                     .active(|s| s.bg(Theme::fill_pressed()))
                     .child(label)
                     .child(div().text_color(Theme::text_placeholder()).child(count.to_string()))
-                    .when_some(filter.clone(), |d, tag| d.on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                        w.citations.tag_menu = Some((tag.clone(), ev.position));
-                        cx.notify();
-                    })))
+                    .when_some(filter.clone(), |d, tag| d.on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| w.open_overlay(Overlay::TagMenu { tag: tag.clone(), position: ev.position }, window, cx))))
                     .on_click(cx.listener(move |w, _, _, cx| {
                         w.citations.tag_filter = filter.clone();
                         cx.notify();
@@ -1075,8 +1026,7 @@ impl Workspace {
                     .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
                         window.focus(&w.citations.focus);
                         if !w.citations.selected.contains(&menu) { w.select_only(&menu); }
-                        w.citations.row_menu = Some((menu.clone(), ev.position));
-                        cx.notify();
+                        w.open_overlay(Overlay::EntryMenu { key: menu.clone(), position: ev.position }, window, cx);
                     }))
                     .children(cells)
                     .child(div().w(px(CITE_W)).flex_none().flex().justify_end().when(can_cite, |d| d.child(
@@ -1134,14 +1084,6 @@ impl Workspace {
     pub(crate) fn paper_title(&self, id: &str) -> String {
         let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
         row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| base_name(id).to_string())
-    }
-
-    /// The viewer goes under what GPUI draws over the pane, or it would hide it.
-    pub(crate) fn paper_covered(&self, window: &Window) -> bool {
-        let c = &self.citations;
-        // Most row menus stay over the sidebar, clear of the pane.
-        let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
-        self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.paper_panel.quoting() || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.lookup.is_some()
     }
 
     fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
@@ -1296,9 +1238,8 @@ impl Workspace {
                                 w.open_source_picker(PickFor::Link(link.clone()), window, cx);
                             })),
                     )))
-                    .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                        w.row_menu = Some(RowMenu { id: menu.clone(), pos: ev.position, corner: Corner::TopLeft, batch: false });
-                        cx.notify();
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, window, cx| {
+                        w.open_overlay(Overlay::RowMenu(RowMenu { id: menu.clone(), pos: ev.position, corner: Corner::TopLeft, batch: false }), window, cx);
                     }))
                     .on_click(cx.listener(move |w, _, _, cx| w.open_paper(&open, cx)))
             }).collect()
@@ -1310,90 +1251,54 @@ impl Workspace {
         self.current.as_deref().is_some_and(is_document)
     }
 
-    pub(crate) fn render_library_row_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.view != View::Library { return None; }
-        let (key, position) = self.citations.row_menu.clone()?;
+    pub(crate) fn render_entry_menu(&self, key: &str, position: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
         let item = |id: &'static str, glyph: Icon, label: &'static str| {
             menu_row(id).child(menu_glyph(glyph, 16.)).child(menu_label(label))
         };
+        let key = key.to_string();
         let (edit, cite, copy, paper, attach, notes) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
         let selected = self.selected_in(&self.library_rows(cx));
         let single = selected.len() == 1;
         let (tagged, delete) = (selected.clone(), selected);
         let delete_label = if single { "Delete".to_string() } else { format!("Delete {} Entries", delete.len()) };
         let has_paper = self.has_paper(&paper);
-        let menu = popover().id("entry-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.row_menu = None; cx.notify(); }))
-            .when(single, |d| d.child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.row_menu = None;
-                w.open_entry(Some(edit.clone()), window, cx);
-            }))))
-            .child(item("entry-menu-tags", Icon::Tag, "Tags…").on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.row_menu = None;
-                w.open_tag_editor(tagged.clone(), position, window, cx);
-            })))
-            .when(single && self.can_cite(), |d| d.child(item("entry-menu-cite", Icon::Quote, "Cite").on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.row_menu = None;
-                w.insert_citation(&cite, window, cx);
-            }))))
-            .when(single, |d| d.child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(cx.listener(move |w, _, _, cx| {
-                w.citations.row_menu = None;
+        let menu = menu_panel("entry-menu", 180., cx)
+            .when(single, |d| d.child(item("entry-menu-edit", Icon::Edit, "Edit").on_click(menu_action(cx, move |w, window, cx| w.open_entry(Some(edit.clone()), window, cx)))))
+            .child(item("entry-menu-tags", Icon::Tag, "Tags…").on_click(menu_action(cx, move |w, window, cx| w.open_tag_editor(tagged.clone(), position, window, cx))))
+            .when(single && self.can_cite(), |d| d.child(item("entry-menu-cite", Icon::Quote, "Cite").on_click(menu_action(cx, move |w, window, cx| w.insert_citation(&cite, window, cx)))))
+            .when(single, |d| d.child(item("entry-menu-paper", if has_paper { Icon::Paper } else { Icon::Search }, if has_paper { "Open Paper" } else { "Find Paper" }).on_click(menu_action(cx, move |w, _, cx| {
                 if has_paper { w.open_paper(&paper_file(&paper), cx); } else { w.fetch_papers(vec![paper.clone()], cx); }
-                cx.notify();
             }))))
-            .when(single && !has_paper, |d| d.child(item("entry-menu-attach", Icon::Import, "Attach Paper…").on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.row_menu = None;
+            .when(single && !has_paper, |d| d.child(item("entry-menu-attach", Icon::Import, "Attach Paper…").on_click(menu_action(cx, move |w, window, cx| {
                 let id = paper_file(&attach);
                 w.choose_pdf(window, cx, move |w, path, _, cx| w.attach_paper(&path, &id, cx));
             }))))
-            .when(single, |d| d.child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.row_menu = None;
-                w.open_source_notes(&notes, window, cx);
-            }))))
-            .when(single, |d| d.child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(cx.listener(move |w, _, _, cx| {
-                w.citations.row_menu = None;
-                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
-                cx.notify();
-            }))))
+            .when(single, |d| d.child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(menu_action(cx, move |w, window, cx| w.open_source_notes(&notes, window, cx)))))
+            .when(single, |d| d.child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(menu_action(cx, move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))))
             .child(div().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border()))
             .child(menu_row("entry-menu-delete").text_color(Theme::danger())
                 .child(icon(Icon::Delete, 16., Theme::danger()))
                 .child(menu_label(delete_label))
-                .on_click(cx.listener(move |w, _, _, cx| {
-                    w.citations.row_menu = None;
-                    w.confirm = Some(Confirm::DeleteEntries(delete.clone()));
-                    cx.notify();
-                })));
-        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+                .on_click(cx.listener(move |w, _, window, cx| w.open_overlay(Overlay::Confirm(Confirm::DeleteEntries(delete.clone())), window, cx))));
+        anchored_menu(Corner::TopLeft, position, menu)
     }
 
-    pub(crate) fn render_tag_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.view != View::Library { return None; }
-        if let Some((_, field, position, _)) = &self.citations.tag_rename {
-            let panel = popover().id("tag-rename").occlude().w(px(220.)).p(px(8.))
-                .on_mouse_down_out(cx.listener(|w, _, window, cx| w.finish_tag_rename(window, cx)))
-                .child(field_well(field, window, cx));
-            return Some(deferred(anchored().position(*position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element());
-        }
-        let (tag, position) = self.citations.tag_menu.clone()?;
-        let (rename, delete) = (tag.clone(), tag);
-        let menu = popover().id("tag-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.tag_menu = None; cx.notify(); }))
-            .child(menu_row("tag-menu-rename").child(menu_glyph(Icon::Edit, 16.)).child(menu_label("Rename…")).on_click(cx.listener(move |w, _, window, cx| {
-                w.citations.tag_menu = None;
-                w.open_tag_rename(rename.clone(), position, window, cx);
-            })))
-            .child(menu_row("tag-menu-delete").text_color(Theme::danger()).child(icon(Icon::Delete, 16., Theme::danger())).child(menu_label("Delete")).on_click(cx.listener(move |w, _, _, cx| {
-                w.citations.tag_menu = None;
-                w.confirm = Some(Confirm::DeleteTag(delete.clone()));
-                cx.notify();
-            })));
-        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+    pub(crate) fn render_tag_rename(&self, rename: &TagRename, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let panel = popover().id("tag-rename").occlude().w(px(220.)).p(px(8.))
+            .on_mouse_down_out(cx.listener(|w, _, window, cx| w.finish_tag_rename(window, cx)))
+            .child(field_well(&rename.field, window, cx));
+        anchored_menu(Corner::TopLeft, rename.position, panel)
     }
 
-    pub(crate) fn render_tag_editor(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.view != View::Library { return None; }
-        let editor = self.citations.tag_editor.as_ref()?;
+    pub(crate) fn render_tag_menu(&self, tag: &str, position: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
+        let (rename, delete) = (tag.to_string(), tag.to_string());
+        let menu = menu_panel("tag-menu", 180., cx)
+            .child(menu_row("tag-menu-rename").child(menu_glyph(Icon::Edit, 16.)).child(menu_label("Rename…")).on_click(menu_action(cx, move |w, window, cx| w.open_tag_rename(rename.clone(), position, window, cx))))
+            .child(menu_row("tag-menu-delete").text_color(Theme::danger()).child(icon(Icon::Delete, 16., Theme::danger())).child(menu_label("Delete")).on_click(cx.listener(move |w, _, window, cx| w.open_overlay(Overlay::Confirm(Confirm::DeleteTag(delete.clone())), window, cx))));
+        anchored_menu(Corner::TopLeft, position, menu)
+    }
+
+    pub(crate) fn render_tag_editor(&self, editor: &TagEditor, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let library = self.citations.library.as_ref()?;
         let typed = editor.field.read(cx).text.trim().to_string();
         let query = typed.to_lowercase();
@@ -1405,21 +1310,22 @@ impl Workspace {
             let holders = rows.iter().filter(|row| row.tags.contains(&tag)).count();
             let all = holders == rows.len();
             let mark = if all { Some(Icon::Check) } else if holders > 0 { Some(Icon::Minus) } else { None };
+            let keys = editor.keys.clone();
             menu_row(("tag-editor-row", i))
                 .child(div().w(px(16.)).flex_none().children(mark.map(|mark| menu_glyph(mark, 14.))))
                 .child(menu_label(tag.clone()))
-                .on_click(cx.listener(move |w, _, _, cx| { w.set_tag(&tag, !all, cx); }))
+                .on_click(cx.listener(move |w, _, _, cx| { w.set_tag(&keys, &tag, !all, cx); }))
         }).collect::<Vec<_>>();
-        let panel = popover().id("tag-editor").occlude().w(px(240.)).py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, window, cx| w.close_tag_editor(window, cx)))
+        let panel = menu_panel("tag-editor", 240., cx)
             .child(div().px(px(8.)).pb(px(4.)).child(field_well(&editor.field, window, cx)))
             .child(div().id("tag-editor-list").max_h(px(220.)).overflow_y_scroll().children(list))
             .when(!typed.is_empty() && !exists, |d| d.child(menu_row("tag-editor-create").child(menu_glyph(Icon::Plus, 14.)).child(menu_label(format!("Create “{typed}”"))).on_click(cx.listener({
                 let typed = typed.clone();
+                let keys = editor.keys.clone();
                 let field = editor.field.clone();
-                move |w, _, _, cx| if w.set_tag(&typed, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
+                move |w, _, _, cx| if w.set_tag(&keys, &typed, true, cx) { field.update(cx, |f, cx| f.set_text("", cx)); }
             }))));
-        Some(deferred(anchored().position(editor.position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element())
+        Some(anchored_menu(Corner::TopLeft, editor.position, panel))
     }
 
     /// While resizing a column, a full-window layer follows the mouse, as the sidebar's does.
@@ -1439,37 +1345,24 @@ impl Workspace {
                 cx.notify();
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))).with_priority(4).into_any_element())
+            .on_mouse_up_out(MouseButton::Left, cx.listener(move |w, _, _, cx| end(w, cx)))).with_priority(crate::ui::layer::DRAG).into_any_element())
     }
 
-    pub(crate) fn render_library_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.citations.menu || self.view != View::Library { return None; }
+    pub(crate) fn render_library_menu(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let item = |id: &'static str, glyph: Icon, label: &'static str| {
             menu_row(id).child(menu_glyph(glyph, 16.)).child(menu_label(label))
         };
-        let menu = popover().id("library-menu").occlude().w(px(220.)).py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, _, cx| { w.citations.menu = false; cx.notify(); }))
-            .child(item("library-import", Icon::Import, "Import BibLaTeX…").on_click(cx.listener(|w, _, window, cx| {
-                w.citations.menu = false;
-                w.import_bib(window, cx);
-            })))
-            .child(item("library-export", Icon::Export, "Export BibLaTeX…").on_click(cx.listener(|w, _, _, cx| {
-                w.citations.menu = false;
-                w.export_bib(cx);
-            })))
-            .child(item("library-history", Icon::Restore, "Version History…").on_click(cx.listener(|w, _, _, cx| {
-                w.citations.menu = false;
-                w.open_library_history(cx);
-            })))
-            .child(item("library-find-papers", Icon::Search, "Find Missing Papers").on_click(cx.listener(|w, _, _, cx| {
-                w.citations.menu = false;
+        let menu = menu_panel("library-menu", 220., cx)
+            .child(item("library-import", Icon::Import, "Import BibLaTeX…").on_click(menu_action(cx, |w, window, cx| w.import_bib(window, cx))))
+            .child(item("library-export", Icon::Export, "Export BibLaTeX…").on_click(menu_action(cx, |w, _, cx| w.export_bib(cx))))
+            .child(item("library-history", Icon::Restore, "Version History…").on_click(menu_action(cx, |w, window, cx| w.open_library_history(window, cx))))
+            .child(item("library-find-papers", Icon::Search, "Find Missing Papers").on_click(menu_action(cx, |w, _, cx| {
                 let keys = w.citations.library.iter().flat_map(Library::rows).map(|row| row.key).collect();
                 w.fetch_papers(keys, cx);
-                cx.notify();
             })));
         // Under the "…" button, which sits left of the Add button.
         let right = window.viewport_size().width - px(crate::ui::header_right_inset() + ADD_W);
-        Some(deferred(anchored().anchor(Corner::TopRight).position(point(right, px(crate::app::HEADER_H - 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+        anchored_menu(Corner::TopRight, point(right, px(crate::app::HEADER_H - 4.)), menu)
     }
 
     fn render_inspector(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1485,10 +1378,7 @@ impl Workspace {
             .active(|s| s.bg(Theme::fill_pressed()))
             .child(kind.label)
             .child(icon(Icon::ChevronDown, 10., Theme::text_caption()))
-            .on_click(cx.listener(|w, ev: &ClickEvent, _, cx| {
-                if let Some(inspector) = &mut w.citations.inspector { inspector.type_menu = Some(ev.position()); }
-                cx.notify();
-            }));
+            .on_click(cx.listener(|w, ev: &ClickEvent, window, cx| w.open_overlay(Overlay::TypeMenu(ev.position()), window, cx)));
         Some(div().id("inspector").w(px(INSPECTOR_W)).flex_none().h_full().bg(Theme::fill_group()).border_l_1().border_color(list_line()).px(px(12.)).pb(px(16.)).overflow_y_scroll().flex().flex_col()
             .child(row("Type".into(), type_button.into_any_element()))
             .children(inspector.fields.iter().map(|(field, entity)| row(field.label.into(), entity.clone().into_any_element())))
@@ -1507,23 +1397,16 @@ impl Workspace {
             .into_any_element())
     }
 
-    pub(crate) fn render_inspector_type_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.view != View::Library { return None; }
+    pub(crate) fn render_type_menu(&self, position: Point<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let inspector = self.citations.inspector.as_ref()?;
-        let position = inspector.type_menu?;
         let current = self.citations.library.as_ref()?.source_type(&inspector.key)?;
         let rows = SOURCE_TYPES.iter().copied().enumerate().map(|(i, kind)| {
             menu_row(("inspector-type-row", i))
                 .child(div().w(px(16.)).flex_none().when(std::ptr::eq(kind, current), |d| d.child(menu_glyph(Icon::Check, 14.))))
                 .child(menu_label(kind.label))
-                .on_click(cx.listener(move |w, _, window, cx| w.choose_source_type(kind, window, cx)))
+                .on_click(menu_action(cx, move |w, window, cx| w.choose_source_type(kind, window, cx)))
         }).collect::<Vec<_>>();
-        let menu = popover().id("inspector-type-menu").occlude().w(px(220.)).max_h(px(420.)).overflow_y_scroll().py(px(crate::ui::MENU_PAD_Y))
-            .on_mouse_down_out(cx.listener(|w, _, _, cx| {
-                if let Some(inspector) = &mut w.citations.inspector { inspector.type_menu = None; }
-                cx.notify();
-            }))
-            .children(rows);
-        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+        let menu = menu_panel("inspector-type-menu", 220., cx).max_h(px(420.)).overflow_y_scroll().children(rows);
+        Some(anchored_menu(Corner::TopLeft, position, menu))
     }
 }

@@ -24,6 +24,7 @@ mod native_pdf;
 #[cfg(not(target_os = "macos"))]
 #[path = "native_pdf_fallback.rs"]
 mod native_pdf;
+mod overlay;
 mod paper;
 mod preview;
 mod search;

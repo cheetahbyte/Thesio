@@ -3,6 +3,7 @@
 //! 64px top bar (breadcrumb title + save status) above the page.
 
 use crate::document::Edit;
+use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
 use crate::source::{SourceEditor, SourceEvent};
 use crate::input::{TextField, TextFieldEvent};
@@ -113,7 +114,7 @@ pub fn bind_keys(cx: &mut App) {
         if let Some(handle) = cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
             // Key dispatch already borrows this window; close after it returns.
             cx.defer(move |cx| {
-                if let Err(e) = handle.update(cx, |ws, window, cx| if ws.ready_to_close(cx) { window.remove_window(); }) { eprintln!("Could not close document window: {e}"); }
+                if let Err(e) = handle.update(cx, |ws, window, cx| if ws.ready_to_close(window, cx) { window.remove_window(); }) { eprintln!("Could not close document window: {e}"); }
             });
         }
     });
@@ -129,7 +130,7 @@ fn quit(cx: &mut App) {
         .into_iter()
         .filter_map(|w| w.downcast::<Workspace>())
         // A window that is gone has nothing left to save.
-        .all(|w| w.update(cx, |ws, _, cx| ws.save_before(cx, |_, _, cx| cx.quit())).unwrap_or(true));
+        .all(|w| w.update(cx, |ws, window, cx| ws.save_before(window, cx, |_, _, cx| cx.quit())).unwrap_or(true));
     if ready {
         cx.quit();
     }
@@ -169,7 +170,6 @@ pub enum View {
 }
 
 /// A confirmation dialog and the pages it is about.
-#[derive(Clone, Debug)]
 pub enum Confirm {
     /// Delete to Trash; `batch` for the selected rows.
     Delete { ids: Vec<String>, batch: bool },
@@ -179,13 +179,13 @@ pub enum Confirm {
     Purge(String),
     /// Library → delete these entries.
     DeleteEntries(Vec<String>),
-    /// Library → change the inspected entry to a type without a parent.
-    ChangeSourceType(&'static thesio_core::source_type::SourceType),
+    /// Library → change an entry to a type without a parent.
+    ChangeSourceType { key: String, kind: &'static thesio_core::source_type::SourceType },
     /// Library → remove a tag from every entry.
     DeleteTag(String),
     /// The open document could not be written before it was to be replaced
     /// (another document, New, Quit): Retry / Discard changes, then carry on.
-    SaveFailed,
+    SaveFailed(AfterSave),
 }
 
 /// What to do once the open document is safely on disk (or its changes given up).
@@ -213,9 +213,6 @@ pub struct Workspace {
     pub editor: Option<Entity<SourceEditor>>,
     pub preview: Option<Entity<Preview>>,
     pub citations: crate::citations::Citations,
-    /// The Version History dialog.
-    pub history: Option<crate::history::History>,
-    /// When each file last became a version, this session.
     pub search: Entity<TextField>,
     /// Keyboard highlight inside search results.
     pub search_sel: Option<usize>,
@@ -227,33 +224,20 @@ pub struct Workspace {
     pub sidebar_width: f32,
     /// The resize handle is being dragged.
     pub sidebar_drag: bool,
-    /// The search dialog (command-center style) is open.
-    pub search_open: bool,
     pub status: SaveStatus,
-    pub row_menu: Option<RowMenu>,
+    pub(crate) overlay: Option<crate::overlay::Overlay>,
+    /// Where focus was when the overlay opened.
+    pub(crate) overlay_return: Option<FocusHandle>,
     pub rename: Option<Rename>,
-    /// Last-frame bounds of each row's "…" button, to hang its menu from.
-    /// The sidebar list's own menu, and where it opened.
-    pub files_menu: Option<Point<Pixels>>,
-    /// Header "…" menu.
-    pub doc_menu: bool,
-    /// The citation style menu.
-    pub style_menu: bool,
-    /// The Word Count dialog.
-    pub words_open: bool,
     pub list_scroll: ScrollHandle,
     pub search_scroll: ScrollHandle,
     /// Selection mode: checked documents in My documents, in check order.
     pub batch: Option<Vec<String>>,
-    /// The open confirmation dialog.
-    pub confirm: Option<Confirm>,
     pub view: View,
     pub home: crate::home::Home,
     pub settings_scroll: ScrollHandle,
     /// Trash rows, refreshed when the page opens or changes.
     pub trash: Vec<crate::store::TrashEntry>,
-    /// A Trash row's menu: the page and where it opens.
-    pub trash_menu: Option<(String, Point<Pixels>, Corner)>,
     /// The toast and when it appeared.
     pub toast: Option<(ToastKind, SharedString, Instant)>,
     toast_task: Option<Task<()>>,
@@ -269,7 +253,6 @@ pub struct Workspace {
     pub outline_active: Option<usize>,
     /// Expanded pages of the My documents tree.
     pub expanded: HashSet<String>,
-    pub move_dlg: Option<crate::tree::MoveDialog>,
     /// The header "…" button, which the doc menu hangs from.
     pub more_btn_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     pub(crate) focus: FocusHandle,
@@ -277,8 +260,6 @@ pub struct Workspace {
     /// The open document has changes not yet on disk (cleared only by a
     /// successful save or by Discard changes).
     pub(crate) unsaved: bool,
-    /// Held back by a failed save: runs after Retry succeeds or Discard changes.
-    pub(crate) after_save: Option<AfterSave>,
     editor_subs: Vec<Subscription>,
     _subs: Vec<Subscription>,
 }
@@ -318,7 +299,6 @@ impl Workspace {
                             this.pick_search(ix, window, cx)
                         }
                     }
-                    TextFieldEvent::Cancel => this.close_search(window, cx),
                     _ => {}
                 }
                 cx.notify();
@@ -332,9 +312,9 @@ impl Workspace {
             }),
         ];
         let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
+        window.on_window_should_close(cx, move |window, cx| {
             // A window that is gone has nothing left to save.
-            this.update(cx, |w, cx| w.ready_to_close(cx)).unwrap_or(true)
+            this.update(cx, |w, cx| w.ready_to_close(window, cx)).unwrap_or(true)
         });
         let settings = store.borrow().settings();
         let sidebar_width = settings.sidebar_width.unwrap_or(theme::SIDEBAR_WIDTH);
@@ -348,7 +328,6 @@ impl Workspace {
             editor: None,
             preview: None,
             citations,
-            history: None,
             search,
             search_sel: None,
             paper_index: HashMap::new(),
@@ -356,23 +335,17 @@ impl Workspace {
             sidebar_open: true,
             sidebar_width,
             sidebar_drag: false,
-            search_open: false,
             status: SaveStatus::Idle,
-            row_menu: None,
+            overlay: None,
+            overlay_return: None,
             rename: None,
-            files_menu: None,
-            doc_menu: false,
-            style_menu: false,
-            words_open: false,
             list_scroll: ScrollHandle::new(),
             search_scroll: ScrollHandle::new(),
             batch: None,
-            confirm: None,
             view: View::Doc,
             home: Default::default(),
             settings_scroll: ScrollHandle::new(),
             trash: vec![],
-            trash_menu: None,
             toast: None,
             toast_task: None,
             more_btn_bounds: Rc::new(Cell::new(None)),
@@ -387,11 +360,9 @@ impl Workspace {
             outline_root: None,
             outline_active: None,
             expanded: store_expanded,
-            move_dlg: None,
             focus: cx.focus_handle(),
             save_task: None,
             unsaved: false,
-            after_save: None,
             editor_subs: vec![],
             _subs: subs,
         };
@@ -422,10 +393,8 @@ impl Workspace {
 
     /// Shows `id`, once the open document is safely saved.
     pub fn open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.view != View::Doc {
-            self.view = View::Doc;
-            cx.notify();
-        }
+        let paper = id.ends_with(".pdf") && crate::native_pdf::supported();
+        if self.view != View::Doc && !paper { self.set_view(View::Doc, cx); }
         if self.current.as_deref() == Some(id) {
             return;
         }
@@ -438,6 +407,7 @@ impl Workspace {
 
     /// Replaces the open document with `id`, which holds nothing unsaved.
     fn load_document(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_overlay(cx);
         if id.ends_with(".pdf") && crate::native_pdf::supported() {
             return self.open_paper(id, cx);
         }
@@ -493,10 +463,7 @@ impl Workspace {
                 if let Some(path) = path { this.go_to_source(&path, offset, window, cx); }
             }));
         }
-        // Opening a document puts the caret in it, unless the user is typing a search.
-        if !self.search_open {
-            editor.read(cx).focus(window);
-        }
+        editor.read(cx).focus(window);
         let touched = self.store.borrow_mut().touch(id);
         match touched {
             Ok(()) => if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) { e.meta.opened = crate::time::now(); },
@@ -510,8 +477,6 @@ impl Workspace {
         self.refresh_outline(cx);
         self.reveal_in_tree(id, cx);
         self.status = SaveStatus::Idle;
-        self.row_menu = None;
-        self.doc_menu = false;
         cx.notify();
     }
 
@@ -552,7 +517,7 @@ impl Workspace {
     pub(crate) fn go_to_source(&mut self, path: &str, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.current.as_deref() != Some(path) { self.open(path, window, cx); }
         if self.current.as_deref() != Some(path) { return; }
-        self.view = View::Doc;
+        self.set_view(View::Doc, cx);
         if let Some(editor) = &self.editor { editor.update(cx, |e, cx| e.go_to(offset, window, cx)); }
     }
 
@@ -603,7 +568,6 @@ impl Workspace {
         let result = self.store.borrow_mut().create(parent);
         match result {
             Ok(id) => {
-                self.search_open = false;
                 self.refresh_entries();
                 self.search.update(cx, |s, cx| s.set_text("", cx));
                 if let Some(parent) = parent { self.set_expanded(parent, true, cx); }
@@ -628,11 +592,8 @@ impl Workspace {
     }
 
     /// Ask before deleting: a confirmation, then the Trash.
-    pub fn ask_delete(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.row_menu = None;
-        self.doc_menu = false;
-        self.confirm = Some(Confirm::Delete { ids: vec![id.to_string()], batch: false });
-        cx.notify();
+    pub fn ask_delete(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_overlay(Overlay::Confirm(Confirm::Delete { ids: vec![id.to_string()], batch: false }), window, cx);
     }
 
     /// Moves files and folders to the Trash; if the open one goes, opens the next.
@@ -673,15 +634,14 @@ impl Workspace {
         if let Some(b) = self.batch.as_mut() {
             b.retain(|id| !deleted.iter().any(|d| inside(id, d)));
         }
-        self.row_menu = None;
         if self.current.is_none() {
             // Stay on Home or Trash if that's where the delete came from.
             let view = self.view;
             match self.first_document() {
-                Some(next) => self.open(&next, window, cx),
+                Some(next) => self.load_document(&next, window, cx),
                 None => self.new_doc(window, cx),
             }
-            self.view = view;
+            self.set_view(view, cx);
         }
         if self.view == View::Trash {
             errors.extend(self.store.borrow_mut().purge_expired());
@@ -757,7 +717,6 @@ impl Workspace {
         let on = !e.meta.pinned;
         let result = self.store.borrow_mut().set_pinned(id, on);
         if result.is_ok() { e.meta.pinned = on; }
-        self.row_menu = None;
         match result {
             Ok(()) => self.show_toast(if on { "Pinned" } else { "Unpinned" }, cx),
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not pin {id}: {e}"), cx),
@@ -771,8 +730,6 @@ impl Workspace {
         let on = e.meta.starred == 0;
         let result = self.store.borrow_mut().set_starred(id, on);
         if let Ok(time) = result { e.meta.starred = time; }
-        self.row_menu = None;
-        self.doc_menu = false;
         match result {
             Ok(_) => self.show_toast(if on { "Added to favorites" } else { "Removed from favorites" }, cx),
             Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not change favorites: {e}"), cx),
@@ -791,10 +748,15 @@ impl Workspace {
             // Rebuilt on the next frame, with what documents cite now.
             self.citations.close_inspector();
         }
+        self.set_view(view, cx);
+    }
+
+    /// What every change of the main pane goes through: an overlay belongs to
+    /// the page it opened on, and the native viewer only lives on Paper.
+    pub(crate) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
+        self.clear_overlay(cx);
         self.view = view;
-        self.row_menu = None;
-        self.trash_menu = None;
-        cx.notify();
+        if view != View::Paper { self.pdf.close(); }
     }
 
     /// A success toast (Deleted successfully, Moved successfully …).
@@ -839,7 +801,6 @@ impl Workspace {
         // From Home the row may be hidden: show it in the sidebar.
         self.sidebar_open = true;
         self.reveal_in_tree(id, cx);
-        self.row_menu = None;
         cx.notify();
     }
 
@@ -957,6 +918,7 @@ impl Workspace {
             crumbs.push(sep());
         }
         let record_more = self.more_btn_bounds.clone();
+        let doc_menu = matches!(self.overlay, Some(Overlay::DocMenu));
         div()
             .id("top-bar").relative()
             .h(px(HEADER_H))
@@ -1040,12 +1002,11 @@ impl Workspace {
                             // from this button's right edge.
                             seg("doc-more", Icon::Ellipsis)
                                 .relative()
-                                .when(self.doc_menu, |d| d.bg(Theme::fill_hover()))
-                                .when(!self.doc_menu, |d| d.tip("More", None))
+                                .when(doc_menu, |d| d.bg(Theme::fill_hover()))
+                                .when(!doc_menu, |d| d.tip("More", None))
                                 .child(canvas(move |b, _, _| record_more.set(Some(b)), |_, _, _, _| {}).absolute().inset_0())
-                                .on_click(cx.listener(|w, _, _, cx| {
-                                    w.doc_menu = !w.doc_menu;
-                                    cx.notify();
+                                .on_click(cx.listener(move |w, _, window, cx| {
+                                    if doc_menu { w.close_overlay(window, cx); } else { w.open_overlay(Overlay::DocMenu, window, cx); }
                                 })),
                         )
                     })
@@ -1079,15 +1040,8 @@ impl Render for Workspace {
         if self.view != View::Paper { self.pdf.close(); }
         self.native_sidebar.sync(if self.sidebar_open { self.sidebar_w(window) } else { 0. }, window);
         let sidebar = if self.sidebar_open { Some(if matches!(self.view, View::Settings | View::Trash) { self.render_settings_sidebar(window, cx) } else { self.render_sidebar(window, cx) }) } else { None };
-        let row_menu = self.render_row_menu(cx);
-        let files_menu = self.render_files_menu(cx);
         let resize = self.sidebar_open.then(|| self.render_resize_handle(window, cx));
         let resize_overlay = self.render_resize_overlay(cx);
-        let search = self.render_search(window, cx);
-        let doc_menu = self.render_doc_menu(window, cx);
-        let style_menu = self.render_style_menu(window, cx);
-        let confirm = self.render_confirm(cx);
-        let trash_menu = self.render_trash_menu(cx);
         let toast = self.render_toast(window);
         let main = match self.view {
             View::Doc => div()
@@ -1120,17 +1074,7 @@ impl Render for Workspace {
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(window, cx),
         };
-        let move_dlg = self.render_move_dialog(cx);
-        let cite_picker = self.render_cite_picker(window, cx);
-        let lookup = self.render_lookup(window, cx);
-        let quote_dialog = self.render_quote_dialog(window, cx);
-        let library_menu = self.render_library_menu(window, cx);
-        let library_row_menu = self.render_library_row_menu(cx);
-        let tag_editor = self.render_tag_editor(window, cx);
-        let type_menu = self.render_inspector_type_menu(cx);
-        let history = self.render_history(cx);
-        let words = self.render_word_count(cx);
-        let tag_menu = self.render_tag_menu(window, cx);
+        let overlay = self.render_overlay(window, cx);
         let column_drag = self.render_column_drag(cx);
         // Only the note stands out: a white plane flush with the window's top,
         // right and bottom edges. The sidebar sits sunken on the window
@@ -1152,7 +1096,7 @@ impl Render for Workspace {
             .text_color(Theme::text())
             // Window keys act on the window they were pressed in, not on
             // whichever window macOS considers active.
-            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| if w.ready_to_close(cx) { window.remove_window(); }))
+            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| if w.ready_to_close(window, cx) { window.remove_window(); }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
@@ -1172,73 +1116,21 @@ impl Render for Workspace {
                 if ev.keystroke.key == "escape" && w.view == View::Settings {
                     w.close_settings(cx);
                     cx.stop_propagation();
-                    return;
-                }
-                if ev.keystroke.key == "escape" && (w.doc_menu || w.style_menu) {
-                    w.doc_menu = false;
-                    w.style_menu = false;
-                    cx.stop_propagation();
-                    cx.notify();
                 }
             }))
-            // Esc leaves Selection mode (closing its menu or confirmation first), even from the editor.
-            .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
-                // Esc cancels a confirmation dialog.
-                if ev.keystroke.key == "escape" && w.words_open {
-                    w.words_open = false;
-                    cx.stop_propagation();
-                    return cx.notify();
-                }
-                if ev.keystroke.key == "escape" && w.history.is_some() {
-                    w.close_history(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if ev.keystroke.key == "escape" && w.confirm.is_some() {
-                    w.confirm = None;
-                    w.after_save = None;
-                    cx.stop_propagation();
-                    cx.notify();
-                    return;
-                }
-                if ev.keystroke.key != "escape" || w.batch.is_none() || w.search_open || w.rename.is_some() {
-                    return;
-                }
-                if w.row_menu.is_some() {
-                    w.row_menu = None;
-                } else {
-                    w.batch = None;
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }))
+            // A focused field binds Esc, and bindings run before key listeners.
+            .capture_action(cx.listener(|w, _: &crate::input::Cancel, window, cx| w.escape(window, cx)))
+            .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| if ev.keystroke.key == "escape" { w.escape(window, cx); }))
             .on_action(cx.listener(|w, _: &FocusSearch, window, cx| {
-                if w.search_open { w.close_search(window, cx); } else { w.open_search(window, cx); }
+                if w.search_open() { w.close_overlay(window, cx); } else { w.open_search(window, cx); }
                 cx.stop_propagation();
             }))
             .children(sidebar)
             .child(note)
             .children(resize)
             .children(crate::ui::window_controls(window))
-            .children(row_menu)
-            .children(files_menu)
-            .children(doc_menu)
-            .children(style_menu)
-            .children(trash_menu)
-            .children(confirm)
-            .children(move_dlg)
-            .children(cite_picker)
-            .children(lookup)
-            .children(quote_dialog)
-            .children(library_menu)
-            .children(library_row_menu)
-            .children(tag_editor)
-            .children(type_menu)
-            .children(history)
-            .children(words)
-            .children(tag_menu)
+            .children(overlay)
             .children(column_drag)
-            .children(search)
             .children(resize_overlay)
             .children(toast)
     }

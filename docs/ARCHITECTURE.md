@@ -14,6 +14,7 @@ main.rs: window
   app.rs: Workspace, the window's root view
     store.rs: the vault on disk [core]
     document.rs: the open document's saves, and every write to a document
+    overlay.rs: the one menu or dialog over the window
     sidebar, tree, home, search, trash, settings, docmenu
     source.rs: SourceEditor, the open file's text
       buffer.rs: text, selection, undo [core]
@@ -59,6 +60,10 @@ Text that does not come from typing goes through `Workspace::write_document`, wh
 ## Editor rendering
 
 `SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret. Painted rows are kept for the frame to resolve mouse positions and vertical caret movement.
+
+## Overlays
+
+`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
 
 ## Vault ids
 

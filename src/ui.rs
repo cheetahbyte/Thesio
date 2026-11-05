@@ -1,8 +1,9 @@
 //! Small shared UI pieces: icons, tooltips, popover shells.
 
+use crate::app::Workspace;
 use crate::theme::{self, Theme, craft};
 use crate::time::civil;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -71,7 +72,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
                 .position(point(px(0.), px(top)))
                 .child(div().w(vw).flex().justify_center().opacity(op).child(card)),
         )
-        .with_priority(20)
+        .with_priority(layer::TOAST)
         .into_any_element(),
     )
 }
@@ -102,6 +103,16 @@ pub fn list_line() -> Hsla {
 }
 
 
+/// Stacking of what GPUI draws above the page, lowest first.
+pub mod layer {
+    pub const COMPLETION: usize = 1;
+    pub const MENU: usize = 2;
+    pub const DIALOG: usize = 3;
+    /// A full-window layer that holds the pointer during a drag.
+    pub const DRAG: usize = 4;
+    pub const TOAST: usize = 20;
+}
+
 /// The window dimmed under a modal dialog: a light black veil.
 pub fn scrim() -> Hsla {
     theme::rgbaf(0, 0, 0, if theme::dark() { 0.45 } else { 0.25 })
@@ -110,6 +121,40 @@ pub fn scrim() -> Hsla {
 /// The modal dialog: white, radius 12, deep soft drop.
 pub fn dialog(id: &'static str) -> Stateful<Div> {
     div().id(id).occlude().rounded(px(12.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ModalAt { Center, Top }
+
+/// `panel` over the dimmed window. With `dismiss`, a click beside it closes it.
+pub fn modal(id: &'static str, at: ModalAt, dismiss: bool, panel: impl IntoElement, cx: &Context<Workspace>) -> AnyElement {
+    deferred(div().id(id).absolute().inset_0().bg(scrim()).flex().justify_center().occlude()
+        .when(at == ModalAt::Center, |d| d.items_center())
+        .when(at == ModalAt::Top, |d| d.items_start().pt(px(96.)))
+        .on_mouse_down(MouseButton::Left, cx.listener(move |w, _, window, cx| {
+            cx.stop_propagation();
+            if dismiss { w.close_overlay(window, cx); }
+        }))
+        .child(panel)).with_priority(layer::DIALOG).into_any_element()
+}
+
+/// `menu` floating at `position`, kept inside the window.
+pub fn anchored_menu(corner: Corner, position: Point<Pixels>, menu: impl IntoElement) -> AnyElement {
+    deferred(anchored().anchor(corner).position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(layer::MENU).into_any_element()
+}
+
+/// A menu panel `width` wide that closes on a click outside it.
+pub fn menu_panel(id: &'static str, width: f32, cx: &Context<Workspace>) -> Stateful<Div> {
+    popover().id(id).occlude().w(px(width)).py(px(MENU_PAD_Y)).on_mouse_down_out(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))
+}
+
+/// A menu row's click: the menu closes, then `action` runs.
+pub fn menu_action(cx: &Context<Workspace>, action: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |w, _, window, cx| {
+        w.close_overlay(window, cx);
+        action(w, window, cx);
+    })
 }
 
 /// The primary button: a flat accent fill, a white 13pt label.
