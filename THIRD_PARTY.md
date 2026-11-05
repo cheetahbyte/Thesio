@@ -4,7 +4,7 @@ Thesio is derived from [quiet.md](https://github.com/s1dashu/quiet-md) (MIT; see
 
 ## Rust dependencies
 
-The following table is generated from `cargo metadata` and contains 854 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
+The following table is generated from `cargo metadata` and contains 858 packages. It records declared licenses, including MPL-2.0, and does not replace each component's license text.
 
 To regenerate the table from all `cargo metadata` dependencies, run `scripts/licences.sh`.
 
@@ -155,6 +155,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | dirs | 4.0.0 | MIT OR Apache-2.0 |
 | dirs | 5.0.1 | MIT OR Apache-2.0 |
+| dirs | 6.0.0 | MIT OR Apache-2.0 |
 | dirs | 7.0.0 | MIT OR Apache-2.0 |
 | dirs-sys | 0.3.7 | MIT OR Apache-2.0 |
 | dirs-sys | 0.4.1 | MIT OR Apache-2.0 |
@@ -526,7 +527,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT |
 | rustls-pemfile | 2.2.0 | Apache-2.0 OR ISC OR MIT |
@@ -620,6 +621,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | taffy | 0.9.0 | MIT |
 | take-until | 0.2.0 | MIT |
 | tao-core-video-sys | 0.2.0 | MIT |
+| tar | 0.4.46 | MIT OR Apache-2.0 |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.4.3 | MIT/Apache-2.0 |
 | termcolor | 1.4.1 | Unlicense OR MIT |
@@ -670,6 +672,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | typst-assets | 0.15.1 | Apache-2.0 |
 | typst-eval | 0.15.1 | Apache-2.0 |
 | typst-html | 0.15.1 | Apache-2.0 |
+| typst-ide | 0.15.1 | Apache-2.0 |
 | typst-kit | 0.15.1 | Apache-2.0 |
 | typst-layout | 0.15.1 | Apache-2.0 |
 | typst-library | 0.15.1 | Apache-2.0 |
@@ -823,6 +826,7 @@ To regenerate the table from all `cargo metadata` dependencies, run `scripts/lic
 | x11rb | 0.13.2 | MIT OR Apache-2.0 |
 | x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 |
 | xattr | 0.2.3 | MIT/Apache-2.0 |
+| xattr | 1.7.0 | MIT OR Apache-2.0 |
 | xcb | 1.7.1 | MIT |
 | xcursor | 0.3.11 | MIT |
 | xim-ctext | 0.3.0 | MIT |

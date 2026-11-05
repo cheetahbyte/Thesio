@@ -2,7 +2,10 @@
 //! Typst project root (paths starting with `/` also try the main file's
 //! folders; see `project::candidates`), so `#include`, `#image`, and `#bibliography` reach any
 //! file in it. Unsaved editor text is held in buffers that shadow the disk.
+//! Compiling never reaches the network: a package not on disk is reported in
+//! `Compilation::missing`, for the caller to fetch off the compile.
 
+use crate::packages::{PackageSpec, Packages};
 use crate::project::{self, Project};
 use anyhow::{Context, Result};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -11,7 +14,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use typst::diag::{FileError, FileResult, Severity, SourceDiagnostic};
+use typst::diag::{FileError, FileResult, PackageError, Severity, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::introspection::PagedPosition;
 use typst::layout::{Abs, Frame, FrameItem, Point};
@@ -28,6 +31,8 @@ const CACHE_AGE: usize = 10;
 const COMPILE_STACK: usize = 64 * 1024 * 1024;
 /// How far to look for text when the caret is on none, in bytes.
 const NEAREST_TEXT: usize = 64;
+/// Starts the error a missing package raises, which `diagnostic` turns into a status.
+const DOWNLOADING: &str = "Downloading ";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Diagnostic {
@@ -55,10 +60,16 @@ pub struct Compilation {
     /// appear. Text with no file, such as a bibliography or page numbers, does
     /// not count.
     pub words: Vec<(String, usize)>,
+    /// Packages this compile stopped at, to `fetch` and compile again.
+    pub missing: Vec<PackageSpec>,
     world: Snapshot,
 }
 
 impl Compilation {
+    /// Downloads a package from `missing`, on the calling thread. A failure is
+    /// not returned: the next compile reports it where the import is.
+    pub fn fetch(&self, spec: &PackageSpec) { self.world.resources.packages.fetch(spec); }
+
     /// Where byte `offset` of `path` appears: its page and height in points.
     pub fn position_of(&self, path: &str, offset: usize) -> Option<(usize, f32)> {
         let source = self.world.source(file_id(path).ok()?).ok()?;
@@ -128,6 +139,7 @@ pub enum PageTarget {
 struct Resources {
     library: LazyHash<Library>,
     fonts: FontStore,
+    packages: Arc<Packages>,
 }
 
 pub struct Compiler {
@@ -140,10 +152,12 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<PathBuf>) -> Self { Self::with_packages(root, Packages::new().into()) }
+
+    pub(crate) fn with_packages(root: impl Into<PathBuf>, packages: Arc<Packages>) -> Self {
         let mut fonts = FontStore::new();
         fonts.extend(typst_kit::fonts::embedded());
-        let resources = Arc::new(Resources { library: LazyHash::new(Library::default()), fonts });
+        let resources = Arc::new(Resources { library: LazyHash::new(Library::default()), fonts, packages });
         Self { root: root.into(), resources, buffers: FxHashMap::default(), files: Mutex::default() }
     }
 
@@ -160,8 +174,18 @@ impl Compiler {
         with_large_stack(move || compiler.run(main, id))
     }
 
+    /// Compiles `main` once, downloading what it imports on this thread, for
+    /// work with no session to show a download and compile again.
+    pub fn compile_fetching(&mut self, main: &str) -> Result<Compilation> {
+        loop {
+            let compilation = self.compile(main)?;
+            if compilation.missing.is_empty() { return Ok(compilation); }
+            for spec in &compilation.missing { compilation.fetch(spec); }
+        }
+    }
+
     fn run(&self, main: &str, id: FileId) -> Compilation {
-        let world = VaultWorld { compiler: self, main: id, read: Mutex::default() };
+        let world = VaultWorld { compiler: self, main: id, read: Mutex::default(), missing: Mutex::default() };
         let result = typst::compile::<PagedDocument>(&world);
         let (document, errors) = match result.output {
             Ok(document) => (Some(document), Default::default()),
@@ -171,7 +195,8 @@ impl Compiler {
         comemo::evict(CACHE_AGE);
         let words = document.as_ref().map_or(vec![], count_words);
         let files = world.read.into_inner().unwrap_or_default();
-        Compilation { main: main.to_string(), document, diagnostics, words, world: Snapshot { resources: self.resources.clone(), main: id, files } }
+        let missing = world.missing.into_inner().unwrap_or_default();
+        Compilation { main: main.to_string(), document, diagnostics, words, missing, world: Snapshot { resources: self.resources.clone(), main: id, files } }
     }
 }
 
@@ -297,6 +322,7 @@ struct VaultWorld<'a> {
     compiler: &'a Compiler,
     main: FileId,
     read: Mutex<FxHashMap<FileId, ReadFile>>,
+    missing: Mutex<Vec<PackageSpec>>,
 }
 
 impl VaultWorld<'_> {
@@ -306,11 +332,17 @@ impl VaultWorld<'_> {
 
     fn path(&self, id: FileId) -> FileResult<PathBuf> {
         let rooted = id.get();
-        // Packages download from the network; the vault stays offline for now.
-        if !matches!(rooted.root(), VirtualRoot::Project) {
-            return Err(FileError::Other(Some("Typst packages are not supported yet".into())));
+        match rooted.root() {
+            VirtualRoot::Project => rooted.vpath().realize(&self.compiler.root).map_err(FileError::Realize),
+            VirtualRoot::Package(spec) => match self.compiler.resources.packages.find(spec)? {
+                Some(root) => root.resolve(rooted.vpath()),
+                None => {
+                    let mut missing = self.missing.lock().unwrap();
+                    if !missing.contains(spec) { missing.push(spec.clone()); }
+                    Err(PackageError::Other(Some(format!("{DOWNLOADING}{spec}").into())).into())
+                }
+            },
         }
-        rooted.vpath().realize(&self.compiler.root).map_err(FileError::Realize)
     }
 
     /// Current bytes of a file on disk, reread only when it changed.
@@ -329,9 +361,11 @@ impl VaultWorld<'_> {
         let id = d.span.id();
         let range = self.range(d.span);
         let line = range.as_ref().zip(id).and_then(|(r, id)| self.source(id).ok()?.lines().byte_to_line(r.start));
+        let missing = self.missing.lock().unwrap();
+        let waiting = missing.iter().find(|spec| d.message.contains(&format!("{DOWNLOADING}{spec}")));
         Diagnostic {
-            error: d.severity == Severity::Error,
-            message: d.message.to_string(),
+            error: d.severity == Severity::Error && waiting.is_none(),
+            message: waiting.map_or(d.message.to_string(), |spec| format!("{DOWNLOADING}{spec}…")),
             hints: d.hints.iter().map(|h| h.v.to_string()).collect(),
             path: id.and_then(vault_path),
             range,
@@ -570,12 +604,6 @@ mod tests {
             assert!(offset >= 3 && offset < text.len(), "{offset}");
             assert_eq!(compilation.words, [("ch.typ".to_string(), 2)]);
         }
-    }
-
-    #[test]
-    fn a_package_import_is_an_error_not_a_panic() {
-        let root = vault("package", &[("main.typ", "#import \"@preview/x:1.0.0\": y\n")]);
-        assert!(!errors(&Compiler::new(root).compile("main.typ").unwrap()).is_empty());
     }
 
     /// Layout of nested content recurses far past the stack a pool thread has,

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thesio_core::compiler::{Compilation, Compiler, Diagnostic, render_changed};
+use thesio_core::packages::PackageSpec;
 use thesio_core::project::{LaunchTarget, launch_target};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
@@ -121,6 +122,10 @@ pub struct DocumentSession {
     main: String,
     /// Rendering pages is for a view; an editor alone only needs the result.
     rendered: bool,
+    /// The newest text, to compile again when a package arrives.
+    text: String,
+    /// Packages being fetched, each compiled again when it ends.
+    downloading: Vec<PackageSpec>,
     /// Counts `set_text` calls. A compile that finds it moved on does nothing.
     latest: Arc<AtomicU64>,
     /// The first compile, until a frame takes it or the wait is over.
@@ -150,7 +155,7 @@ impl DocumentSession {
     /// A session for an editor with no `Preview`, such as paper notes: the
     /// document compiles and nothing is rendered.
     pub fn without_pages(root: PathBuf, path: String, main: String) -> Self {
-        Self { root, compiler: Default::default(), path, main, rendered: false, latest: Default::default(), first: None, delivery: None, newest: None, document: None, pages: Default::default(), diagnostics: Default::default(), took: None, published: 0 }
+        Self { root, compiler: Default::default(), path, main, rendered: false, text: String::new(), downloading: vec![], latest: Default::default(), first: None, delivery: None, newest: None, document: None, pages: Default::default(), diagnostics: Default::default(), took: None, published: 0 }
     }
 
     pub fn path(&self) -> &str { &self.path }
@@ -179,6 +184,7 @@ impl DocumentSession {
 
     /// Compiles `text` as the open file, superseding any pending compile.
     pub fn set_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.text = text.clone();
         let generation = self.latest.fetch_add(1, Ordering::Relaxed) + 1;
         let held = self.rendered && generation == 1;
         let known: Option<Vec<u128>> = self.rendered.then(|| self.pages.iter().map(|page| page.hash).collect());
@@ -240,6 +246,7 @@ impl DocumentSession {
         self.took = None;
         self.published += 1;
         if let Some(Output { compilation, pages, took }) = output {
+            self.fetch_missing(&compilation, cx);
             self.newest = Some(compilation.clone());
             // A failed compile keeps the last good pages on screen.
             if compilation.document.is_some() {
@@ -251,6 +258,27 @@ impl DocumentSession {
         cx.emit(SessionEvent::Compiled);
         if diagnostics_changed { cx.emit(SessionEvent::Diagnostics); }
         cx.notify();
+    }
+
+    /// Downloads what a compile stopped at, off the compile so typing goes on
+    /// compiling, and compiles again when each download ends.
+    fn fetch_missing(&mut self, compilation: &Arc<Compilation>, cx: &mut Context<Self>) {
+        for spec in &compilation.missing {
+            if self.downloading.contains(spec) { continue; }
+            self.downloading.push(spec.clone());
+            let (compilation, spec) = (compilation.clone(), spec.clone());
+            let work = cx.background_spawn(async move {
+                compilation.fetch(&spec);
+                spec
+            });
+            cx.spawn(async move |this, cx| {
+                let spec = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.downloading.retain(|other| *other != spec);
+                    this.set_text(this.text.clone(), cx);
+                });
+            }).detach();
+        }
     }
 
     fn place_pages(&mut self, rendered: Vec<RenderedPage>, cx: &mut Context<Self>) {

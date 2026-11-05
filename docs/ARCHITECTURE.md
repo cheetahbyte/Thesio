@@ -37,7 +37,8 @@ main.rs: window
 | Module | Responsibility |
 |---|---|
 | `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
-| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. |
+| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
+| `packages.rs` | Finds Typst packages on disk and fetches missing ones. See [Packages](#packages). |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
 | `library.rs` | The citation library. |
@@ -45,7 +46,7 @@ main.rs: window
 | `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
 | `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
 | `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
-| `lookup.rs` | Fetches entries by identifier and downloads open-access papers. The only code that reaches the network. |
+| `lookup.rs` | Fetches entries by identifier and downloads open-access papers and Typst packages. The only code that reaches the network. |
 | `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
 | `references.rs` | Note links, citations, and rewriting path arguments after a move. |
 | `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
@@ -67,6 +68,16 @@ main.rs: window
 A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
 
 Text that does not come from typing goes through `Workspace::write_document`, which writes the file and updates its entry, the editors showing it, and the preview. `Workspace::text_of` reads a document, from the open editor if it is the open one. Errors other than a failed save appear as toasts.
+
+## Packages
+
+`#import "@preview/name:version"` works as it does in the typst CLI, and the two share their folders through `typst-kit`: `~/Library/Application Support/typst/packages` for local packages and `~/Library/Caches/typst/packages` for downloads on macOS, and each system's equivalents elsewhere. A package on disk compiles with no network at all.
+
+A download happens outside the compile, so a slow one holds up neither typing nor the compiler's lock. A compile that meets a missing `@preview` package stops there and lists it in `Compilation::missing`. Its diagnostic reads `Downloading @preview/name:version…`, not as an error. `DocumentSession` fetches the package on a background thread and compiles the newest text again when the fetch ends, which also reaches packages that a package imports, one at a time. PDF export has no session, so `Compiler::compile_fetching` does the same on its own thread. Only the `preview` namespace downloads.
+
+`typst-kit` unpacks into a temporary folder and moves it into place whole, so a failed download leaves nothing in the cache. The failure itself stays in memory for 30 seconds and shows as an error at the import. Compiles in that time report it without asking again, since a compile follows every pause in typing; the first compile after that tries again.
+
+Importing a package is the only network use a document can trigger. It requests the package's archive from `packages.typst.org`, plus the package index if the archive is not found, and sends nothing from the document but the package's name and version.
 
 ## Editor rendering
 
@@ -124,7 +135,7 @@ The citation style is the `style` argument of the document's `#bibliography`, so
 
 Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
 
-Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Other numbers, such as an ISSN or a version, are shared by many works and do not count. Keys are generated as surname and year.
+Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. The only other requests a document can cause come from importing a package that is not on disk (see [Packages](#packages)). An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Other numbers, such as an ISSN or a version, are shared by many works and do not count. Keys are generated as surname and year.
 
 Adding a source also looks for its paper: arXiv first, then the locations Unpaywall lists, when an email is set in Settings. Only PDFs are kept, as `sources/<key>.pdf`, and the Sources page lists that folder. A paper follows its entry when the key changes, and stays when the entry is deleted. A paper can also be added by hand. A PDF in `sources/` whose name matches no key shows as unlinked until it is linked to a source.
 
@@ -143,7 +154,8 @@ The first citation in a document embeds a block unless one already covers it. A 
 ## Limits
 
 - Fonts are the set bundled with Typst.
-- `@preview` packages are rejected instead of downloaded.
+- A failed package download is tried again only by a compile, so a document left untouched keeps showing the error.
+- An editor with no `Preview`, such as paper notes, downloads packages without showing it.
 - A rename can break code that uses a module by its file name, as in `#import "a.typ"` followed by `a.title`.
 - Paths built at run time, such as `"chapters/" + name`, are not updated by a move.
 - Changes made to the open file by other programs are not picked up, and the next save overwrites them.

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Support Typst packages. `#import "@preview/name:version"` downloads the package on first use, into the same cache as the typst CLI, and shows that it is downloading or why it failed. A cached package needs no network, and `@local` packages work too.
 - Save paper notes after typing stops rather than on every keystroke, and keep their earlier versions like a document's.
 - Leave Trash with Esc, as the sidebar offered.
 - Say so when a file dialog fails, and when a document cannot be reloaded after a move changed its paths.

@@ -10,6 +10,7 @@ pub mod history;
 pub mod identifier;
 pub mod library;
 pub mod lookup;
+pub mod packages;
 pub mod paths;
 pub mod project;
 pub mod quote;

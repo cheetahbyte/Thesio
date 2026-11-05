@@ -1,20 +1,26 @@
 //! Looks up bibliographic metadata by identifier: DOIs and arXiv IDs through
 //! doi.org, PMIDs through NCBI, ISBNs through Open Library. Also downloads
-//! open-access papers from arXiv and the locations Unpaywall lists. Network
-//! access happens only here, and only for sources the user added to the library.
+//! open-access papers from arXiv and the locations Unpaywall lists, and Typst
+//! packages a document imports. Network access happens only here, and only for
+//! sources the user added to the library or packages a document imports.
 
 use crate::source_type::{ARTICLE, ARXIV, AUTHORS, BOOK, CHAPTER, DATE, DOI, ISBN, PAGES, PARENT_ISSUE, PARENT_TITLE, PARENT_VOLUME, PERIODICAL, PMID, PUBLISHER, Slot, TITLE, URL, read, write};
 use crate::identifier::{Identifier, PaperIds, arxiv_doi};
 use anyhow::{Context, Result};
 use serde_json::Value as Json;
 use serde_yaml::Mapping;
+use std::any::Any;
+use std::io::{self, Read};
 use std::path::Path;
 use std::time::Duration;
+use typst_kit::downloader::Downloader;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = concat!("Thesio/", env!("CARGO_PKG_VERSION"));
 const PAPER_TIMEOUT: Duration = Duration::from_secs(120);
 const PAPER_LIMIT: u64 = 200 * 1024 * 1024;
+const PACKAGE_TIMEOUT: Duration = Duration::from_secs(120);
+const PACKAGE_LIMIT: u64 = 200 * 1024 * 1024;
 
 /// The service has no such record.
 #[derive(Debug)]
@@ -36,6 +42,24 @@ fn get(url: &str, accept: &str) -> Result<String> {
         Err(ureq::Error::StatusCode(404)) => Err(NotFound.into()),
         Err(ureq::Error::StatusCode(code)) => anyhow::bail!("the service answered with status {code}"),
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Fetches Typst packages and their index for `typst_kit`.
+pub(crate) struct PackageDownloader;
+
+impl Downloader for PackageDownloader {
+    fn stream(&self, _: &dyn Any, url: &str) -> io::Result<(Option<usize>, Box<dyn Read>)> {
+        match request(url, "*/*", PACKAGE_TIMEOUT) {
+            Ok(response) => {
+                let body = response.into_body();
+                let size = body.content_length().map(|size| size as usize);
+                Ok((size, Box::new(body.into_with_config().limit(PACKAGE_LIMIT).reader())))
+            }
+            Err(ureq::Error::StatusCode(404)) => Err(io::ErrorKind::NotFound.into()),
+            Err(ureq::Error::StatusCode(code)) => Err(io::Error::other(format!("the server answered with status {code}"))),
+            Err(e) => Err(io::Error::other(format!("check your connection: {e}"))),
+        }
     }
 }
 

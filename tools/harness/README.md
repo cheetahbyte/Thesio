@@ -77,6 +77,8 @@ Environment variables:
 - `THESIO_NOPARK`: Don't move the window offscreen.
 - `THESIO_WINDOW_CAPTURE`: Use window server capture, including the system-drawn traffic lights.
 - `THESIO_RECORD_FPS`: Recording frame rate, default 30.
+- `ALL_PROXY`: Proxy for the app's requests. A dead address such as `http://127.0.0.1:9` stands in for being offline.
+- `HOME`: `run.py` passes it on, so `HOME=/tmp/x` gives a run its own Typst package cache.
 
 ## Usage rules
 

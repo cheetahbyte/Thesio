@@ -311,7 +311,7 @@ impl Workspace {
             let result = cx.background_spawn(async move {
                 let mut compiler = thesio_core::compiler::Compiler::new(root);
                 compiler.set_buffer(&id, text)?;
-                let compilation = compiler.compile(&id)?;
+                let compilation = compiler.compile_fetching(&id)?;
                 let Some(document) = compilation.document else {
                     let first = compilation.diagnostics.into_iter().find(|d| d.error).map_or("unknown error".to_string(), |d| d.message);
                     anyhow::bail!("{first}");

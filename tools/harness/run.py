@@ -19,6 +19,6 @@ shutil.rmtree(lib, ignore_errors=True); shutil.copytree(lib_src, lib)
 binary = os.path.abspath(os.environ.get('THESIO_BIN') or os.path.join(repo, 'target', 'release', 'thesio'))
 env = {'HOME': os.path.expanduser('~'), 'THESIO_HOME': lib, 'THESIO_SCRIPT': script,
        'THESIO_SHOTS': work, 'PATH': '/opt/homebrew/bin:/usr/bin:/bin'}
-for k in ('THESIO_TRACE', 'THESIO_NOPARK', 'THESIO_WINDOW_CAPTURE', 'THESIO_RECORD_FPS'):
+for k in ('THESIO_TRACE', 'THESIO_NOPARK', 'THESIO_WINDOW_CAPTURE', 'THESIO_RECORD_FPS', 'ALL_PROXY'):
     if k in os.environ: env[k] = os.environ[k]
 sys.exit(subprocess.run(binary, env=env, cwd=work, stdout=open(os.path.join(work, 'log'), 'w'), stderr=subprocess.STDOUT).returncode)
