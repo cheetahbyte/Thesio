@@ -3,7 +3,7 @@
 
 use crate::app::Workspace;
 use crate::confirm::Confirm;
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
 use crate::theme::Theme;
@@ -26,7 +26,7 @@ impl Workspace {
         t.parent
             .as_ref()
             .and_then(|p| self.entries.iter().find(|e| &e.id == p))
-            .map_or_else(|| crate::settings::label("My documents"), |e| display_title(&e.title))
+            .map_or_else(|| "My documents".to_string(), |e| display_title(&e.title))
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -49,7 +49,7 @@ impl Workspace {
                 .text_size(px(13.))
                 .line_height(px(24.))
                 .text_color(list_header_text())
-                .child(crate::settings::label(label))
+                .child(label)
         };
         let table_header = div()
             .h(px(33.))

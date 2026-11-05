@@ -2,7 +2,7 @@
 
 use crate::app::Workspace;
 use crate::overlay::Overlay;
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::theme::Theme;
 use crate::ui::{ModalAt, dialog, primary_button, secondary_button, ui_para};
 use gpui::{prelude::FluentBuilder, *};

@@ -8,7 +8,7 @@ use crate::overlay::Overlay;
 use crate::preview::{Preview, PreviewEvent};
 use crate::source::{SourceEditor, SourceEvent};
 use crate::input::{TextField, TextFieldEvent};
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::store::Entry;
 use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
@@ -167,7 +167,7 @@ pub struct Rename {
 }
 
 pub struct Workspace {
-    pub settings_page: crate::settings::Page,
+    pub settings: crate::settings::Settings,
     native_sidebar: crate::native_header::NativeSidebar,
     pub(crate) papers: crate::papers::Papers,
     pub store: SharedStore,
@@ -198,7 +198,6 @@ pub struct Workspace {
     pub batch: Option<Vec<String>>,
     pub view: View,
     pub home: crate::home::Home,
-    pub settings_scroll: ScrollHandle,
     /// Trash rows, refreshed when the page opens or changes.
     pub trash: Vec<crate::store::TrashEntry>,
     /// The toast and when it appeared.
@@ -231,7 +230,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(document: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        crate::settings::load();
+        crate::preferences::load();
         if !cx.has_global::<SharedStore>() { cx.set_global(SharedStore::open().expect("open document library")); }
         let store = cx.global::<SharedStore>().clone();
         let entries = store.borrow_mut().list();
@@ -243,10 +242,10 @@ impl Workspace {
         let subs = vec![
             cx.observe_window_bounds(window, |_, window, cx| crate::window_size::remember(window, cx)),
             // The system switched between light and dark (or the app's own look changed).
-            cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
+            cx.observe_window_appearance(window, |this, _, cx| if crate::appearance::sync_dark(cx) { crate::appearance::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
                 // The accent has no change event in GPUI, and changing it means visiting System Settings.
-                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.refresh_entries(); this.reload_library(); cx.notify(); }
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::appearance::refresh_all(this, cx); } this.refresh_entries(); this.reload_library(); cx.notify(); }
                 else { this.save_all(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -284,7 +283,7 @@ impl Workspace {
         let store_expanded: HashSet<String> = settings.expanded.into_iter().collect();
         let citations = crate::citations::Citations::new(store.borrow().root(), cx);
         let mut ws = Workspace {
-            settings_page: Default::default(),
+            settings: crate::settings::Settings::new(cx),
             store,
             entries,
             current: None,
@@ -307,7 +306,6 @@ impl Workspace {
             batch: None,
             view: View::Doc,
             home: Default::default(),
-            settings_scroll: ScrollHandle::new(),
             trash: vec![],
             toast: None,
             toast_task: None,
@@ -802,7 +800,7 @@ impl Workspace {
     /// usable width it is None and the caller shows a search icon instead.
     pub(crate) fn header_search(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let main = f32::from(window.viewport_size().width) - if self.sidebar_open { self.sidebar_w(window) } else { 0. };
-        let title = crate::settings::label("Home");
+        let title = "Home".to_string();
         let title_w = f32::from(window.text_system().shape_line(title.clone().into(), px(15.), &[window.text_style().highlight(HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() }).to_run(title.len())], None).width);
         // page_header's left inset (26 with the sidebar, else the traffic
         // lights plus the 4 + 28 + 12 of Show sidebar), then 16 clear of the title.

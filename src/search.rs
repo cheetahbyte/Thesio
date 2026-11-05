@@ -6,7 +6,7 @@
 use crate::app::Workspace;
 use crate::library::Row;
 use crate::native_pdf::{Highlight, read_highlights};
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme};
 use crate::overlay::Overlay;

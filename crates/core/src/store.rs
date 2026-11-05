@@ -18,6 +18,12 @@ const TRASH_FILE: &str = "trash.json";
 const SETTINGS_FILE: &str = "settings.json";
 pub const UNTITLED: &str = "Untitled";
 
+/// How a title reads: trimmed, and never blank.
+pub fn display_title(title: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() { UNTITLED.to_string() } else { title.to_string() }
+}
+
 /// App state for a vault path. Timestamps come from the file; this holds what
 /// a plain file cannot.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

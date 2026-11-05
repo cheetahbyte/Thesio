@@ -1,135 +1,42 @@
-//! Settings: preferences (`.thesio/preferences.json` in the vault) and the
-//! settings view — a category list in the sidebar, one page per category,
-//! each page a column of grouped rows. Only what a
-//! user really needs to change lives here.
+//! The Settings view: a category list in the sidebar, one page per category,
+//! each page a column of grouped rows. Only what a user really needs to change
+//! lives here.
+
+mod widgets;
 
 use crate::{app::{View, Workspace}, theme::{self, Theme}, ui};
-use crate::ui::{Icon, TitleBarExt, TipExt};
+use crate::input::{TextField, TextFieldEvent};
+use crate::preferences::prefs;
+use crate::ui::{Icon, TitleBarExt, TipExt, segmented};
 use crate::sidebar as sb;
-use thesio_core::paths::{STATE_DIR, write_atomic};
 use gpui::{prelude::FluentBuilder, *};
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock};
+use widgets::{button, group, row, switch};
 
-// ---- preferences
-
-static PREFS: RwLock<Option<Preferences>> = RwLock::new(None);
-/// Why `preferences.json` could not be read. Nothing writes to it meanwhile.
-static UNREADABLE: RwLock<Option<String>> = RwLock::new(None);
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Preferences {
-    /// Retained for compatibility with existing preferences and older builds.
-    pub english: bool,
-    /// Retained for compatibility with existing preferences and older builds.
-    pub quick_hotkey: bool,
-    /// Light or dark look: "light", "dark", or empty to follow the system.
-    pub appearance: String,
-    /// Keep `library.yaml` and the papers out of the sidebar. They stay in the vault.
-    pub hide_library_files: bool,
-    /// Sent to Unpaywall, which requires one, to find open-access papers.
-    pub unpaywall_email: String,
-    /// Library column widths by column name, where they were resized.
-    pub library_columns: std::collections::BTreeMap<String, f32>,
-    /// Keep the Library's details panel closed.
-    pub library_details_hidden: bool,
+/// The view's state.
+pub struct Settings {
+    pub(crate) page: Page,
+    pub(crate) scroll: ScrollHandle,
+    /// The Unpaywall email.
+    email: Entity<TextField>,
+    _subs: Vec<Subscription>,
 }
 
-impl Default for Preferences {
-    fn default() -> Self { Preferences { english: true, quick_hotkey: true, appearance: String::new(), hide_library_files: true, unpaywall_email: String::new(), library_columns: Default::default(), library_details_hidden: false } }
-}
-
-
-fn path() -> std::path::PathBuf { crate::store::Store::root_dir().join(STATE_DIR).join("preferences.json") }
-
-pub fn load() {
-    let read = match std::fs::read(path()) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Preferences::default()),
-        Err(e) => Err(e.to_string()),
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
-    };
-    let (preferences, problem) = match read {
-        Ok(preferences) => (preferences, None),
-        Err(problem) => (Preferences::default(), Some(problem)),
-    };
-    *UNREADABLE.write().unwrap() = problem;
-    apply(preferences);
-}
-
-fn apply(p: Preferences) {
-    *PREFS.write().unwrap() = Some(p);
-}
-
-/// Tell the OS which look the app wants (macOS: the window material, menus
-/// and dialogs follow it); empty follows the system.
-pub fn apply_appearance(pref: &str) {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        use objc::{class, msg_send, sel, sel_impl};
-        use objc::runtime::Object;
-        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-        let name = match pref { "light" => Some(c"NSAppearanceNameAqua"), "dark" => Some(c"NSAppearanceNameDarkAqua"), _ => None };
-        let look: *mut Object = match name {
-            Some(n) => { let s: *mut Object = msg_send![class!(NSString), stringWithUTF8String: n.as_ptr()]; msg_send![class!(NSAppearance), appearanceNamed: s] }
-            None => std::ptr::null_mut(),
-        };
-        let _: () = msg_send![app, setAppearance: look];
+impl Settings {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        let email = cx.new(|cx| {
+            let mut f = TextField::new("name@university.edu", cx);
+            f.placeholder_color = Theme::text_disabled();
+            f.set_text(&prefs().unpaywall_email, cx);
+            f
+        });
+        let subs = vec![cx.subscribe(&email, |w, field, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) {
+            let email = field.read(cx).text.trim().to_string();
+            w.set_pref(|p| p.unpaywall_email = email, cx);
+        })];
+        Self { page: Page::default(), scroll: ScrollHandle::new(), email, _subs: subs }
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = pref;
 }
-
-/// Draw light or dark as the preference and the system say; true when the look changed.
-pub fn sync_dark(cx: &App) -> bool {
-    let on = match prefs().appearance.as_str() {
-        "light" => false,
-        "dark" => true,
-        _ => matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark),
-    };
-    theme::set_dark(on)
-}
-
-/// The current preferences (loaded on first use).
-pub fn prefs() -> Preferences {
-    if PREFS.read().unwrap().is_none() { load(); }
-    PREFS.read().unwrap().clone().unwrap_or_default()
-}
-
-fn save(p: &Preferences) -> anyhow::Result<()> {
-    if let Some(problem) = &*UNREADABLE.read().unwrap() { anyhow::bail!("preferences.json could not be read and was left alone: {problem}"); }
-    std::fs::create_dir_all(crate::store::Store::root_dir().join(STATE_DIR))?;
-    write_atomic(&path(), &serde_json::to_vec_pretty(p)?)?;
-    apply(p.clone());
-    Ok(())
-}
-
-/// Redraw every window's document after the theme changed.
-pub(crate) fn refresh_all(this: &mut Workspace, cx: &mut Context<Workspace>) {
-    fn refresh(ws: &mut Workspace, cx: &mut Context<Workspace>) {
-        ws.search.update(cx, |f, _| f.placeholder_color = Theme::text_disabled());
-        cx.notify();
-    }
-    refresh(this, cx);
-    // The other windows. Skip this workspace, and never read a window that is
-    // mid-update (the one a click came from): GPUI panics on that, so ask
-    // `is_active` first, which is None for a window on the update stack.
-    let me = cx.entity_id();
-    for w in cx.windows() {
-        if let Some(h) = w.downcast::<Workspace>()
-            && h.is_active(cx).is_some()
-            && h.entity(cx).is_ok_and(|e| e.entity_id() != me)
-        {
-            let _ = h.update(cx, |ws, _, cx| refresh(ws, cx));
-        }
-    }
-    crate::app::set_menus(cx);
-    cx.refresh_windows();
-}
-
-
-
-// ---- the view
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Page { #[default] Appearance, Library, About }
@@ -151,98 +58,22 @@ impl Page {
     }
 }
 
+const COLUMN_W: f32 = 640.;
+
 /// The sidebar list, one evenly spaced run (five rows need no unlabelled
 /// groups); `None` is Trash (its own view, shown with this sidebar).
 const NAV: [Option<Page>; 4] = [Some(Page::Appearance), Some(Page::Library), None, Some(Page::About)];
 
-// ---- controls (switch on the accent, 30pt buttons, grouped rows)
-
-const COLUMN_W: f32 = 640.;
-
-/// A titled group: the caption above, then the rows in one rounded card,
-/// split by hairlines.
-pub(crate) fn group(title: Option<&'static str>, rows: Vec<AnyElement>) -> Div {
-    let n = rows.len();
-    div().w_full().flex().flex_col().gap(px(8.))
-        .children(title.map(caption))
-        .child(div().w_full().flex().flex_col().rounded(px(8.)).border_1().border_color(Theme::line_border()).overflow_hidden()
-            .children(rows.into_iter().enumerate().map(move |(i, r)| div().w_full().flex().flex_col().when(i + 1 < n, |d| d.border_b_1().border_color(ui::list_line())).child(r))))
-}
-
-pub(crate) fn caption(t: &'static str) -> Div {
-    div().px(px(4.)).text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text_caption()).child(t)
-}
-
-/// One setting: title and an optional description on the left, the control on the right.
-fn row(title: impl Into<SharedString>, desc: Option<SharedString>, control: impl IntoElement) -> Div {
-    div().w_full().min_h(px(40.)).px(px(12.)).py(px(8.)).flex().items_center().justify_between().gap(px(24.))
-        .child(div().flex_1().min_w_0().flex().flex_col().gap(px(2.))
-            .child(div().text_size(px(13.)).line_height(px(20.)).text_color(Theme::text()).child(title.into()))
-            .children(desc.map(|d| div().text_size(px(11.)).line_height(px(15.)).text_color(Theme::text_caption()).child(d))))
-        .child(div().flex_none().flex().items_center().gap(px(8.)).child(control))
-}
-
-
-
-/// A segmented control: a grey groove and a white selected pill.
-pub(crate) fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
-    div().flex_none().h(px(ui::BUTTON_H)).flex().gap(px(2.))
-        .children(labels.iter().enumerate().map(|(i, label)| {
-            let on = on.clone();
-            div().id((id, i)).h_full().px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
-                .text_size(px(13.)).line_height(px(18.))
-                // In dark mode the picked segment is lighter than the groove (macOS: #636366).
-                .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
-                .when(i != selected, |d| d.text_color(Theme::text_caption()))
-                .child(*label)
-                .on_click(cx.listener(move |w, _, _, cx| on(w, i, cx)))
-        }))
-}
-
-/// An on/off switch: flat, the accent when on, the knob at that end.
-fn switch(id: &'static str, on: bool) -> Stateful<Div> {
-    div().id(id).flex_none().w(px(30.)).h(px(18.)).p(px(2.)).flex().items_center().rounded_full().cursor_pointer()
-        .when(on, |d| d.justify_end().bg(Theme::primary()))
-        .when(!on, |d| d.bg(Theme::fill_active()))
-        .child(div().size(px(14.)).rounded_full().bg(gpui::white()))
-}
-
-pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
-    div().id(id).flex_none().h(px(ui::BUTTON_H)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
-        .border_1().border_color(Theme::line_border()).active(|s| s.bg(Theme::fill_pressed()))
-        .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text()).child(label)
-}
-
 impl Workspace {
-    /// Change preferences and refresh what depends on them.
-    pub(crate) fn set_pref(&mut self, f: impl FnOnce(&mut Preferences), cx: &mut Context<Self>) {
-        let old = prefs();
-        let mut p = old.clone();
-        f(&mut p);
-        if let Err(e) = save(&p) {
-            self.show_toast_kind(ui::ToastKind::Error, &format!("{}: {e}", "Could not save settings"), cx);
-            return;
-        }
-        if p.appearance != old.appearance { apply_appearance(&p.appearance); }
-        if sync_dark(cx) || p.hide_library_files != old.hide_library_files {
-            refresh_all(self, cx);
-        }
-        cx.notify();
-    }
-
-
-
-
-
     pub(crate) fn open_settings(&mut self, page: Page, cx: &mut Context<Self>) {
-        self.settings_page = page;
-        self.settings_scroll.set_offset(point(px(0.), px(0.)));
+        self.settings.page = page;
+        self.settings.scroll.set_offset(point(px(0.), px(0.)));
         if self.view != View::Settings { self.show_view(View::Settings, cx); }
         cx.notify();
     }
 
     pub(crate) fn render_settings_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let current = (self.view == View::Settings).then_some(self.settings_page);
+        let current = (self.view == View::Settings).then_some(self.settings.page);
         let in_trash = self.view == View::Trash;
         let nav_row = |page: Option<Page>, cx: &mut Context<Self>| {
             let on = if page.is_some() { page == current } else { in_trash };
@@ -297,7 +128,7 @@ impl Workspace {
     }
 
     pub(crate) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let page = self.settings_page;
+        let page = self.settings.page;
         let body = match page {
             Page::Appearance => self.appearance_page(cx),
             Page::Library => self.library_page(window, cx),
@@ -307,7 +138,7 @@ impl Workspace {
             // The bar only drags the window; the page title heads the centred column.
             .child(div().h(px(crate::app::HEADER_H)).flex_none().flex().items_center().title_bar()
                 .when(!self.sidebar_open, |d| d.pl(px(theme::TRAFFIC_LIGHTS_W)).child(self.header_navigation(cx))))
-            .child(div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings_scroll)
+            .child(div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings.scroll)
                 .child(div().w_full().flex().flex_col().items_center().px(px(32.)).pb(px(64.))
                     .child(div().w_full().max_w(px(COLUMN_W)).flex().flex_col().gap(px(28.))
                         .child(div().flex().items_center().gap(px(16.))
@@ -343,7 +174,7 @@ impl Workspace {
                 row("Hide library files", Some("Keeps library.yaml and the sources folder out of the sidebar. They stay in the vault.".into()),
                     switch("hide-library-files", hide_library_files).on_click(cx.listener(move |w, _, _, cx| w.set_pref(|p| p.hide_library_files = !hide_library_files, cx)))).into_any_element(),
                 row("Unpaywall email", Some("Finds open-access PDFs for sources with a DOI. Your email and each DOI are sent to Unpaywall.".into()),
-                    ui::field_well(&self.citations.email, window, cx).w(px(220.))).into_any_element(),
+                    ui::field_well(&self.settings.email, window, cx).w(px(220.))).into_any_element(),
                 row("Trash", Some(format!("Deleted documents are kept for {} days.", crate::store::TRASH_DAYS).into()),
                     button("open-trash", "Open").on_click(cx.listener(|w, _, _, cx| w.show_view(View::Trash, cx)))).into_any_element(),
             ]))
@@ -376,12 +207,3 @@ fn about_icon() -> ImageSource {
     });
     match &*ICON { Some(icon) => icon.clone().into(), None => PATH.into() }
 }
-
-pub fn label(text: impl AsRef<str>) -> String { text.as_ref().to_string() }
-
-/// User titles are content, not translation keys.
-pub fn display_title(title: &str) -> String {
-    let title = title.trim();
-    if title.is_empty() { crate::store::UNTITLED.to_string() } else { title.to_string() }
-}
-

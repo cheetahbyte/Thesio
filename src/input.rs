@@ -486,7 +486,7 @@ impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
         let el = FieldText {
-            text: if self.text.is_empty() { crate::settings::label(self.placeholder.clone()).into() } else { self.text.clone().into() },
+            text: if self.text.is_empty() { self.placeholder.clone() } else { self.text.clone().into() },
             color: if self.text.is_empty() { self.placeholder_color } else { self.color },
             family: if self.mono { MONO_FONT } else { UI_FONT },
             size: self.size,

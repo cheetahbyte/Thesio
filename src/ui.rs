@@ -64,7 +64,7 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top
                 .child(icon(Icon::Circle, 16., fill).absolute().top_0().left_0())
                 .child(icon(mark, mark_size, gpui::white())),
         )
-        .child(ui_text(crate::settings::label(msg)));
+        .child(ui_text(msg.clone()));
     Some(
         deferred(
             anchored()
@@ -194,7 +194,7 @@ pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx:
                     })),
             )
         })
-        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(crate::settings::label(title)))
+        .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
         .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
         .child(div().flex_1())
 }
@@ -238,7 +238,7 @@ fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Statef
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(gpui::white())
-        .child(crate::settings::label(label))
+        .child(label)
 }
 
 /// A primary button led by a glyph.
@@ -260,7 +260,22 @@ pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -
         .line_height(px(20.))
         .text_color(gpui::white())
         .child(icon(glyph, 14., gpui::white()))
-        .child(crate::settings::label(label))
+        .child(label)
+}
+
+/// A segmented control: a grey groove and a white selected pill.
+pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
+    div().flex_none().h(px(BUTTON_H)).flex().gap(px(2.))
+        .children(labels.iter().enumerate().map(|(i, label)| {
+            let on = on.clone();
+            div().id((id, i)).h_full().px(px(12.)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+                .text_size(px(13.)).line_height(px(18.))
+                // In dark mode the picked segment is lighter than the groove (macOS: #636366).
+                .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
+                .when(i != selected, |d| d.text_color(Theme::text_caption()))
+                .child(*label)
+                .on_click(cx.listener(move |w, _, _, cx| on(w, i, cx)))
+        }))
 }
 
 /// A glyph-only toolbar button.
@@ -316,7 +331,7 @@ pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> 
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(Theme::text())
-        .child(crate::settings::label(label))
+.child(label)
 }
 
 /// A borderless dialog action, beside the buttons but quieter than them.
@@ -373,8 +388,7 @@ pub fn menu_row(id: impl Into<ElementId>) -> Stateful<Div> {
 
 /// A [`crate::ui::menu_row`] label.
 pub fn menu_label(label: impl Into<SharedString>) -> Div {
-    let label: SharedString = crate::settings::label(label.into()).into();
-    div().whitespace_nowrap().child(label)
+    div().whitespace_nowrap().child(label.into())
 }
 
 /// Glyph of a [`menu_row`].
@@ -460,7 +474,6 @@ impl Render for Tooltip {
 pub trait TipExt: Sized {
     /// Window chrome: below, with the shortcut in full-width parentheses.
     fn tip(self, text: &str, keys: Option<&str>) -> Self {
-        let text = crate::settings::label(text);
         let label = match keys {
             Some(k) => format!("{text}（{k}）"),
             None => text.to_string(),

@@ -85,7 +85,7 @@ pub(crate) struct Table {
 
 impl Table {
     pub(crate) fn new(search: Entity<TextField>, cx: &mut Context<Workspace>) -> Self {
-        Self { search, sort: (Col::Title, true), selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: crate::settings::prefs().library_columns, column_drag: None }
+        Self { search, sort: (Col::Title, true), selected: BTreeSet::new(), anchor: None, cursor: None, focus: cx.focus_handle(), scroll: UniformListScrollHandle::new(), widths: crate::preferences::prefs().library_columns, column_drag: None }
     }
 }
 

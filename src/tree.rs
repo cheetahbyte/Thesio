@@ -2,7 +2,7 @@
 //! expand state, new files inside folders, moving, and the breadcrumb chain.
 
 use crate::app::Workspace;
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::input::{TextField, TextFieldEvent};
 use crate::store::Entry;
 use thesio_core::paths::{is_within, natural_cmp};

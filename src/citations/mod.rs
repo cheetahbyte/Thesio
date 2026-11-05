@@ -29,8 +29,6 @@ pub struct Citations {
     table: Table,
     details: Details,
     tag_filter: Option<String>,
-    /// The Unpaywall email in Settings.
-    pub email: Entity<TextField>,
     _subs: Vec<Subscription>,
 }
 
@@ -43,25 +41,15 @@ impl Citations {
             f.placeholder_color = Theme::text_disabled();
             f
         });
-        let email = cx.new(|cx| {
-            let mut f = TextField::new("name@university.edu", cx);
-            f.placeholder_color = Theme::text_disabled();
-            f.set_text(&crate::settings::prefs().unpaywall_email, cx);
-            f
-        });
         let subs = vec![
             cx.subscribe(&search, |_, _, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) { cx.notify(); }),
-            cx.subscribe(&email, |w, field, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) {
-                let email = field.read(cx).text.trim().to_string();
-                w.set_pref(|p| p.unpaywall_email = email, cx);
-            }),
         ];
         let (library, error) = match Library::load(root) {
             Ok(library) => (Some(library), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        let details = Details { panel: None, hidden: crate::settings::prefs().library_details_hidden };
-        Self { library, error, table: Table::new(search, cx), details, tag_filter: None, email, _subs: subs }
+        let details = Details { panel: None, hidden: crate::preferences::prefs().library_details_hidden };
+        Self { library, error, table: Table::new(search, cx), details, tag_filter: None, _subs: subs }
     }
 }
 

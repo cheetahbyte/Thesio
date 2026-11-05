@@ -4,7 +4,7 @@
 
 use crate::app::{View, Workspace};
 use crate::confirm::Confirm;
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::store::Entry;
 use crate::theme::{self, Theme, craft};
 use thesio_core::project::Heading;
@@ -131,7 +131,7 @@ impl Workspace {
     fn listed_entries(&self) -> impl Iterator<Item = &Entry> {
         use crate::library::PAPERS_DIR;
         use thesio_core::bibliography::LIBRARY_FILE;
-        let hide = crate::settings::prefs().hide_library_files;
+        let hide = crate::preferences::prefs().hide_library_files;
         let inside = format!("{PAPERS_DIR}/");
         // A `sources` folder holding anything else is the user's own.
         let papers_only = !self.entries.iter().any(|e| e.id.starts_with(&inside) && !e.id.ends_with(".pdf"));
@@ -443,7 +443,7 @@ impl Workspace {
                 .items_center()
                 .justify_between()
                 .cursor_pointer()
-                .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(crate::settings::label(title)))
+                .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(title))
                 .child(div().size(px(CHEVRON_SLOT)).flex_none().flex().items_center().justify_center().child(icon(if folded { Icon::ChevronRight } else { Icon::ChevronDown }, 11., Theme::sidebar_icon())))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.folded[idx] = !w.folded[idx];

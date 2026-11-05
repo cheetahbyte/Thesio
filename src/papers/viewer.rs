@@ -120,7 +120,7 @@ impl Workspace {
         let tab = self.papers.panel.tab;
         let highlights = self.papers.pdf.highlights();
         let label: &'static str = "Highlights";
-        let tabs = crate::settings::segmented("paper-tab", &["Notes", label], usize::from(tab == PaperTab::Highlights), |w, i, cx| {
+        let tabs = crate::ui::segmented("paper-tab", &["Notes", label], usize::from(tab == PaperTab::Highlights), |w, i, cx| {
             w.papers.panel.tab = if i == 0 { PaperTab::Notes } else { PaperTab::Highlights };
             cx.notify();
         }, cx);

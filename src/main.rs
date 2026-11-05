@@ -2,6 +2,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod appearance;
 mod shared_store;
 mod window_size;
 mod assets;
@@ -27,6 +28,7 @@ mod native_pdf;
 mod native_pdf;
 mod overlay;
 mod papers;
+mod preferences;
 mod preview;
 mod search;
 mod sidebar;
@@ -108,9 +110,9 @@ fn main() {
         input::bind_keys(cx);
         source::bind_keys(cx);
         app::bind_keys(cx);
-        settings::load();
-        settings::apply_appearance(&settings::prefs().appearance);
-        settings::sync_dark(cx);
+        preferences::load();
+        appearance::apply_appearance(&preferences::prefs().appearance);
+        appearance::sync_dark(cx);
         theme::sync_accent();
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));

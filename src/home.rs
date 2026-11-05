@@ -4,7 +4,7 @@
 use crate::app::{View, Workspace};
 use crate::library::{NOTES_DIR, paper_file};
 use thesio_core::references::cited_keys;
-use crate::settings::display_title;
+use crate::store::display_title;
 use crate::store::Entry;
 use thesio_core::bibliography::without_block;
 use crate::theme::Theme;

@@ -130,7 +130,7 @@ impl Workspace {
     /// entries that have one or have nothing to find it by.
     pub(crate) fn fetch_papers(&mut self, keys: Vec<String>, cx: &mut Context<Self>) {
         let Some(library) = &self.citations.library else { return };
-        let email = Some(crate::settings::prefs().unpaywall_email).filter(|email| email.split_once('@').is_some_and(|(name, host)| !name.is_empty() && host.contains('.')));
+        let email = Some(crate::preferences::prefs().unpaywall_email).filter(|email| email.split_once('@').is_some_and(|(name, host)| !name.is_empty() && host.contains('.')));
         let jobs: Vec<_> = keys.iter().filter(|key| !self.has_paper(key)).filter_map(|key| {
             let ids = library.paper_ids(key);
             let dest = self.store.borrow().path(&paper_file(key)).ok()?;
