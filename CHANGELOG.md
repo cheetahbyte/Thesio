@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Scroll to the caret when it jumps far ahead in a document that just opened, as ⌘↓ does.
 - Save an edit in the Library panel when the app quits.
 - Draw hairlines between the sidebar and the content, and under the header, as Finder does.
 - Keep the editor's scroll position while typing, saving, and folding the bibliography. It used to jump to the top once you were more than a screen down.

@@ -397,7 +397,8 @@ impl SourceEditor {
         if self.reveal_tries == 0 { return; }
         let Some(at) = self.painted_at(self.buffer.caret()) else {
             self.reveal_tries -= 1;
-            if self.reveal_tries < REVEAL_TRIES - 1 { self.list.scroll_to_reveal_item(self.buffer.line_of(self.buffer.caret())); }
+            // By row, not height: rows between here and the caret may be unmeasured.
+            if self.reveal_tries < REVEAL_TRIES - 1 { self.list.scroll_to(ListOffset { item_ix: self.buffer.line_of(self.buffer.caret()), offset_in_item: px(0.) }); }
             return cx.notify();
         };
         self.reveal_tries = 0;
