@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Update `#include`, `#import`, image, and bibliography paths when a file or folder is renamed or moved.
 - Sort the sidebar with folders first and names in natural order, and show every file in the vault.
 - Add drag and drop, new documents and folders inside folders, and separate file and folder menus.
 - Open text files such as `.bib` in the editor, and other files in the system default app.

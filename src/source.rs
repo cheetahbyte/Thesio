@@ -104,6 +104,23 @@ impl SourceEditor {
         self.reveal(cx);
     }
 
+    /// Takes in text changed on disk as one undoable edit, keeping the caret
+    /// on the same text where it can.
+    pub fn reload(&mut self, text: &str, cx: &mut Context<Self>) {
+        let old = self.buffer.text();
+        if old == text { return; }
+        let mut start = old.bytes().zip(text.bytes()).take_while(|(a, b)| a == b).count();
+        while !old.is_char_boundary(start) || !text.is_char_boundary(start) { start -= 1; }
+        let longest = old.len().min(text.len()) - start;
+        let mut tail = old.bytes().rev().zip(text.bytes().rev()).take(longest).take_while(|(a, b)| a == b).count();
+        while !old.is_char_boundary(old.len() - tail) || !text.is_char_boundary(text.len() - tail) { tail -= 1; }
+        let (old_end, new_end) = (old.len() - tail, text.len() - tail);
+        let caret = self.buffer.caret();
+        let caret = if caret <= start { caret } else if caret >= old_end { caret + new_end - old_end } else { new_end };
+        self.buffer.replace_selecting(start..old_end, &text[start..new_end], caret..caret, EditKind::Other);
+        self.changed(cx);
+    }
+
     fn changed(&mut self, cx: &mut Context<Self>) {
         if self.typst { self.spans = highlights(self.buffer.text()); }
         self.list.reset(self.buffer.line_count());

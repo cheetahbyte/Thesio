@@ -158,7 +158,7 @@ impl Workspace {
     /// what is already there and moves of a folder into itself.
     pub(crate) fn move_docs(&mut self, ids: &[String], target: Option<String>, cx: &mut Context<Self>) {
         self.flush(cx);
-        let mut moved = 0;
+        let (mut moved, mut updated) = (0, 0);
         // An item inside another selected folder goes with it.
         for id in ids.iter().filter(|id| !ids.iter().any(|o| id.starts_with(&format!("{o}/")))) {
             let parent = self.entries.iter().find(|e| &e.id == id).and_then(|e| e.meta.parent.clone());
@@ -167,9 +167,10 @@ impl Workspace {
                 continue;
             }
             match self.store.set_parent(id, target.as_deref()) {
-                Ok(new) => {
-                    self.path_changed(id, &new, cx);
+                Ok((new, rewritten)) => {
+                    self.path_changed(id, &new, &rewritten, cx);
                     moved += 1;
+                    updated += rewritten.len();
                 }
                 Err(e) => self.status = crate::app::SaveStatus::Failed(format!("Could not move: {}", crate::settings::diagnostic(&e.to_string()))),
             }
@@ -178,7 +179,13 @@ impl Workspace {
             self.set_expanded(t, true);
             self.reveal_in_tree(&t.clone());
         }
-        if moved > 0 { self.show_toast("Moved successfully", cx); }
+        if updated > 0 {
+            self.show_toast(&crate::app::updated_paths(updated), cx);
+        } else if moved > 0 {
+            self.show_toast("Moved successfully", cx);
+        }
+        let warnings = self.store.take_warnings();
+        if !warnings.is_empty() { self.show_toast_kind(crate::ui::ToastKind::Error, &warnings.join("; "), cx); }
         cx.notify();
     }
 

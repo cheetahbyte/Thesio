@@ -455,7 +455,7 @@ impl Workspace {
 
     /// Follows a rename or move: the entry list, and the open document if it
     /// or a folder above it changed path. Its editor and undo history stay.
-    pub(crate) fn path_changed(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
+    pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
         let moved = self.current.as_deref().and_then(|c| (c == old).then(|| new.to_string()).or_else(|| c.strip_prefix(&format!("{old}/")).map(|rest| format!("{new}/{rest}"))));
         if let Some(path) = moved {
             self.current = Some(path.clone());
@@ -468,6 +468,12 @@ impl Workspace {
             self.expanded.insert(format!("{new}{}", &path[old.len()..]));
         }
         self.save_expanded();
+        // The open document's paths changed on disk: its editor takes them in.
+        if let (Some(id), Some(editor)) = (self.current.clone(), self.editor.clone())
+            && rewritten.contains(&id)
+            && let Ok(text) = self.store.load(&id) {
+                editor.update(cx, |e, cx| e.reload(&text, cx));
+            }
         self.entries = self.store.list();
         self.sort();
     }
@@ -724,7 +730,10 @@ impl Workspace {
         if commit && old.is_some_and(|o| o != title) {
             self.flush(cx);
             match self.store.rename(&r.id, &title) {
-                Ok(new) => self.path_changed(&r.id, &new, cx),
+                Ok((new, rewritten)) => {
+                    self.path_changed(&r.id, &new, &rewritten, cx);
+                    if !rewritten.is_empty() { self.show_toast(&updated_paths(rewritten.len()), cx); }
+                }
                 Err(e) => self.status = SaveStatus::Failed(format!("Could not rename document: {}", crate::settings::diagnostic(&e.to_string()))),
             }
         }
@@ -1018,6 +1027,11 @@ impl Workspace {
                     ).into_any_element()
             )
     }
+}
+
+/// The toast after a rename or move rewrote other files.
+pub(crate) fn updated_paths(files: usize) -> String {
+    format!("Updated paths in {files} {}", if files == 1 { "file" } else { "files" })
 }
 
 /// Header and action group share an 8px top/right inset.

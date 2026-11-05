@@ -29,6 +29,7 @@ main.rs: window
 | `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. |
 | `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
 | `syntax.rs` | Highlight spans from `typst-syntax`. |
+| `references.rs` | Rewrites path arguments after a move, found with Typst's parser. |
 | `time.rs` | Local dates without a time zone database. |
 
 ## Editing flow
@@ -53,11 +54,14 @@ A document's id is its vault-relative path. Renaming or moving a file therefore 
 
 `tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`store::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
 
+A rename or move also updates the paths in every vault document: `#include`, `#import`, and the path arguments of `image`, `bibliography`, `read`, and the data loaders. A moved file's own relative paths are adjusted too. If the open document changes, its editor takes the new text as one undoable edit.
+
 ## Limits
 
 - Fonts are the set bundled with Typst.
 - `@preview` packages are rejected instead of downloaded.
-- Renaming or moving a file does not update `#include` paths that point at it.
+- A rename can break code that uses a module by its file name, as in `#import "a.typ"` followed by `a.title`.
+- Paths built at run time, such as `"chapters/" + name`, are not updated by a move.
 - Changes made to the open file by other programs are not picked up, and the next save overwrites them.
 - Two windows on the same file are not kept in sync.
 - The editor has no find and replace yet.

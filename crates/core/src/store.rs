@@ -337,9 +337,10 @@ impl Store {
         self.path(id).ok().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len())
     }
 
-    /// Moves `old` to `new`, carrying app state, including for a folder's files.
-    fn relocate(&mut self, old: &str, new: &str) -> Result<()> {
-        if old == new { return Ok(()); }
+    /// Moves `old` to `new`, carrying app state, including for a folder's files,
+    /// and updates the paths in vault documents. Returns the documents rewritten.
+    fn relocate(&mut self, old: &str, new: &str) -> Result<Vec<String>> {
+        if old == new { return Ok(vec![]); }
         let target = self.path(new)?;
         // A change of case alone names the same file on case-insensitive disks.
         anyhow::ensure!(old.to_lowercase() == new.to_lowercase() || !target.try_exists()?, "{new} already exists");
@@ -351,27 +352,50 @@ impl Store {
                 self.index.insert(format!("{new}{}", &key[old.len()..]), meta);
             }
         }
-        self.save_index()
+        self.save_index()?;
+        Ok(self.rewrite_references(old, new))
     }
 
-    /// Renames a file or folder in place and returns its new id.
-    pub fn rename(&mut self, id: &str, title: &str) -> Result<String> {
+    /// Fixes paths that the move from `old` to `new` broke. A file that cannot
+    /// be rewritten keeps its text and raises a warning.
+    fn rewrite_references(&mut self, old: &str, new: &str) -> Vec<String> {
+        let swap = |path: &str, from: &str, to: &str| {
+            if path == from { return Some(to.to_string()); }
+            path.strip_prefix(from)?.strip_prefix('/').map(|rest| format!("{to}/{rest}"))
+        };
+        let mut rewritten = vec![];
+        for entry in self.list().into_iter().filter(|e| e.typst) {
+            let Ok(text) = self.load(&entry.id) else { continue };
+            let previous = swap(&entry.id, new, old).unwrap_or_else(|| entry.id.clone());
+            let Some(updated) = crate::references::rewrite_paths(&text, &previous, &entry.id, |path| swap(path, old, new)) else { continue };
+            match self.save(&entry.id, &updated) {
+                Ok(()) => rewritten.push(entry.id),
+                Err(e) => self.warnings.push(format!("Could not update paths in {}: {e}", entry.id)),
+            }
+        }
+        rewritten
+    }
+
+    /// Renames a file or folder in place. Returns its new id and the documents
+    /// whose paths were updated.
+    pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> {
         // A document's title leaves out the extension; other names are whole.
         let typst = self.path(id)?.is_file() && id.ends_with(".typ");
         let name = if typst { format!("{}.{EXTENSION}", file_stem(title)) } else { file_stem(title) };
         let new = join(parent_of(id), &name);
-        self.relocate(id, &new)?;
-        Ok(new)
+        let rewritten = self.relocate(id, &new)?;
+        Ok((new, rewritten))
     }
 
-    /// Moves a file or folder into `parent` and returns its new id.
-    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<String> {
+    /// Moves a file or folder into `parent`. Returns its new id and the
+    /// documents whose paths were updated.
+    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> {
         if let Some(parent) = parent {
             anyhow::ensure!(parent != id && !parent.starts_with(&format!("{id}/")), "A folder cannot move into itself");
         }
         let new = join(parent, base_name(id));
-        self.relocate(id, &new)?;
-        Ok(new)
+        let rewritten = self.relocate(id, &new)?;
+        Ok((new, rewritten))
     }
 
     /// Moves a file or folder to the Trash.

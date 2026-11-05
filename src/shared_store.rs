@@ -22,9 +22,9 @@ impl SharedStore {
     pub fn import(&mut self, path: &Path) -> Result<String> { self.0.borrow_mut().import(path) }
     pub fn settings(&self) -> Settings { self.0.borrow().settings() }
     pub fn save_settings(&self, s: &Settings) -> Result<()> { self.0.borrow().save_settings(s) }
-    pub fn rename(&mut self, id: &str, title: &str) -> Result<String> { self.0.borrow_mut().rename(id, title) }
+    pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> { self.0.borrow_mut().rename(id, title) }
     pub fn touch(&mut self, id: &str) -> Result<()> { self.0.borrow_mut().touch(id) }
-    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<String> { self.0.borrow_mut().set_parent(id, parent) }
+    pub fn set_parent(&mut self, id: &str, parent: Option<&str>) -> Result<(String, Vec<String>)> { self.0.borrow_mut().set_parent(id, parent) }
     pub fn set_starred(&mut self, id: &str, on: bool) -> Result<u64> { self.0.borrow_mut().set_starred(id, on) }
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<()> { self.0.borrow_mut().set_pinned(id, pinned) }
 }
