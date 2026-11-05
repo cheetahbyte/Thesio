@@ -168,10 +168,13 @@ impl DocumentSession {
     /// The document this file compiles within.
     pub fn main(&self) -> &str { &self.main }
 
-    /// The open file moved; it recompiles on the next edit.
-    pub fn set_path(&mut self, path: String, main: String) {
+    /// Where the open file and its main file are now. True when that changed,
+    /// so the published result names old paths until the next compile.
+    pub fn set_path(&mut self, path: String, main: String) -> bool {
+        let changed = self.path != path || self.main != main;
         self.path = path;
         self.main = main;
+        changed
     }
 
     /// Compiles `text` as the open file, superseding any pending compile.

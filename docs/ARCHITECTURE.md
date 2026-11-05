@@ -90,7 +90,7 @@ Rows also paint `Decoration`s: an underline over a precise byte range, in a colo
 
 ## Vault ids
 
-A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates `OpenDocument`, so its editor and undo history survive. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
+A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates `OpenDocument`, so its editor and undo history survive, and the session recompiles from wherever the open file and its top document are now. A top document moved to the Trash leaves the open file compiling on its own. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
 
 ## Search
 

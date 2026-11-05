@@ -228,6 +228,15 @@ impl Workspace {
         session.update(cx, |session, cx| session.set_text(text, cx));
     }
 
+    /// Compiles from where the open file and its top document are now. Either
+    /// may have moved, and a top document in the Trash leaves the file on its own.
+    pub(crate) fn follow_top_document(&mut self, cx: &mut Context<Self>) {
+        let Some(document) = &self.document else { return };
+        let Some(session) = document.session.clone() else { return };
+        let (path, main) = (document.id.clone(), self.top_document(&document.id, cx));
+        if session.update(cx, |session, _| session.set_path(path, main)) { self.recompile(cx); }
+    }
+
     /// Writes the open document again after text changed without an edit.
     pub(crate) fn mark_unsaved(&mut self, cx: &mut Context<Self>) {
         self.set_unsaved();

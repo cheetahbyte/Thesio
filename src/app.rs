@@ -159,19 +159,15 @@ impl Workspace {
         self.when_saved(window, cx, move |w, window, cx| w.load_document(&target, window, cx));
     }
 
-    /// Follows a rename or move through everything that holds a vault path.
-    /// The open document's editor and undo history stay.
+    /// Follows a rename or move through the open document and its compiles, the
+    /// open paper and its notes, the search index, the selected rows, the open
+    /// folders, and the editors of rewritten files. The editor and undo history stay.
     pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
         if let Some(path) = self.papers.current.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.papers.current = Some(path); }
         self.refresh_entries(cx);
         let moved = self.current().and_then(|c| paths::moved(c, old, new));
-        if let Some(path) = moved {
-            let main = self.top_document(&path, cx);
-            if let Some(document) = &mut self.document {
-                document.id = path.clone();
-                if let Some(session) = &document.session { session.update(cx, |session, _| session.set_path(path, main)); }
-            }
-        }
+        if let Some(path) = moved && let Some(document) = &mut self.document { document.id = path; }
+        self.follow_top_document(cx);
         self.papers.panel.path_changed(old, new);
         self.search.path_changed(old, new);
         if let Some(batch) = &mut self.sidebar.batch {
@@ -288,6 +284,9 @@ impl Workspace {
                 None => self.new_doc(window, cx),
             }
             self.set_view(view, cx);
+        } else {
+            self.follow_top_document(cx);
+            self.refresh_outline(cx);
         }
         if self.view == View::Trash {
             errors.extend(self.store.borrow_mut().purge_expired());
