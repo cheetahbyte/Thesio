@@ -19,8 +19,6 @@ const LINE_HEIGHT: f32 = 22.;
 const TYPING_MARGIN: f32 = LINE_HEIGHT * 2.;
 /// Room after the last line, so the document's end can have that margin too.
 const END_PADDING: f32 = LINE_HEIGHT * 4.;
-/// A caret off screen needs a jump and then a look at where it landed.
-const REVEAL_TRIES: u8 = 4;
 const PAD_X: f32 = 24.;
 
 actions!(
@@ -110,7 +108,82 @@ struct Completion {
     waited: u8,
 }
 
-type Painted = Rc<RefCell<HashMap<usize, PaintedLine>>>;
+/// The lines of the last frame, kept whole until the next one paints, so
+/// anything may read them whatever the order within a frame.
+#[derive(Default)]
+struct Rows {
+    lines: HashMap<usize, PaintedLine>,
+    /// Frames rendered, to tell whether `lines` has seen a request yet.
+    frame: u64,
+    outdated: bool,
+}
+
+impl Rows {
+    fn begin_frame(&mut self) {
+        self.frame += 1;
+        self.outdated = true;
+    }
+
+    fn insert(&mut self, line: usize, painted: PaintedLine) {
+        if std::mem::take(&mut self.outdated) { self.lines.clear(); }
+        self.lines.insert(line, painted);
+    }
+}
+
+type Painted = Rc<RefCell<Rows>>;
+
+/// The generated bibliography, folded into one row.
+struct Fold {
+    bytes: Range<usize>,
+    lines: Range<usize>,
+    /// It ends the document, so nothing can be typed below it.
+    at_end: bool,
+}
+
+impl Fold {
+    fn holds(&self, offset: usize) -> bool {
+        offset >= self.bytes.start && (offset < self.bytes.end || self.at_end)
+    }
+
+    /// `offset` moved out of the block, the way a caret at `from` was heading.
+    fn outside(&self, offset: usize, from: usize) -> usize {
+        if !self.holds(offset) { return offset; }
+        if self.at_end || offset < from { self.bytes.start.saturating_sub(1) } else { self.bytes.end }
+    }
+
+    /// The line a move by one line reaches, given it would reach `line`.
+    fn past(&self, line: usize, down: bool) -> usize {
+        if !self.lines.contains(&line) { return line; }
+        if down { self.lines.end } else { self.lines.start.wrapping_sub(1) }
+    }
+}
+
+/// Where a caret move leaves the selection.
+enum Place {
+    At(usize),
+    /// The caret goes here and the anchor stays.
+    Extend(usize),
+    Select(Range<usize>),
+}
+
+/// How far the list has been moved towards a row that was not painted.
+enum Jump {
+    Unmoved,
+    /// To the nearest edge, by the heights the list has measured.
+    Near,
+    /// To the row itself: rows on the way may be unmeasured.
+    Row,
+}
+
+/// A request to bring the caret into view, resolved once its row is painted.
+struct Reveal {
+    /// Room to keep below the caret, so typing never runs along the edge.
+    margin: f32,
+    jump: Jump,
+    /// The frame the request was made in. Rows of that frame or earlier do
+    /// not show the text it was made for.
+    frame: u64,
+}
 
 pub struct SourceEditor {
     buffer: Buffer,
@@ -120,18 +193,14 @@ pub struct SourceEditor {
     list: ListState,
     /// Notes to link to: the `#link` to insert, the title, and the path.
     pub notes: Vec<(String, String, String)>,
-    /// Frames left to bring the caret into view, once its row is painted.
-    reveal_tries: u8,
-    /// Room to keep below the caret, so typing never runs along the edge.
-    reveal_margin: f32,
+    reveal: Option<Reveal>,
     painted: Painted,
     spans: Vec<(Range<usize>, SyntaxTag)>,
     marked: Option<Range<usize>>,
     selecting: bool,
     /// Column kept while moving vertically.
     goal_x: Option<Pixels>,
-    /// The generated bibliography, folded into one row, as bytes and lines.
-    folded: Option<(Range<usize>, Range<usize>)>,
+    folded: Option<Fold>,
     /// The user asked to see the generated block.
     pub block_shown: bool,
     /// What `@` completes to.
@@ -157,7 +226,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { notes: vec![], reveal_tries: 0, reveal_margin: 0., buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None, session: None };
+        let mut editor = Self { notes: vec![], reveal: None, buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None, session: None };
         editor.refold();
         editor
     }
@@ -168,27 +237,25 @@ impl SourceEditor {
             let first = self.buffer.line_of(bytes.start);
             // At the end of the file the empty last line goes too, so nothing
             // can be typed below the bibliography.
-            let last = if bytes.end == text.len() { self.buffer.line_count() } else { self.buffer.line_of(bytes.end) };
-            (bytes, first..last)
+            let at_end = bytes.end == text.len();
+            let last = if at_end { self.buffer.line_count() } else { self.buffer.line_of(bytes.end) };
+            Fold { bytes, lines: first..last, at_end }
         });
+        // An undo, or the block arriving, can leave the caret where it cannot be seen.
+        let caret = self.buffer.caret();
+        if let Some(fold) = &self.folded && self.buffer.sel.is_empty() && fold.holds(caret) {
+            let outside = fold.outside(caret, caret);
+            self.buffer.move_to(outside);
+        }
     }
 
     pub fn toggle_block(&mut self, cx: &mut Context<Self>) {
         self.block_shown = !self.block_shown;
-        let folded = self.folded.clone();
+        let folded = self.folded.as_ref().map(|fold| fold.lines.clone());
         self.refold();
-        if let Some((_, lines)) = folded.or(self.folded.clone()) { self.splice_rows(lines.clone(), lines.len()); }
+        if let Some(lines) = folded.or(self.folded.as_ref().map(|fold| fold.lines.clone())) { self.splice_rows(lines.clone(), lines.len()); }
         self.completion = None;
         cx.notify();
-    }
-
-    /// Moves an offset out of the folded block, the way the caret was heading.
-    fn outside_fold(&self, offset: usize) -> usize {
-        let Some((bytes, _)) = &self.folded else { return offset };
-        let at_end = bytes.end == self.buffer.text().len();
-        if offset < bytes.start || (offset >= bytes.end && !at_end) { return offset; }
-        let before = bytes.start.saturating_sub(1);
-        if at_end || offset < self.buffer.caret() { before } else { bytes.end }
     }
 
     pub fn focus(&self, window: &mut Window) { window.focus(&self.focus); }
@@ -206,9 +273,8 @@ impl SourceEditor {
 
     /// Moves the caret, as when a diagnostic is clicked.
     pub fn go_to(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.buffer.move_to(offset.min(self.buffer.text().len()));
         self.focus(window);
-        self.reveal(cx);
+        self.go(offset.min(self.buffer.text().len()), false, cx);
     }
 
     /// The differing span between the buffer and `text`, and where the caret
@@ -293,8 +359,7 @@ impl SourceEditor {
     fn changed(&mut self, change: Change, cx: &mut Context<Self>) {
         self.text_changed(change);
         self.goal_x = None;
-        self.reveal_tries = REVEAL_TRIES;
-        self.reveal_margin = TYPING_MARGIN;
+        self.request_reveal(TYPING_MARGIN);
         cx.notify();
         self.refresh_completion(false, cx);
         cx.emit(SourceEvent::Changed);
@@ -380,7 +445,7 @@ impl SourceEditor {
     fn painted_at(&self, offset: usize) -> Option<Point<Pixels>> {
         let line = self.buffer.line_of(offset);
         let painted = self.painted.borrow();
-        let row = painted.get(&line)?;
+        let row = painted.lines.get(&line)?;
         Some(row.bounds.origin + row.position(offset - self.buffer.line_range(line).start)?)
     }
 
@@ -416,28 +481,35 @@ impl SourceEditor {
         Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(crate::ui::layer::COMPLETION).into_any_element())
     }
 
-    fn reveal(&mut self, cx: &mut Context<Self>) {
-        let line = self.buffer.line_of(self.buffer.caret());
-        if !self.painted.borrow().contains_key(&line) { self.list.scroll_to_reveal_item(line); }
-        self.reveal_tries = REVEAL_TRIES;
-        self.reveal_margin = 0.;
-        cx.emit(SourceEvent::Caret);
-        cx.notify();
+    fn request_reveal(&mut self, margin: f32) {
+        self.reveal = Some(Reveal { margin, jump: Jump::Unmoved, frame: self.painted.borrow().frame });
     }
 
     /// After a frame: scrolls by what the caret itself needs. A row's height
     /// is unknown right after an edit, and a row can be taller than the view.
     fn settle_reveal(&mut self, cx: &mut Context<Self>) {
-        if self.reveal_tries == 0 { return; }
+        let Some(reveal) = &mut self.reveal else { return };
+        if reveal.frame >= self.painted.borrow().frame { return cx.notify(); }
         let Some(at) = self.painted_at(self.buffer.caret()) else {
-            self.reveal_tries -= 1;
-            // By row, not height: rows between here and the caret may be unmeasured.
-            if self.reveal_tries < REVEAL_TRIES - 1 { self.list.scroll_to(ListOffset { item_ix: self.buffer.line_of(self.buffer.caret()), offset_in_item: px(0.) }); }
+            let Some(reveal) = &mut self.reveal else { return };
+            reveal.frame = self.painted.borrow().frame;
+            let line = self.buffer.line_of(self.buffer.caret());
+            match reveal.jump {
+                Jump::Unmoved => {
+                    reveal.jump = Jump::Near;
+                    self.list.scroll_to_reveal_item(line);
+                }
+                Jump::Near => {
+                    reveal.jump = Jump::Row;
+                    self.list.scroll_to(ListOffset { item_ix: line, offset_in_item: px(0.) });
+                }
+                Jump::Row => self.reveal = None,
+            }
             return cx.notify();
         };
-        self.reveal_tries = 0;
+        let margin = self.reveal.take().map_or(0., |reveal| reveal.margin);
         let view = self.list.viewport_bounds();
-        let (top, bottom) = (view.top(), view.bottom() - px(LINE_HEIGHT + self.reveal_margin));
+        let (top, bottom) = (view.top(), view.bottom() - px(LINE_HEIGHT + margin));
         let distance = if at.y > bottom { at.y - bottom } else if at.y < top { at.y - top } else { px(0.) };
         if distance != px(0.) {
             self.list.scroll_by(distance);
@@ -445,12 +517,35 @@ impl SourceEditor {
         }
     }
 
-    fn go(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
-        let offset = self.outside_fold(offset);
-        if extend { self.buffer.select_to(offset); } else { self.buffer.move_to(offset); }
+    /// Every caret move that is not an edit ends here. It stays out of the
+    /// fold, and with `reveal` it comes into view.
+    fn move_caret(&mut self, place: Place, reveal: bool, cx: &mut Context<Self>) {
+        let (sel, caret) = (self.buffer.sel.clone(), self.buffer.caret());
+        let outside = |editor: &Self, offset| editor.folded.as_ref().map_or(offset, |fold| fold.outside(offset, caret));
+        match place {
+            Place::At(offset) => self.buffer.move_to(outside(self, offset)),
+            Place::Extend(offset) => self.buffer.select_to(outside(self, offset)),
+            Place::Select(range) => {
+                self.buffer.move_to(range.start);
+                self.buffer.select_to(range.end);
+            }
+        }
         self.goal_x = None;
-        self.reveal(cx);
+        if reveal {
+            self.request_reveal(0.);
+            let line = self.buffer.line_of(self.buffer.caret());
+            if !self.painted.borrow().lines.contains_key(&line) {
+                self.list.scroll_to_reveal_item(line);
+                if let Some(reveal) = &mut self.reveal { reveal.jump = Jump::Near; }
+            }
+        }
         self.refresh_completion(false, cx);
+        cx.notify();
+        if reveal || self.buffer.sel != sel { cx.emit(SourceEvent::Caret); }
+    }
+
+    fn go(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        self.move_caret(if extend { Place::Extend(offset) } else { Place::At(offset) }, true, cx);
     }
 
     fn delete_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -476,7 +571,7 @@ impl SourceEditor {
         let range = self.buffer.line_range(line);
         let height = px(LINE_HEIGHT);
         let painted = self.painted.borrow();
-        let current = painted.get(&line);
+        let current = painted.lines.get(&line);
         let here = current.and_then(|row| row.position(caret - range.start));
         let x = self.goal_x.or(here.map(|p| p.x)).unwrap_or(px(0.));
         // A move inside a wrapped line stays on it.
@@ -489,15 +584,13 @@ impl SourceEditor {
                 return offset;
             }
         }
-        let mut target = if down { line + 1 } else { line.wrapping_sub(1) };
-        if let Some((_, lines)) = &self.folded && lines.contains(&target) {
-            target = if down { lines.end } else { lines.start.wrapping_sub(1) };
-        }
+        let next = if down { line + 1 } else { line.wrapping_sub(1) };
+        let target = self.folded.as_ref().map_or(next, |fold| fold.past(next, down));
         if target >= self.buffer.line_count() {
             return if down { self.buffer.text().len() } else { 0 };
         }
         let target_range = self.buffer.line_range(target);
-        let offset = match painted.get(&target) {
+        let offset = match painted.lines.get(&target) {
             Some(row) => target_range.start + row.index_at(point(x, if down { px(0.) } else { row.height() - height })),
             None => target_range.end.min(target_range.start + (caret - range.start)),
         };
@@ -511,7 +604,7 @@ impl SourceEditor {
 
     fn offset_at(&self, position: Point<Pixels>) -> usize {
         let painted = self.painted.borrow();
-        let row = painted.iter().min_by_key(|(_, p)| {
+        let row = painted.lines.iter().min_by_key(|(_, p)| {
             let (top, bottom) = (p.bounds.top(), p.bounds.bottom());
             if position.y < top { top - position.y } else if position.y >= bottom { position.y - bottom + px(1.) } else { px(0.) }
         });
@@ -522,31 +615,25 @@ impl SourceEditor {
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
         self.completion = None;
-        let offset = self.outside_fold(self.offset_at(event.position));
-        if event.click_count == 2 {
-            let word = self.buffer.word_at(offset);
-            self.buffer.move_to(word.start);
-            self.buffer.select_to(word.end);
+        let caret = self.buffer.caret();
+        let at = self.offset_at(event.position);
+        let offset = self.folded.as_ref().map_or(at, |fold| fold.outside(at, caret));
+        let place = if event.click_count == 2 {
+            Place::Select(self.buffer.word_at(offset))
         } else if event.click_count >= 3 {
-            let range = self.buffer.line_range(self.buffer.line_of(offset));
-            self.buffer.move_to(range.start);
-            self.buffer.select_to(range.end);
+            Place::Select(self.buffer.line_range(self.buffer.line_of(offset)))
         } else if event.modifiers.shift {
-            self.buffer.select_to(offset);
+            Place::Extend(offset)
         } else {
-            self.buffer.move_to(offset);
-            if event.modifiers.platform { cx.emit(SourceEvent::Follow(offset)); }
-        }
+            Place::At(offset)
+        };
         self.selecting = true;
-        self.goal_x = None;
-        cx.notify();
+        self.move_caret(place, false, cx);
+        if event.click_count <= 1 && !event.modifiers.shift && event.modifiers.platform { cx.emit(SourceEvent::Follow(offset)); }
     }
 
     fn on_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selecting {
-            self.buffer.select_to(self.outside_fold(self.offset_at(event.position)));
-            cx.notify();
-        }
+        if self.selecting { self.move_caret(Place::Extend(self.offset_at(event.position)), false, cx); }
     }
 
     fn on_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) { self.selecting = false; }
@@ -584,8 +671,8 @@ impl SourceEditor {
     }
 
     fn render_line(&mut self, line: usize, window: &mut Window, _: &mut Context<Self>) -> AnyElement {
-        if let Some((_, lines)) = &self.folded && lines.contains(&line) {
-            if line != lines.start { return div().h(px(0.)).into_any_element(); }
+        if let Some(fold) = &self.folded && fold.lines.contains(&line) {
+            if line != fold.lines.start { return div().h(px(0.)).into_any_element(); }
             return div().h(px(LINE_HEIGHT + 8.)).pt(px(4.)).pb(px(4.)).child(
                 div().size_full().px(px(8.)).flex().items_center().rounded(px(6.)).bg(Theme::fill_hover())
                     .text_size(px(12.)).text_color(Theme::text_caption()).child("Bibliography, generated by Thesio")
@@ -687,8 +774,7 @@ impl SourceEditor {
         self.delete_to(to, cx);
     }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.buffer.select_all();
-        cx.notify();
+        self.move_caret(Place::Select(0..self.buffer.text().len()), false, cx);
     }
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.buffer.sel.is_empty() { cx.write_to_clipboard(ClipboardItem::new_string(self.buffer.selected().to_string())); }
@@ -752,7 +838,7 @@ impl EntityInputHandler for SourceEditor {
         let offset = self.range8(&range).start;
         let line = self.buffer.line_of(offset);
         let painted = self.painted.borrow();
-        let row = painted.get(&line)?;
+        let row = painted.lines.get(&line)?;
         let local = row.position(offset - self.buffer.line_range(line).start).unwrap_or_default();
         Some(Bounds::new(row.bounds.origin + local, size(px(1.), px(LINE_HEIGHT))))
     }
@@ -764,13 +850,12 @@ impl EntityInputHandler for SourceEditor {
 
 impl Render for SourceEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.reveal_tries > 0 { cx.on_next_frame(window, |editor, _, cx| editor.settle_reveal(cx)); }
-        // Before `painted` is cleared: the popup sits on last frame's layout.
+        self.painted.borrow_mut().begin_frame();
+        if self.reveal.is_some() { cx.on_next_frame(window, |editor, _, cx| editor.settle_reveal(cx)); }
         let completion = self.render_completion(window, cx);
         let mut context = KeyContext::new_with_defaults();
         context.add("SourceEditor");
         if completion.is_some() { context.add("completing"); }
-        self.painted.borrow_mut().clear();
         let entity = cx.entity();
         let focus = self.focus.clone();
         div()

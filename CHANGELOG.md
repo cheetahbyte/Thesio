@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep the caret two lines above the bottom edge when pressing Enter at the end of a document. A new empty line used to send the view to that line.
+- Keep the view still when pressing Enter on the last visible line. The new line used to jump to the top of the view.
+- Keep the preview near the caret after a click, a drag, or Select All as well.
+- Keep the caret out of the folded bibliography after undo or when jumping to a place inside it.
 - Close every menu with Esc, keep a menu from coming back when you return to a page, and return focus to where it was when a dialog closes. Opening a menu or dialog replaces the one before it.
 - Move the paper viewer aside for the sidebar list's menu.
 - Ask before ⌘Q quits with a document that could not be saved. It used to quit and lose the changes.

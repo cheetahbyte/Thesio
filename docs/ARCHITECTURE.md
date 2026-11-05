@@ -64,7 +64,9 @@ Text that does not come from typing goes through `Workspace::write_document`, wh
 
 ## Editor rendering
 
-`SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret. Painted rows are kept for the frame to resolve mouse positions and vertical caret movement.
+`SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret through `text.rs`, which `TextField` shares. Painted rows are kept from frame to frame to resolve mouse positions and vertical caret movement. `Buffer` reports each edit as a `Change`, and only the rows it names are replaced, which keeps the scroll position and measured heights.
+
+Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
 
 ## Overlays
 
