@@ -133,7 +133,6 @@ fn input_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Statef
         .justify_center()
         .rounded(px(ROW_RADIUS))
         .cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover()))
         .child(icon(glyph, size, color))
 }
 

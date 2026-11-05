@@ -267,7 +267,6 @@ impl Workspace {
                 .rounded(px(ROW_RADIUS))
                 .cursor_pointer()
                 .when(selected, |d| d.bg(Theme::fill_hover_strong()))
-                .when(!selected, |d| d.hover(|s| s.bg(Theme::fill_hover())))
         };
         let title = |t: String| div().ml(px(9.)).flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(t));
         let page_icon = |_: &Entry| icon(Icon::Folder, 16., Theme::text_caption()).into_any_element();
@@ -304,8 +303,7 @@ impl Workspace {
                                 .flex_none()
                                 .rounded(px(5.))
                                 .when(kids, |d| {
-                                    d.hover(|s| s.bg(Theme::fill_hover_strong()))
-                                        .child(icon(Icon::ChevronRight, 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
+                                    d.child(icon(Icon::ChevronRight, 10., theme::c(craft::N500)).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                                         .on_click(cx.listener(move |w, _, _, cx| {
                                             cx.stop_propagation();
                                             if let Some(d) = w.move_dlg.as_mut()
@@ -354,8 +352,8 @@ impl Workspace {
         let ok = if ready {
             ok
         } else {
-            let faded = theme::ca(craft::B500, 0.4);
-            ok.bg(faded).cursor_default().hover(move |s| s.bg(faded)).active(move |s| s.bg(faded))
+            let faded = theme::ca(theme::accent(), 0.4);
+            ok.bg(faded).cursor_default().active(move |s| s.bg(faded))
         };
         let dialog = dialog("move-dialog")
             .relative()

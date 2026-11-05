@@ -9,7 +9,7 @@ use crate::source::SourceEditor;
 use thesio_core::lookup::{self, Identifier};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
-use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, row_hover, scrim, secondary_button};
+use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, scrim, secondary_button};
 use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_group, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use thesio_core::references::{cited_keys, included_files};
 
 const ROW_H: f32 = 32.;
-/// Rows inset their hover fill, so cell text lines up with the page title.
+/// Rows inset their cells, so cell text lines up with the page title.
 const TABLE_X: f32 = 14.;
 const CELL_X: f32 = 12.;
 const CITE_W: f32 = 56.;
@@ -50,7 +50,7 @@ fn cell(row: &Row, col: Col) -> &str {
 /// A borderless dialog action, beside the buttons but quieter than them.
 fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div().id(id).flex_none().h(px(crate::ui::BUTTON_H)).px(px(4.)).flex().items_center().rounded(px(crate::ui::BUTTON_RADIUS)).cursor_pointer()
-        .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).hover(|s| s.opacity(0.8)).child(label)
+        .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).child(label)
 }
 
 pub(crate) fn matches(row: &Row, query: &str) -> bool {
@@ -366,7 +366,6 @@ impl Workspace {
             let key = row.key.clone();
             div().id(("cite-row", i)).px(px(12.)).py(px(6.)).rounded(px(8.)).cursor_pointer().flex().flex_col()
                 .when(i == picker.selected, |d| d.bg(Theme::fill_hover_strong()))
-                .hover(|s| s.bg(Theme::fill_hover()))
                 .child(div().text_size(px(13.)).line_height(px(18.)).truncate().child(ui_text(if row.title.is_empty() { row.key.clone() } else { row.title.clone() })))
                 .child(div().text_size(px(12.)).line_height(px(16.)).truncate().text_color(Theme::text_caption()).child(format!("{} · {} · @{}", row.authors, row.year, row.key)))
                 .on_click(cx.listener(move |w, _, window, cx| w.pick_source(&key, window, cx)))
@@ -703,7 +702,6 @@ impl Workspace {
                         .when(paper, |d| d.child(icon(Icon::Paper, 13., Theme::text_placeholder())))
                 }).collect::<Vec<_>>();
                 div().id(("library-row", i)).group("library-row").w_full().h(px(ROW_H)).px(px(CELL_X)).flex().items_center().cursor_pointer().rounded(px(crate::ui::ROW_RADIUS))
-                    .hover(row_hover)
                     .when(menu_key.as_deref() == Some(row.key.as_str()), |d| d.bg(Theme::fill_hover()))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
                         w.citations.row_menu = Some((menu.clone(), ev.position));
@@ -714,7 +712,7 @@ impl Workspace {
                         div().id(("library-cite", i)).px(px(8.)).h(px(22.)).flex().items_center().rounded(px(5.)).text_size(px(12.))
                             .border_1().border_color(Theme::line_border())
                             .opacity(0.).group_hover("library-row", |s| s.opacity(1.))
-                            .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
+                            .active(|s| s.bg(Theme::fill_pressed()))
                             .child("Cite")
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |w, _, window, cx| {
@@ -906,14 +904,13 @@ impl Workspace {
                 let (open, menu, link) = (id.clone(), id.clone(), id.clone());
                 let unlinked = row.is_none();
                 div().id(("source-row", i)).w_full().h(px(ROW_H)).px(px(CELL_X)).flex().items_center().cursor_pointer().rounded(px(crate::ui::ROW_RADIUS)).text_size(px(13.)).text_color(Theme::text_caption())
-                    .hover(row_hover)
                     .child(cell(None, title.clone()).text_color(Theme::text()))
                     .child(cell(Some(200.), text(|row| &row.authors)))
                     .child(cell(Some(64.), text(|row| &row.year)))
                     .when(!unlinked, |d| d.child(cell(Some(150.), text(|row| &row.key)).font_family(theme::MONO_FONT).text_size(px(12.))))
                     .when(unlinked, |d| d.child(div().w(px(150.)).flex_none().flex().child(
                         div().id(("source-link", i)).px(px(8.)).h(px(22.)).flex().items_center().rounded(px(5.)).text_size(px(12.)).text_color(Theme::text())
-                            .border_1().border_color(Theme::line_border()).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
+                            .border_1().border_color(Theme::line_border()).active(|s| s.bg(Theme::fill_pressed()))
                             .child("Link to Source…")
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |w, _, window, cx| {

@@ -6,7 +6,7 @@ use crate::app::{Confirm, Workspace};
 use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
-pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, row_hover, scrim, secondary_button};
+pub(crate) use crate::ui::{close_button, dialog, list_header_text, list_line, menu_label, primary_button, scrim, secondary_button};
 use crate::theme::{self, Theme};
 use crate::ui::{Icon, ROW_RADIUS, TipExt, TitleBarExt, icon, popover, ui_para, ui_text};
 use gpui::{prelude::FluentBuilder, *};
@@ -50,7 +50,6 @@ pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, lef
                     .justify_center()
                     .rounded(px(8.))
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::fill_hover_strong()))
                     .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
                     .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
                     .on_click(cx.listener(|w, _, _, cx| {
@@ -134,7 +133,6 @@ impl Workspace {
                 .justify_center()
                 .rounded(px(6.))
                 .cursor_pointer()
-                .hover(|s| s.bg(Theme::fill_hover_strong()))
                 .when(menu_open, |d| d.bg(Theme::fill_hover_strong()))
                 .child(icon(Icon::Ellipsis, 16., Theme::text_caption()))
                 .on_click(cx.listener(move |w, ev: &ClickEvent, _, cx| {
@@ -150,7 +148,6 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .when(i > 0, |d| d.border_t_1().border_color(list_line()))
-                    .hover(row_hover)
                     .when(menu_open, |d| d.bg(Theme::fill_hover()).border_color(transparent_black()).rounded(px(ROW_RADIUS)))
                     .on_mouse_down(
                         MouseButton::Right,

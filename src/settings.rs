@@ -185,7 +185,7 @@ pub(crate) fn segmented(id: &'static str, labels: &[&'static str], selected: usi
                 .text_size(px(13.)).line_height(px(18.))
                 // In dark mode the picked segment is lighter than the groove (macOS: #636366).
                 .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
-                .when(i != selected, |d| d.text_color(Theme::text_caption()).hover(|s| s.text_color(Theme::text())))
+                .when(i != selected, |d| d.text_color(Theme::text_caption()))
                 .child(*label)
                 .on_click(cx.listener(move |w, _, _, cx| on(w, i, cx)))
         }))
@@ -216,7 +216,7 @@ pub(crate) fn link_button(id: impl Into<ElementId>, label: &'static str) -> Stat
 
 pub(crate) fn button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
     div().id(id).flex_none().h(px(ui::BUTTON_H)).px(px(12.)).flex().items_center().justify_center().rounded(px(ui::BUTTON_RADIUS)).cursor_pointer()
-        .border_1().border_color(Theme::line_border()).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
+        .border_1().border_color(Theme::line_border()).active(|s| s.bg(Theme::fill_pressed()))
         .text_size(px(13.)).line_height(px(18.)).text_color(Theme::text()).child(label)
 }
 
@@ -259,8 +259,8 @@ impl Workspace {
             div().id(SharedString::from(format!("settings-nav-{page:?}"))).h(px(sb::ROW_H)).flex().items_center().pl(px(6.)).pr(px(4.)).rounded(px(sb::ROW_R))
                 .text_size(px(13.)).line_height(px(20.)).cursor_pointer()
                 .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::sidebar_text()).hover(|s| s.bg(Theme::sidebar_hover())))
-                .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(ui::icon(icon, sb::ROW_ICON, if on { Theme::text_code() } else { Theme::sidebar_icon() })))
+                .when(!on, |d| d.text_color(Theme::sidebar_text()))
+                .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(ui::icon(icon, sb::ROW_ICON, Theme::sidebar_glyph())))
                 .child(title)
                 .on_click(cx.listener(move |w, _, _, cx| match page { Some(p) => w.open_settings(p, cx), None => w.show_view(View::Trash, cx) }))
         };
@@ -288,7 +288,6 @@ impl Workspace {
         let open = self.sidebar_open;
         let bar_button = |id: &'static str, glyph: Icon| {
             div().id(id).no_drag().flex_none().size(px(28.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
-                .hover(move |s| s.bg(if open { Theme::sidebar_hover() } else { Theme::fill_hover_strong() }))
                 .child(ui::icon(glyph, 17., Theme::icon()))
         };
         div().flex().items_center().ml(px(4.)).gap(px(4.))

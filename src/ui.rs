@@ -101,12 +101,6 @@ pub fn list_line() -> Hsla {
     theme::ca(craft::N1000, 0.045)
 }
 
-/// The quiet list hover: a rounded fill that also hides the row's
-/// hairline above it.
-pub fn row_hover(s: StyleRefinement) -> StyleRefinement {
-    s.bg(Theme::fill_hover()).border_color(transparent_black()).rounded(px(ROW_RADIUS))
-}
-
 
 /// The window dimmed under a modal dialog: a light black veil.
 pub fn scrim() -> Hsla {
@@ -139,8 +133,7 @@ fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Statef
         .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
         .bg(if danger { Theme::danger() } else { Theme::primary() })
-        .hover(move |s| s.bg(if danger { theme::c(craft::R600) } else { Theme::primary_hover() }))
-        .active(move |s| s.bg(if danger { theme::c(craft::R700) } else { Theme::primary_active() }))
+        .active(move |s| s.bg(if danger { theme::c(craft::R700) } else { Theme::primary_strong() }))
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(gpui::white())
@@ -161,8 +154,7 @@ pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -
         .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
         .bg(Theme::primary())
-        .hover(|s| s.bg(Theme::primary_hover()))
-        .active(|s| s.bg(Theme::primary_active()))
+        .active(|s| s.bg(Theme::primary_strong()))
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(gpui::white())
@@ -173,7 +165,7 @@ pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -
 /// A glyph-only toolbar button.
 pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
     div().id(id).flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
+        .active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
 }
 
 /// Toolbar buttons that belong together.
@@ -219,7 +211,7 @@ pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> 
         .cursor_pointer()
         .border_1()
         .border_color(Theme::line_border())
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed()))
+        .active(|s| s.bg(Theme::fill_pressed()))
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(Theme::text())
@@ -239,7 +231,6 @@ pub fn close_button(id: &'static str) -> Stateful<Div> {
         .rounded_full()
         .cursor_pointer()
         .bg(theme::ca(craft::N1000, 0.26))
-        .hover(|s| s.bg(theme::ca(craft::N1000, 0.36)))
         .child(icon(Icon::Close, 16., gpui::white()))
 }
 
@@ -402,7 +393,7 @@ pub(crate) fn window_controls(window: &Window) -> Option<Div> {
     if !cfg!(target_os = "windows") { return None; }
     let button = |id: &'static str, area: WindowControlArea, label: &'static str| {
         div().id(id).size(px(crate::app::HEADER_ACTIONS_H)).mx(px(7.)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
-            .occlude().window_control_area(area).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).tip(label, None)
+            .occlude().window_control_area(area).active(|s| s.bg(Theme::fill_pressed())).tip(label, None)
     };
     let maximized = window.is_maximized();
     // Native hit-test areas preserve Snap Layouts and the normal WM_CLOSE save guard.

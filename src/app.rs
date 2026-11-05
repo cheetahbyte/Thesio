@@ -288,7 +288,8 @@ impl Workspace {
             // The system switched between light and dark (or the app's own look changed).
             cx.observe_window_appearance(window, |this, _, cx| if crate::settings::sync_dark(cx) { crate::settings::refresh_all(this, cx); }),
             cx.observe_window_activation(window, |this, window, cx| {
-                if window.is_window_active() { this.entries = this.store.list(); this.sort(); this.reload_library(); cx.notify(); }
+                // The accent has no change event in GPUI, and changing it means visiting System Settings.
+                if window.is_window_active() { if crate::theme::sync_accent() { crate::settings::refresh_all(this, cx); } this.entries = this.store.list(); this.sort(); this.reload_library(); cx.notify(); }
                 else { this.cancel_shortcut_recording(cx); this.flush(cx); }
             }),
             cx.subscribe_in(&search, window, |this, _, ev: &TextFieldEvent, window, cx| {
@@ -892,7 +893,7 @@ impl Workspace {
         Some(div().id("header-search").absolute().left(px((main - width) / 2.)).top(px(11.))
             .w(px(width)).h(px(crate::ui::BUTTON_H)).no_drag().flex().items_center().gap(px(6.)).px(px(9.))
             .rounded(px(crate::ui::BUTTON_RADIUS)).border_1().border_color(Theme::line_border())
-            .cursor_pointer().hover(|s| s.bg(Theme::fill_hover()))
+            .cursor_pointer()
             .child(icon(Icon::Search, 13., Theme::text_caption()))
             .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
             .when(width >= 200., |d| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J").replace(" + ", " "))))
@@ -954,7 +955,6 @@ impl Workspace {
                     .rounded(px(4.))
                     .cursor_pointer()
                     .text_color(Theme::text_caption())
-                    .hover(|s| s.text_color(Theme::primary_500()))
                     .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(name.clone())))
                     .on_click(cx.listener(move |w, _, window, cx| w.open(&id, window, cx)))
                     .into_any_element(),
@@ -985,7 +985,6 @@ impl Workspace {
                         .justify_center()
                         .rounded(px(8.))
                         .cursor_pointer()
-                        .hover(|s| s.bg(Theme::fill_hover_strong()))
                         .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
                         .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
                         .on_click(cx.listener(|w, _, _, cx| {
@@ -996,7 +995,6 @@ impl Workspace {
                 .child(
                     div().id("header-home").no_drag().flex_none().ml(px(4.)).size(px(28.))
                         .flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
-                        .hover(|s| s.bg(Theme::fill_hover_strong()))
                         .active(|s| s.bg(Theme::fill_pressed()))
                         .tip("Back to Home", None)
                         .child(icon(Icon::Home, 18., Theme::icon()))

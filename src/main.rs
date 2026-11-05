@@ -98,6 +98,7 @@ fn main() {
         settings::load();
         settings::apply_appearance(&settings::prefs().appearance);
         settings::sync_dark(cx);
+        theme::sync_accent();
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));
         app::set_menus(cx);

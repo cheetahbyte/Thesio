@@ -525,7 +525,7 @@ fn tag_color(tag: SyntaxTag) -> Hsla {
     match tag {
         SyntaxTag::Comment => c(craft::N500),
         SyntaxTag::Punctuation | SyntaxTag::ListMarker | SyntaxTag::Escape => c(craft::N600),
-        SyntaxTag::Heading | SyntaxTag::Keyword | SyntaxTag::Label | SyntaxTag::Ref | SyntaxTag::Link => Theme::primary(),
+        SyntaxTag::Heading | SyntaxTag::Keyword | SyntaxTag::Label | SyntaxTag::Ref | SyntaxTag::Link => c(craft::B500),
         SyntaxTag::Function | SyntaxTag::MathOperator | SyntaxTag::MathDelimiter | SyntaxTag::Operator => c(craft::B700),
         SyntaxTag::Raw | SyntaxTag::String | SyntaxTag::Number => c(craft::N700),
         SyntaxTag::Error => Theme::danger(),

@@ -284,7 +284,7 @@ impl Workspace {
                 .child(div().w_full().min_h(px(28.)).flex().items_center().gap(px(12.))
                     .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).child(title))
                     .when(is_custom && !recording, |d| d.child(div().id(SharedString::from(format!("reset-{reset}"))).h(px(26.)).px(px(8.)).flex().items_center().rounded(px(7.)).cursor_pointer()
-                        .text_size(px(12.)).text_color(Theme::primary()).hover(|s| s.bg(Theme::fill_hover())).child("Reset")
+                        .text_size(px(12.)).text_color(Theme::primary()).child("Reset")
                         .on_click(cx.listener(move |w, _, _, cx| w.reset_shortcut(&reset, cx)))))
                     .when(!recording && !key.is_empty(), |d| d.child(crate::settings::link_button(SharedString::from(format!("clear-{clear}")), "Remove").invisible().group_hover("shortcut-row", |s| s.visible()).on_click(cx.listener(move |w, _, _, cx| w.clear_shortcut(&clear, cx)))))
                     .child(crate::settings::keycap(SharedString::from(id.clone()), &shown_key, recording)

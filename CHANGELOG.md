@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remove hover highlights outside menus, and let controls show their pressed state only.
+- Use the macOS accent color for controls and sidebar icons, updated when you return to the app. Other platforms keep the blue accent.
 - Move the controls to a flat look of their own: hairline outlines, quiet menu highlights, and a new accent.
 - Redesign the interface: native SF Symbols on macOS, calmer buttons and fields, and grouped forms.
 - Simplify the Library toolbar: Add opens Add by Identifier, with manual entry inside it, and Import and Export move to a "…" menu.

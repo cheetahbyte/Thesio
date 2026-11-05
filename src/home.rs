@@ -1,7 +1,7 @@
 //! Home: the local library's home — the New / Upload
 //! cards (a new document, or Import as document at once: no menus), the Recently visited and Favorites lists (list or grid view), Display settings for the
 //! list columns and the sort dropdown. Dressed as All documents: a
-//! hairline list with quiet hover fills, white cards and pills, native menus.
+//! hairline list, white cards and pills, native menus.
 
 use crate::app::{RowMenu, Workspace};
 #[path = "home_scrollbar.rs"]
@@ -10,7 +10,7 @@ use crate::settings::display_title;
 use crate::search::doc_icon;
 use crate::store::Entry;
 use crate::theme::Theme;
-use crate::trash::{empty_state, list_header_text, list_line, menu_label, page_header, row_hover};
+use crate::trash::{empty_state, list_header_text, list_line, menu_label, page_header};
 use crate::ui::{Icon, ROW_RADIUS, TipExt, icon, menu_glyph, menu_row, popover, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
@@ -197,7 +197,6 @@ impl Workspace {
             .justify_center()
             .rounded(px(6.))
             .cursor_pointer()
-            .hover(|s| s.bg(Theme::fill_hover_strong()))
             .when(open, |d| d.bg(Theme::fill_hover_strong()))
             .child(icon(Icon::Ellipsis, 16., Theme::text_caption()))
             .child(canvas(move |b, _, _| {
@@ -249,7 +248,7 @@ impl Workspace {
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .when(on, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::text_caption()).hover(|s| s.text_color(Theme::text())))
+                .when(!on, |d| d.text_color(Theme::text_caption()))
                 .child(crate::settings::label(label))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.home.tab = t;
@@ -292,7 +291,7 @@ impl Workspace {
             .child(
                 div().id("home-sort").relative().h(px(crate::ui::BUTTON_H)).px(px(10.)).flex().items_center().gap(px(6.))
                     .rounded(px(crate::ui::BUTTON_RADIUS)).text_size(px(13.)).text_color(Theme::text_caption()).cursor_pointer()
-                    .hover(|s| s.bg(Theme::fill_hover())).when(self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
+                    .when(self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
                     .child(icon(Icon::Sort, 14., Theme::text_caption())).child(crate::settings::label(self.home.sort.label()))
                     .child(self.home.track("home-sort"))
                     .on_click(cx.listener(|w, _, _, cx| { w.home.sort_menu = !w.home.sort_menu; cx.notify(); })),
@@ -366,7 +365,6 @@ impl Workspace {
                         .line_height(px(24.))
                         .text_color(if sorted { Theme::text() } else { list_header_text() })
                         .when(sorted, |d| d.font_weight(FontWeight::SEMIBOLD))
-                        .hover(|s| s.bg(Theme::fill_hover()))
                         .when(sorted && self.home.sort_menu, |d| d.bg(Theme::fill_hover_strong()))
                         .child(crate::settings::label(c.label()))
                         .when(sorted, |d| {
@@ -395,7 +393,6 @@ impl Workspace {
                 .items_center()
                 .when(i > 0, |d| d.border_t_1().border_color(list_line()))
                 .cursor_pointer()
-                .hover(row_hover)
                 .when(menu_on, |d| d.bg(Theme::fill_hover()).border_color(transparent_black()).rounded(px(ROW_RADIUS)))
                 .on_click(cx.listener(move |w, _, window, cx| w.open(&id, window, cx)))
                 .on_mouse_down(
@@ -467,7 +464,6 @@ impl Workspace {
                     .bg(Theme::fill_pressed()).p(px(frame))
                     .overflow_hidden()
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::fill_active()))
                     .when(menu_on, |d| d.bg(Theme::fill_active()))
                     .on_click(cx.listener(move |w, _, window, cx| w.open(&id, window, cx)))
                     .on_mouse_down(

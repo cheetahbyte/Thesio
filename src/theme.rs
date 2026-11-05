@@ -3,7 +3,7 @@
 //! and a full-bleed white note plane instead of floating panels.
 
 use gpui::{BoxShadow, Hsla, Rgba, point, px, rgb};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 // ---- dark mode
 //
@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 // `rgbaf` stays literal for shadows, scrims and controls drawn over images.
 
 static DARK: AtomicBool = AtomicBool::new(false);
+static ACCENT: AtomicU32 = AtomicU32::new(craft::B500);
 
 thread_local! {
     /// Exports and printing draw light whatever the window shows.
@@ -24,6 +25,27 @@ thread_local! {
 }
 
 pub fn dark() -> bool { DARK.load(Ordering::Relaxed) && !FORCE_LIGHT.with(|f| f.get()) }
+/// The accent as `0xrrggbb`: the system's on macOS, else `craft::B500`.
+pub fn accent() -> u32 { ACCENT.load(Ordering::Relaxed) }
+
+/// Read the system accent; true when it changed. Call on the main thread.
+#[cfg(target_os = "macos")]
+pub fn sync_accent() -> bool {
+    use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+    let hex = objc::rc::autoreleasepool(|| unsafe {
+        let accent: *mut Object = msg_send![class!(NSColor), controlAccentColor];
+        let space: *mut Object = msg_send![class!(NSColorSpace), sRGBColorSpace];
+        let color: *mut Object = msg_send![accent, colorUsingColorSpace: space];
+        if color.is_null() { return None }
+        let (r, g, b): (f64, f64, f64) = (msg_send![color, redComponent], msg_send![color, greenComponent], msg_send![color, blueComponent]);
+        let byte = |v: f64| (v.clamp(0., 1.) * 255.).round() as u32;
+        Some(byte(r) << 16 | byte(g) << 8 | byte(b))
+    });
+    hex.is_some_and(|hex| ACCENT.swap(hex, Ordering::Relaxed) != hex)
+}
+#[cfg(not(target_os = "macos"))]
+pub fn sync_accent() -> bool { false }
+
 /// Switch the look; true when it changed.
 pub fn set_dark(on: bool) -> bool { DARK.swap(on, Ordering::Relaxed) != on }
 
@@ -109,10 +131,9 @@ pub fn mix(a: u32, b: u32, t: f32) -> Hsla {
 }
 
 /// The palette on the ramp names the code was written against
-/// (`N*` neutrals, `B*` accent, `R*` / `O*` reds and oranges), so every
+/// (`N*` neutrals, `R*` / `O*` reds and oranges), so every
 /// `craft::N300` still means "border", `N600` "secondary text" and so on.
-/// Neutrals are measured greys; `B*` is built around the accent
-/// (#4C6EF5); `R*` / `O*` are Tailwind v4 ramps.
+/// Neutrals are measured greys; `R*` / `O*` are Tailwind v4 ramps.
 #[allow(dead_code)]
 pub mod craft {
     pub const N00: u32 = 0xffffff;
@@ -140,9 +161,8 @@ pub mod craft {
     pub const N900: u32 = 0x1f2225;
     pub const N950: u32 = 0x141517;
     pub const N1000: u32 = 0x000000;
-    /// The accent: caret, primary button.
+    /// The accent where the system offers none (see [`super::accent`]), and syntax and search hits.
     pub const B500: u32 = 0x4c6ef5;
-    pub const B600: u32 = 0x4260dc;
     pub const B700: u32 = 0x3751c0;
     pub const R50: u32 = 0xfef2f2;
     pub const R100: u32 = 0xffe2e2;
@@ -227,10 +247,10 @@ impl Theme {
     /// The link colour: the content accent (#0087FF) blended half-way to the
     /// text colour, #0F5492 measured.
     pub fn link() -> Hsla { mix(craft::B500, craft::N900, 0.5) }
-    pub fn primary() -> Hsla { c(craft::B500) }
-    pub fn primary_500() -> Hsla { c(craft::B500) }
-    pub fn primary_hover() -> Hsla { c(craft::B600) }
-    pub fn primary_active() -> Hsla { c(craft::B700) }
+    pub fn primary() -> Hsla { c(accent()) }
+    pub fn primary_500() -> Hsla { c(accent()) }
+    /// The accent, darker: pressed buttons.
+    pub fn primary_strong() -> Hsla { mix(accent(), craft::N1000, 0.2) }
     /// The note: white page.
     pub fn bg_body() -> Hsla { c(craft::N00) }
     /// Light fills inside the note (code blocks, quiet cards).
@@ -245,9 +265,9 @@ impl Theme {
     /// A filled control held down.
     pub fn fill_active() -> Hsla { ca(craft::N1000, 0.13) }
     /// Text selection: the accent, light.
-    pub fn selection() -> Hsla { ca(craft::B500, 0.24) }
+    pub fn selection() -> Hsla { ca(accent(), 0.24) }
     pub fn scrollbar_thumb() -> Hsla { ca(craft::N1000, 0.22) }
-    pub fn pinned() -> Hsla { c(craft::B500) }
+    pub fn pinned() -> Hsla { c(accent()) }
     pub fn danger() -> Hsla { c(craft::R500) }
 
     // ---- Thesio shell
@@ -260,8 +280,10 @@ impl Theme {
     pub fn sidebar_veil() -> Hsla { ca(craft::N00, 0.5) }
     /// Sidebar row label.
     pub fn sidebar_text() -> Hsla { c(craft::N900) }
-    /// Sidebar glyphs: rows, folders, and the header buttons.
+    /// Sidebar glyphs that stay neutral: the header buttons and chevrons.
     pub fn sidebar_icon() -> Hsla { ca(craft::N900, 0.8) }
+    /// Row glyphs: the accent, as in Finder.
+    pub fn sidebar_glyph() -> Hsla { c(accent()) }
     /// A sidebar button that cannot be used.
     pub fn sidebar_disabled() -> Hsla { ca(craft::N900, 0.45) }
     pub fn sidebar_hover() -> Hsla { ca(craft::N1000, 0.07) }

@@ -52,8 +52,7 @@ pub(crate) fn footer_row(id: &'static str, glyph: Icon, label: &'static str) -> 
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(Theme::sidebar_text())
-        .hover(|s| s.bg(Theme::sidebar_hover()))
-        .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::sidebar_icon())))
+        .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::sidebar_glyph())))
         .child(label)
 }
 
@@ -71,8 +70,8 @@ enum Check {
     On,
 }
 
-/// 14px checkbox; an unchecked box turns blue when `group` is hovered.
-fn checkbox(state: Check, disabled: bool, group: &'static str) -> Div {
+/// 14px checkbox.
+fn checkbox(state: Check, disabled: bool) -> Div {
     let white = Theme::bg_body();
     div()
         .size(px(14.))
@@ -85,7 +84,7 @@ fn checkbox(state: Check, disabled: bool, group: &'static str) -> Div {
         .when(state == Check::Off, |d| {
             d.border_1()
                 .when(disabled, |d| d.border_color(Theme::line_border()).bg(theme::c(craft::N100)))
-                .when(!disabled, |d| d.border_color(theme::c(craft::N500)).bg(white).group_hover(group, |s| s.border_color(Theme::primary())))
+                .when(!disabled, |d| d.border_color(theme::c(craft::N500)).bg(white))
         })
         .when(state == Check::On, |d| d.child(icon(Icon::Check, 12., white)))
         .when(state == Check::Partial, |d| d.child(div().w(px(8.)).h(px(2.)).rounded(px(1.)).bg(white)))
@@ -150,7 +149,6 @@ impl Workspace {
                     .justify_center()
                     .rounded(px(8.))
                     .cursor_pointer()
-                    .hover(|s| s.bg(Theme::sidebar_hover()))
                     .tip("Hide sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
                     .child(icon(Icon::SidebarToggle, 17., Theme::sidebar_icon()))
                     .on_click(cx.listener(|w, _, _, cx| {
@@ -176,11 +174,11 @@ impl Workspace {
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::sidebar_text()).hover(|s| s.bg(Theme::sidebar_hover())))
+                .when(!on, |d| d.text_color(Theme::sidebar_text()))
                 .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(
                     if on { on_glyph } else { glyph },
                     ROW_ICON,
-                    if on { Theme::text_code() } else { Theme::sidebar_icon() },
+                    Theme::sidebar_glyph(),
                 )))
                 .child(label)
                 .on_click(cx.listener(move |w, _, _, cx| w.show_view(view, cx)))
@@ -211,15 +209,13 @@ impl Workspace {
         }
 
         // The footer holds one row: Settings (Storage and Trash live in Settings).
-        // The Selection mode toolbar keeps the footer glyphs: bare on the sidebar, a rounded fill on hover.
+        // The Selection mode toolbar keeps the footer glyphs: bare on the sidebar.
         let footer_btn = |id: &'static str, name: Icon, tip: &'static str, enabled: bool, on: bool| {
-            let group = SharedString::from(format!("{id}-slot"));
             div()
                 .id(id)
                 .flex_none()
                 .w(px(36.))
                 .h(px(32.))
-                .group(group.clone())
                 .when(enabled, |d| d.cursor_pointer())
                 .tip(tip, None)
                 .child(
@@ -230,7 +226,6 @@ impl Workspace {
                         .justify_center()
                         .rounded(px(8.))
                         .when(on, |d| d.bg(Theme::sidebar_selected()))
-                        .when(enabled && !on, |d| d.group_hover(group, |s| s.bg(Theme::sidebar_hover())))
                         .child(match (on, enabled) {
                             (true, _) => icon(name, 17., Theme::text()),
                             (false, true) => icon(name, 17., Theme::text_code()),
@@ -291,7 +286,6 @@ impl Workspace {
             .bottom_0()
             .left(px(w - 6.))
             .w(px(15.))
-            .group("sidebar-resize")
             .cursor(CursorStyle::ResizeLeftRight)
             .child(
                 div()
@@ -301,8 +295,7 @@ impl Workspace {
                     .left(px(5.))
                     .w(px(2.))
                     .rounded(px(1.))
-                    .when(dragging, |d| d.bg(Theme::primary()))
-                    .group_hover("sidebar-resize", |s| s.bg(Theme::primary())),
+                    .when(dragging, |d| d.bg(Theme::primary())),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -368,7 +361,6 @@ impl Workspace {
                 .p(px(3.))
                 .rounded(px(6.))
                 .cursor_pointer()
-                .hover(|s| s.bg(Theme::sidebar_hover()))
                 .child(icon(name, 16., Theme::sidebar_icon()))
         };
         let row = div().h(px(SECTION_H)).pl(px(4.)).pt(px(SECTION_TOP)).flex().items_center().group(group.clone());
@@ -385,8 +377,7 @@ impl Workspace {
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .group("batch-all")
-                        .child(checkbox(if all { Check::On } else if n > 0 { Check::Partial } else { Check::Off }, false, "batch-all"))
+                        .child(checkbox(if all { Check::On } else if n > 0 { Check::Partial } else { Check::Off }, false))
                         .on_click(cx.listener(move |w, _, _, cx| {
                             let ids = if all { vec![] } else { w.listed_entries().take(BATCH_LIMIT).map(|e| e.id.clone()).collect() };
                             w.batch = Some(ids);
@@ -408,7 +399,6 @@ impl Workspace {
                         .border_color(Theme::button_border())
                         .bg(crate::theme::raised(Theme::bg_body()))
                         .cursor_pointer()
-                        .hover(|s| s.bg(theme::c(craft::N100)))
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .child("Exit")
@@ -431,7 +421,6 @@ impl Workspace {
                 .items_center()
                 .rounded(px(6.))
                 .cursor_pointer()
-                .hover(|s| s.bg(Theme::sidebar_hover()))
                 .tip(if folded { "Click to expand" } else { "Click to collapse" }, None)
                 .child(div().pr(px(4.)).text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(crate::settings::label(title)))
                 .child(
@@ -565,7 +554,6 @@ impl Workspace {
             .rounded(px(6.))
             .when(!open, |d| d.opacity(0.).group_hover("doc-row", |s| s.opacity(1.)))
             .when(open, |d| d.bg(Theme::sidebar_selected()))
-            .hover(|s| s.bg(Theme::sidebar_selected()))
             .child(icon(Icon::Ellipsis, 15., Theme::text_code()))
             .child(canvas(move |b, _, _| record.borrow_mut().insert(slot.clone(), b), |_, _, _, _| {}).absolute().inset_0())
             .on_mouse_down(
@@ -592,7 +580,6 @@ impl Workspace {
             .rounded(px(6.))
             .opacity(0.)
             .group_hover("doc-row", |s| s.opacity(1.))
-            .hover(|s| s.bg(Theme::sidebar_selected()))
             .child(icon(Icon::Plus, 16., Theme::text_code()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |w, _, window, cx| {
@@ -646,7 +633,6 @@ impl Workspace {
             .flex()
             .items_center()
             .when(selected || checked, |d| d.bg(Theme::sidebar_selected()))
-            .when(!selected && !checked, |d| d.hover(|s| s.bg(Theme::sidebar_hover())))
             .pl(px(6. + 16. * depth as f32))
             .when(key == "doc" && !renaming && batch.is_none(), |d| {
                 // Dropping on a file means the folder it sits in.
@@ -667,7 +653,7 @@ impl Workspace {
                         .items_center()
                         .justify_center()
                         .when(blocked, |d| d.tip("Selection limit reached", None))
-                        .child(checkbox(if checked { Check::On } else { Check::Off }, blocked, "doc-row")),
+                        .child(checkbox(if checked { Check::On } else { Check::Off }, blocked)),
                 )
             })
             .when(key == "doc", |d| {
@@ -675,7 +661,7 @@ impl Workspace {
                 d.child(if e.folder {
                     let toggle = e.id.clone();
                     let open = self.expanded.contains(&e.id);
-                    slot.hover(|s| s.bg(Theme::sidebar_selected()))
+                    slot
                         .child(icon(Icon::ChevronRight, 9., Theme::sidebar_icon()).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |w, _, _, cx| {
@@ -686,7 +672,7 @@ impl Workspace {
                     slot
                 })
             })
-            .when(e.folder, |d| d.child(div().size(px(20.)).flex_none().flex().items_center().justify_center().child(icon(Icon::Folder, ROW_ICON, if selected { Theme::text() } else { Theme::sidebar_icon() }))))
+            .when(e.folder, |d| d.child(div().size(px(20.)).flex_none().flex().items_center().justify_center().child(icon(Icon::Folder, ROW_ICON, Theme::sidebar_glyph()))))
             .child(title)
             .when(!renaming && batch.is_none() && key == "doc" && e.folder, |d| d.child(self.add_button(e, key, cx)))
             .when(!renaming && batch.is_none(), |d| d.child(self.more_button(e, key, cx).when(key == "doc", |d| d.ml(px(2.)))))

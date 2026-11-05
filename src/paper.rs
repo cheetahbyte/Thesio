@@ -139,12 +139,12 @@ impl Workspace {
         let page = format!("Page {}", highlight.page + 1);
         let group = SharedString::from(format!("highlight-{index}"));
         div().id(("highlight", index)).group(group.clone()).px(px(10.)).py(px(8.)).flex().flex_col().gap(px(4.)).rounded(px(8.)).cursor_pointer()
-            .bg(Theme::fill_group()).hover(|s| s.bg(Theme::fill_hover()))
+            .bg(Theme::fill_group())
             .on_click(cx.listener(move |w, _, _, _| w.pdf.go_to(&open)))
             .child(div().flex().items_center().text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption())
                 .child(div().flex_1().child(page))
                 .child(div().id(("highlight-delete", index)).size(px(20.)).flex().items_center().justify_center().rounded(px(5.))
-                    .opacity(0.).group_hover(group, |s| s.opacity(1.)).hover(|s| s.bg(Theme::fill_pressed()))
+                    .opacity(0.).group_hover(group, |s| s.opacity(1.))
                     .child(icon(Icon::Delete, 13., Theme::icon()))
                     .on_click(cx.listener(move |w, _, _, cx| {
                         cx.stop_propagation();
