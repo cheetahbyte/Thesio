@@ -2,6 +2,7 @@
 //! (see `sidebar.rs`) and the editor on the right, with the
 //! 64px top bar (breadcrumb title + save status) above the page.
 
+use crate::actions::FocusSearch;
 use crate::confirm::Confirm;
 use crate::document::Edit;
 use crate::overlay::Overlay;
@@ -24,110 +25,18 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-actions!(workspace, [NewDoc, NewFolder, ImportDoc, InsertCitation, ToggleSidebar, FocusSearch, OpenSettings, OpenAbout, GoHome, CloseWindow, Quit,
-    HideApp, HideOthers, ShowAll, Minimize, Zoom, ToggleFullScreen]);
-
-/// The menu bar, in the interface language.
-pub fn set_menus(cx: &mut App) {
-    cx.set_menus(vec![
-        Menu {
-            name: "Thesio".into(),
-            items: vec![
-                MenuItem::action("About Thesio", OpenAbout),
-                MenuItem::separator(),
-                MenuItem::action("Settings…", OpenSettings),
-                MenuItem::separator(),
-                MenuItem::os_submenu("Services", SystemMenuType::Services),
-                MenuItem::separator(),
-                MenuItem::action("Hide Thesio", HideApp),
-                MenuItem::action("Hide Others", HideOthers),
-                MenuItem::action("Show All", ShowAll),
-                MenuItem::separator(),
-                MenuItem::action("Quit Thesio", Quit),
-            ],
-        },
-        Menu {
-            name: "File".into(),
-            items: vec![
-                MenuItem::action("New Document", NewDoc),
-                MenuItem::action("New Folder", NewFolder),
-                MenuItem::action("Insert Citation…", InsertCitation),
-                MenuItem::action("Import as Document…", ImportDoc),
-                MenuItem::separator(),
-                MenuItem::action("Close Window", CloseWindow),
-            ],
-        },
-        // The standard Edit menu: its items act on the focused editor, and
-        // macOS adds Dictation and Emoji & Symbols to it.
-        Menu {
-            name: "Edit".into(),
-            items: {
-                use crate::source as k;
-                vec![
-                    MenuItem::os_action("Undo", k::Undo, OsAction::Undo),
-                    MenuItem::os_action("Redo", k::Redo, OsAction::Redo),
-                    MenuItem::separator(),
-                    MenuItem::os_action("Cut", k::Cut, OsAction::Cut),
-                    MenuItem::os_action("Copy", k::Copy, OsAction::Copy),
-                    MenuItem::os_action("Paste", k::Paste, OsAction::Paste),
-                    MenuItem::os_action("Select All", k::SelectAll, OsAction::SelectAll),
-                ]
-            },
-        },
-        Menu {
-            name: "Window".into(),
-            items: vec![
-                MenuItem::action("Minimize", Minimize),
-                MenuItem::action("Zoom", Zoom),
-                MenuItem::separator(),
-                MenuItem::action("Enter / Exit Full Screen", ToggleFullScreen),
-            ],
-        },
-    ]);
-}
-
-pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-n", NewDoc, None),
-        KeyBinding::new("cmd-shift-n", NewFolder, None),
-        KeyBinding::new("cmd-shift-c", InsertCitation, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-shift-i", ImportDoc, None),
-        KeyBinding::new("cmd-alt-home", GoHome, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-]", ToggleSidebar, None),
-        KeyBinding::new("cmd-\\", ToggleSidebar, None),
-        KeyBinding::new("cmd-j", FocusSearch, None),
-        KeyBinding::new("cmd-q", Quit, None),
-    ]);
-    // macOS app and window keys. On Windows the system handles these, and
-    // F11 is full screen.
-    #[cfg(target_os = "macos")]
-    cx.bind_keys([
-        KeyBinding::new("cmd-h", HideApp, None),
-        KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-    ]);
-    #[cfg(not(target_os = "macos"))]
-    cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
-    cx.on_action(|_: &HideApp, cx| cx.hide());
-    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
-    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &CloseWindow, cx| {
-        if let Some(handle) = cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
-            // Key dispatch already borrows this window; close after it returns.
-            cx.defer(move |cx| {
-                if let Err(e) = handle.update(cx, |ws, window, cx| if ws.ready_to_close(window, cx) { window.remove_window(); }) { eprintln!("Could not close document window: {e}"); }
-            });
-        }
+/// Asks the active window to close, for a close that arrives outside its element tree.
+pub(crate) fn close_active_window(cx: &mut App) {
+    let Some(handle) = cx.active_window().and_then(|w| w.downcast::<Workspace>()) else { return };
+    // Key dispatch already borrows this window; close after it returns.
+    cx.defer(move |cx| {
+        if let Err(e) = handle.update(cx, |ws, window, cx| if ws.ready_to_close(window, cx) { window.remove_window(); }) { eprintln!("Could not close document window: {e}"); }
     });
-    // Key dispatch holds the window, and a window on the update stack cannot be asked to save.
-    cx.on_action(|_: &Quit, cx| cx.defer(quit));
 }
 
 /// Quit: the open document is saved first; when that fails its dialog asks
 /// (Retry / Discard changes) and quits afterwards.
-fn quit(cx: &mut App) {
+pub(crate) fn quit(cx: &mut App) {
     let ready = cx
         .windows()
         .into_iter()
@@ -831,9 +740,20 @@ impl Workspace {
             .cursor_pointer()
             .child(icon(Icon::Search, 13., Theme::text_caption()))
             .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(Theme::text_caption()).child("Search documents…"))
-            .when(width >= 200., |d| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J").replace(" + ", " "))))
-            .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
+            .when_some(crate::shortcuts::hint(&FocusSearch, cx).filter(|_| width >= 200.), |d, keys| d.child(div().flex_none().text_size(px(11.)).text_color(Theme::text_placeholder()).child(keys.replace(" + ", " "))))
+            .tip_action("Search documents", &FocusSearch, cx)
             .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx))))
+    }
+
+    pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_open = !self.sidebar_open;
+        cx.notify();
+    }
+
+    /// Opens search; the tooltip names the key.
+    pub(crate) fn search_button(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+        let tip = crate::shortcuts::hint(&FocusSearch, cx).map_or("Search".to_string(), |keys| format!("Search ({keys})"));
+        crate::ui::header_icon(id, Icon::Search).tip_label(tip, TipSide::Below).on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx)))
     }
 
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -909,33 +829,8 @@ impl Workspace {
             .pl(if self.sidebar_open { px(18.) } else { px(theme::TRAFFIC_LIGHTS_W) })
             .title_bar()
             .when(!self.sidebar_open, |d| {
-                d.child(
-                    div()
-                        .id("open-sidebar")
-                        .no_drag()
-                        .flex_none()
-                        .ml(px(4.))
-                        .size(px(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(8.))
-                        .cursor_pointer()
-                        .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                        .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
-                        .on_click(cx.listener(|w, _, _, cx| {
-                            w.sidebar_open = true;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div().id("header-home").no_drag().flex_none().ml(px(4.)).size(px(28.))
-                        .flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
-                        .active(|s| s.bg(Theme::fill_pressed()))
-                        .tip("Back to Home", None)
-                        .child(icon(Icon::Home, 18., Theme::icon()))
-                        .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Home, window, cx))),
-                )
+                d.child(self.sidebar_toggle("open-sidebar", Theme::icon(), cx).ml(px(4.)))
+                .child(self.home_button("header-home", 18., cx).ml(px(4.)).active(|s| s.bg(Theme::fill_pressed())).tip("Back to Home", None))
                 .child(div().mx(px(12.)).child(divider()))
             })
             .child(
@@ -989,11 +884,7 @@ impl Workspace {
                                 })),
                         )
                     })
-                    .child(
-                        seg("doc-search", Icon::Search)
-                            .tip_label("Search (⌘ + J)".into(), TipSide::Below)
-                            .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(FocusSearch), cx))),
-                    )
+                    .child(self.search_button("doc-search", cx))
                     .child(
                         // Straight to a new document: no New menu, as Import is rare.
                         seg("doc-new", Icon::Plus).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))),
@@ -1061,8 +952,7 @@ impl Render for Workspace {
         let note = div().id("note").relative().flex_1().min_w_0().h_full().flex().bg(Theme::bg_body()).child(main)
             .child(div().absolute().top(px(HEADER_H)).left_0().right_0().h(hairline).bg(Theme::hairline()))
             .when(self.sidebar_open, |d| d.child(div().absolute().top_0().bottom_0().left_0().w(hairline).bg(Theme::hairline())));
-        div()
-            .id("workspace")
+        crate::actions::on_window(div().id("workspace"), cx)
             .key_context("Workspace")
             .track_focus(&self.focus)
             .relative()
@@ -1071,23 +961,6 @@ impl Render for Workspace {
             .bg(Theme::window())
             .font_family(theme::UI_FONT)
             .text_color(Theme::text())
-            // Window keys act on the window they were pressed in, not on
-            // whichever window macOS considers active.
-            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| if w.ready_to_close(window, cx) { window.remove_window(); }))
-            .on_action(|_: &Minimize, window, _| window.minimize_window())
-            .on_action(|_: &Zoom, window, _| window.zoom_window())
-            .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
-            .on_action(cx.listener(|w, _: &OpenSettings, window, cx| w.show_view(View::Settings, window, cx)))
-            .on_action(cx.listener(|w, _: &OpenAbout, window, cx| w.open_settings(crate::settings::Page::About, window, cx)))
-            .on_action(cx.listener(|w, _: &GoHome, window, cx| w.show_view(View::Home, window, cx)))
-            .on_action(cx.listener(|w, _: &NewDoc, window, cx| w.new_doc(window, cx)))
-            .on_action(cx.listener(|w, _: &InsertCitation, window, cx| w.open_cite_picker(window, cx)))
-            .on_action(cx.listener(|w, _: &NewFolder, window, cx| w.new_folder(None, window, cx)))
-            .on_action(cx.listener(|w, _: &ImportDoc, window, cx| w.open_import(window, cx)))
-            .on_action(cx.listener(|w, _: &ToggleSidebar, _, cx| {
-                w.sidebar_open = !w.sidebar_open;
-                cx.notify();
-            }))
             .on_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| {
                 // Esc leaves Settings.
                 if ev.keystroke.key == "escape" && w.view == View::Settings {
@@ -1098,10 +971,6 @@ impl Render for Workspace {
             // A focused field binds Esc, and bindings run before key listeners.
             .capture_action(cx.listener(|w, _: &crate::input::Cancel, window, cx| w.escape(window, cx)))
             .capture_key_down(cx.listener(|w, ev: &KeyDownEvent, window, cx| if ev.keystroke.key == "escape" { w.escape(window, cx); }))
-            .on_action(cx.listener(|w, _: &FocusSearch, window, cx| {
-                if w.search_open() { w.close_overlay(window, cx); } else { w.open_search(window, cx); }
-                cx.stop_propagation();
-            }))
             .children(sidebar)
             .child(note)
             .children(resize)

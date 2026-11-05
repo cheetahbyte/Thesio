@@ -173,26 +173,7 @@ pub(crate) fn page_header(ws: &Workspace, title: &str, count: Option<usize>, cx:
         .title_bar()
         .when(!ws.sidebar_open && cfg!(target_os = "windows"), |d| d.child(div().mr(px(12.)).child(ws.header_navigation(cx))))
         .when(!ws.sidebar_open && !cfg!(target_os = "windows"), |d| {
-            d.child(
-                div()
-                    .id("open-sidebar")
-                    .no_drag()
-                    .flex_none()
-                    .ml(px(4.))
-                    .mr(px(12.))
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.))
-                    .cursor_pointer()
-                    .tip("Show sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                    .child(icon(Icon::SidebarToggle, 17., Theme::icon()))
-                    .on_click(cx.listener(|w, _, _, cx| {
-                        w.sidebar_open = true;
-                        cx.notify();
-                    })),
-            )
+            d.child(ws.sidebar_toggle("open-sidebar", Theme::icon(), cx).ml(px(4.)).mr(px(12.)))
         })
         .child(div().text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
         .children(count.map(|n| div().ml(px(8.)).text_size(px(13.)).text_color(Theme::text_caption()).child(n.to_string())))
@@ -490,6 +471,10 @@ pub trait TipExt: Sized {
             None => text.to_string(),
         };
         self.tip_label(label, TipSide::Below)
+    }
+    /// `tip` with the key the keymap holds for `action`.
+    fn tip_action(self, text: &str, action: &dyn Action, cx: &App) -> Self {
+        self.tip(text, crate::shortcuts::hint(action, cx).as_deref())
     }
     fn tip_label(self, label: String, side: TipSide) -> Self;
 }
@@ -845,4 +830,21 @@ impl Element for UiPara {
 }
 
 pub fn header_icon(id: &'static str, name: Icon) -> Stateful<Div> { toolbar_icon(id, name).no_drag() }
+
+/// A 28pt button in the window's title bar, beside the traffic lights.
+fn bar_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful<Div> {
+    div().id(id).no_drag().flex_none().size(px(28.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer().child(icon(glyph, size, color))
+}
+
+impl Workspace {
+    pub(crate) fn sidebar_toggle(&self, id: &'static str, color: Hsla, cx: &mut Context<Self>) -> Stateful<Div> {
+        bar_button(id, Icon::SidebarToggle, 17., color)
+            .tip_action(if self.sidebar_open { "Hide sidebar" } else { "Show sidebar" }, &crate::actions::ToggleSidebar, cx)
+            .on_click(cx.listener(|w, _, _, cx| w.toggle_sidebar(cx)))
+    }
+
+    pub(crate) fn home_button(&self, id: &'static str, size: f32, cx: &mut Context<Self>) -> Stateful<Div> {
+        bar_button(id, Icon::Home, size, Theme::icon()).on_click(cx.listener(|w, _, window, cx| w.show_view(crate::app::View::Home, window, cx)))
+    }
+}
 

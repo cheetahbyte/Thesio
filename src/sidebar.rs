@@ -39,9 +39,8 @@ pub(crate) const SECTION_TOP: f32 = 6.;
 /// Selection mode caps at 50 pages.
 const BATCH_LIMIT: usize = 50;
 
-/// The footer row: like Home (same pill, glyph and label columns) under
-/// the footer line, so the bottom corner mirrors the top.
-pub(crate) fn footer_row(id: &'static str, glyph: Icon, label: &'static str) -> Stateful<Div> {
+/// A row of the nav or the footer: the same pill, glyph and label columns.
+pub(crate) fn nav_row(id: impl Into<ElementId>, glyph: Icon, label: &'static str, on: bool) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(ROW_H))
@@ -53,7 +52,8 @@ pub(crate) fn footer_row(id: &'static str, glyph: Icon, label: &'static str) -> 
         .cursor_pointer()
         .text_size(px(13.))
         .line_height(px(20.))
-        .text_color(Theme::sidebar_text())
+        .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
+        .when(!on, |d| d.text_color(Theme::sidebar_text()))
         .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(glyph, ROW_ICON, Theme::sidebar_glyph())))
         .child(label)
 }
@@ -150,56 +150,20 @@ impl Workspace {
             .pr(px(12.))
             .title_bar()
             .when(cfg!(target_os = "windows"), |d| d.child(self.header_navigation(cx)))
-            .when(!cfg!(target_os = "windows"), |d| d.child(
-                div()
-                    .id("collapse-sidebar")
-                    .no_drag()
-                    .flex_none()
-                    .ml(px(4.))
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.))
-                    .cursor_pointer()
-                    .tip("Hide sidebar", Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                    .child(icon(Icon::SidebarToggle, 17., Theme::sidebar_icon()))
-                    .on_click(cx.listener(|w, _, _, cx| {
-                        w.sidebar_open = false;
-                        cx.notify();
-                    })),
-            ))
+            .when(!cfg!(target_os = "windows"), |d| d.child(self.sidebar_toggle("collapse-sidebar", Theme::sidebar_icon(), cx).ml(px(4.))))
             .child(div().flex_1());
 
         // The nav is just Home: 36px items, a blue tint when selected. Its
         // icon column (x 17) is shared with Search and the doc rows.
-        let nav_row = |id: &'static str, label: &'static str, view: View, glyph: Icon, on_glyph: Icon, cx: &mut Context<Self>| {
+        let page = |id: &'static str, label: &'static str, view: View, glyph: Icon, cx: &mut Context<Self>| {
             let on = self.view == view || view == View::Sources && self.view == View::Paper;
-            div()
-                .id(id)
-                .h(px(ROW_H))
-                .pl(px(6.))
-                .pr(px(4.))
-                .flex()
-                .items_center()
-                .rounded(px(ROW_R))
-                .cursor_pointer()
-                .text_size(px(13.))
-                .line_height(px(20.))
-                .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::sidebar_text()))
-                .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(icon(
-                    if on { on_glyph } else { glyph },
-                    ROW_ICON,
-                    Theme::sidebar_glyph(),
-                )))
-                .child(label)
-                .on_click(cx.listener(move |w, _, window, cx| w.show_view(view, window, cx)))
+            nav_row(id, glyph, label, on).on_click(cx.listener(move |w, _, window, cx| w.show_view(view, window, cx)))
         };
+        let home = if self.view == View::Home { Icon::HomeFilled } else { Icon::Home };
         let nav = div().flex_none().pt(px(8.)).pb(px(4.)).px(px(SB_X))
-            .child(nav_row("nav-home", "Home", View::Home, Icon::Home, Icon::HomeFilled, cx))
-            .child(nav_row("nav-library", "Library", View::Library, Icon::Library, Icon::Library, cx))
-            .child(nav_row("nav-sources", "Sources", View::Sources, Icon::Paper, Icon::Paper, cx));
+            .child(page("nav-home", "Home", View::Home, home, cx))
+            .child(page("nav-library", "Library", View::Library, Icon::Library, cx))
+            .child(page("nav-sources", "Sources", View::Sources, Icon::Paper, cx));
 
         let mut list = div().flex().flex_col().px(px(SB_X)).pb(px(8.));
         // Pinned docs are shortcuts: they stay in My documents too.
@@ -275,7 +239,7 @@ impl Workspace {
             .child(footer_line())
             .when(self.batch.is_none(), |d| {
                 d.child(footer_slot(
-                    footer_row("ft-settings", Icon::Gear, "Settings")
+                    nav_row("ft-settings", Icon::Gear, "Settings", false)
                         .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Settings, window, cx))),
                 ))
             })

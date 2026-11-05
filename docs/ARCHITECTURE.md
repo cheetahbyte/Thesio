@@ -12,6 +12,7 @@ Dependencies point only from the application to core.
 ```
 main.rs: window
   app.rs: Workspace, the window's root view
+    actions.rs: every action's name, menu entry, default keys, and handler
     store.rs: the vault on disk [core]
     document.rs: the open document's saves, and every write to a document
     overlay.rs: the one menu or dialog over the window
@@ -79,6 +80,10 @@ Rows also paint `Decoration`s: an underline over a precise byte range, in a colo
 ## Overlays
 
 `Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
+
+## Actions
+
+`actions.rs` is one table of the workspace's actions, so a new action is one row: its name, its menu group and label, its default keys, and its handler. `shortcuts.rs` applies `.thesio/shortcuts.json` over those keys, and `shortcuts::hint` reads a tooltip's key back from the keymap, so a custom key shows and an unbound action shows none. The Edit menu names the editor's own actions, which keep their keys in `source.rs` and `input.rs`.
 
 ## Vault ids
 

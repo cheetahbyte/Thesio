@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod actions;
 mod app;
 mod appearance;
 mod shared_store;
@@ -112,14 +113,14 @@ fn main() {
         set_app_icon();
         input::bind_keys(cx);
         source::bind_keys(cx);
-        app::bind_keys(cx);
+        actions::bind_keys(cx);
         preferences::load();
         appearance::apply_appearance(&preferences::prefs().appearance);
         appearance::sync_dark(cx);
         theme::sync_accent();
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));
-        app::set_menus(cx);
+        actions::set_menus(cx);
         open_main_window(scripted, None, cx);
         cx.on_window_closed(move |cx| {
             if (scripted || !cfg!(target_os = "macos")) && cx.windows().is_empty() {

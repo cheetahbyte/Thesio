@@ -103,10 +103,10 @@ impl Workspace {
         let header = page_header(self, "Home", None, cx).relative().children(search)
             .child(crate::ui::toolbar_group()
                 .when(narrow, |d| d.child(crate::ui::header_icon("home-search", Icon::Search)
-                    .tip("Search documents", Some(crate::shortcuts::hint("workspace::FocusSearch", "⌘ + J")))
+                    .tip_action("Search documents", &crate::actions::FocusSearch, cx)
                     .on_click(cx.listener(|w, _, window, cx| w.open_search(window, cx)))))
                 .child(crate::ui::header_icon("home-new", Icon::Plus)
-                    .tip("New document", Some(crate::shortcuts::hint("workspace::NewDoc", "⌘ + N")))
+                    .tip_action("New document", &crate::actions::NewDoc, cx)
                     .on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx)))));
         let page = div().size_full().flex().flex_col().bg(Theme::bg_body()).text_color(Theme::text()).font_family(crate::theme::UI_FONT).child(header);
         let Some((_, overview)) = &self.home.overview else { return page.into_any_element() };

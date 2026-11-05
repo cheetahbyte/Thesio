@@ -35,6 +35,6 @@ pub fn sync_dark(cx: &App) -> bool {
 
 /// Redraws every window after the theme changed.
 pub(crate) fn refresh_all(cx: &mut App) {
-    crate::app::set_menus(cx);
+    crate::actions::set_menus(cx);
     cx.refresh_windows();
 }

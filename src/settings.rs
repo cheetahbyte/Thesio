@@ -78,12 +78,7 @@ impl Workspace {
         let nav_row = |page: Option<Page>, cx: &mut Context<Self>| {
             let on = if page.is_some() { page == current } else { in_trash };
             let (title, icon) = page.map_or(("Trash", Icon::Delete), |p| (p.title(), p.icon()));
-            div().id(SharedString::from(format!("settings-nav-{page:?}"))).h(px(sb::ROW_H)).flex().items_center().pl(px(6.)).pr(px(4.)).rounded(px(sb::ROW_R))
-                .text_size(px(13.)).line_height(px(20.)).cursor_pointer()
-                .when(on, |d| d.bg(Theme::sidebar_selected()).text_color(Theme::text()))
-                .when(!on, |d| d.text_color(Theme::sidebar_text()))
-                .child(div().size(px(20.)).flex_none().flex().items_center().justify_center().mr(px(9.)).child(ui::icon(icon, sb::ROW_ICON, Theme::sidebar_glyph())))
-                .child(title)
+            sb::nav_row(SharedString::from(format!("settings-nav-{page:?}")), icon, title, on)
                 .on_click(cx.listener(move |w, _, window, cx| match page { Some(p) => w.open_settings(p, window, cx), None => w.show_view(View::Trash, window, cx) }))
         };
         div().w(px(self.sidebar_w(window))).h_full().flex_none().flex().flex_col().bg(Theme::sidebar_veil()).text_color(Theme::text()).font_family(theme::UI_FONT)
@@ -98,7 +93,7 @@ impl Workspace {
             // Replace Settings with Back, returning to the previous page.
             .child(div().flex_1())
             .child(sb::footer_line())
-            .child(sb::footer_slot(sb::footer_row("ft-back", Icon::Back, "Back").tip("Back", Some("Esc"))
+            .child(sb::footer_slot(sb::nav_row("ft-back", Icon::Back, "Back", false).tip("Back", Some("Esc"))
                 .on_click(cx.listener(|w, _, window, cx| w.close_settings(window, cx)))))
             .into_any_element()
     }
@@ -107,17 +102,9 @@ impl Workspace {
     /// 4pt past the traffic lights, glyph 17), so the buttons don't move when
     /// switching between the document list and Settings.
     pub(crate) fn header_navigation(&self, cx: &mut Context<Self>) -> AnyElement {
-        let open = self.sidebar_open;
-        let bar_button = |id: &'static str, glyph: Icon| {
-            div().id(id).no_drag().flex_none().size(px(28.)).flex().items_center().justify_center().rounded(px(8.)).cursor_pointer()
-                .child(ui::icon(glyph, 17., Theme::icon()))
-        };
         div().flex().items_center().ml(px(4.)).gap(px(4.))
-            .child(bar_button("settings-collapse", Icon::SidebarToggle)
-                .tip(if open { "Hide sidebar" } else { "Show sidebar" }, Some(crate::shortcuts::hint("workspace::ToggleSidebar", "⌘ + ]")))
-                .on_click(cx.listener(|w, _, _, cx| { w.sidebar_open = !w.sidebar_open; cx.notify(); })))
-            .child(bar_button("settings-home", Icon::Home).tip("Home", Some(crate::shortcuts::hint("workspace::GoHome", "⌘ + ⌥ + Home")))
-                .on_click(cx.listener(|w, _, window, cx| w.show_view(View::Home, window, cx))))
+            .child(self.sidebar_toggle("settings-collapse", Theme::icon(), cx))
+            .child(self.home_button("settings-home", 17., cx).tip_action("Home", &crate::actions::GoHome, cx))
             .into_any_element()
     }
 

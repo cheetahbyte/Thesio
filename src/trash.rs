@@ -8,7 +8,7 @@ use crate::search::doc_icon;
 use crate::store::{TRASH_DAYS, TrashEntry};
 use crate::theme::Theme;
 use crate::overlay::Overlay;
-use crate::ui::{Icon, ROW_RADIUS, TipExt, anchored_menu, empty_state, icon, list_header_text, list_line, menu_label, menu_panel, page_header, ui_text};
+use crate::ui::{Icon, ROW_RADIUS, anchored_menu, empty_state, icon, list_header_text, list_line, menu_label, menu_panel, page_header, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 
 pub const TRASH_MENU_W: f32 = 160.;
@@ -30,11 +30,7 @@ impl Workspace {
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let header = page_header(self, "Trash", None, cx).child(crate::ui::toolbar_group().child(
-            crate::ui::header_icon("trash-search", Icon::Search)
-                .tip_label("Search (⌘ + J)".into(), crate::ui::TipSide::Below)
-                .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(crate::app::FocusSearch), cx))),
-        ));
+        let header = page_header(self, "Trash", None, cx).child(crate::ui::toolbar_group().child(self.search_button("trash-search", cx)));
         let mut page = div().flex_1().min_w_0().h_full().flex().flex_col().child(header);
         if self.trash.is_empty() {
             return page.child(empty_state(Icon::Delete, "Trash is empty", "Deleted documents stay here for a while.")).into_any_element();
