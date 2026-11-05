@@ -212,6 +212,14 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// A file name from a title. A document's title may leave out the extension;
+/// other names are whole.
+fn renamed_file(title: &str, typst: bool) -> String {
+    let stem = file_stem(title);
+    if !typst { return stem; }
+    format!("{}.{EXTENSION}", stem.strip_suffix(&format!(".{EXTENSION}")).unwrap_or(&stem))
+}
+
 fn parent_of(id: &str) -> Option<&str> { id.rsplit_once('/').map(|(parent, _)| parent) }
 fn base_name(id: &str) -> &str { id.rsplit_once('/').map_or(id, |(_, name)| name) }
 fn join(parent: Option<&str>, name: &str) -> String { parent.map_or(name.to_string(), |p| format!("{p}/{name}")) }
@@ -425,10 +433,8 @@ impl Store {
     /// Renames a file or folder in place. Returns its new id and the documents
     /// whose paths were updated.
     pub fn rename(&mut self, id: &str, title: &str) -> Result<(String, Vec<String>)> {
-        // A document's title leaves out the extension; other names are whole.
         let typst = self.path(id)?.is_file() && id.ends_with(".typ");
-        let name = if typst { format!("{}.{EXTENSION}", file_stem(title)) } else { file_stem(title) };
-        let new = join(parent_of(id), &name);
+        let new = join(parent_of(id), &renamed_file(title, typst));
         let rewritten = self.relocate(id, &new)?;
         Ok((new, rewritten))
     }
@@ -575,6 +581,13 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_document_name_gets_one_extension() {
+        assert_eq!(renamed_file("flaky2024", true), "flaky2024.typ");
+        assert_eq!(renamed_file("flaky2024.typ", true), "flaky2024.typ");
+        assert_eq!(renamed_file("paper.pdf", false), "paper.pdf");
+    }
 
     #[test]
     fn launch_target_is_the_newest_document_within_its_top_file() {

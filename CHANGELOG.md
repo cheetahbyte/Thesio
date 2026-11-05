@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep a source's notes named `key.typ` when its citation key changes. They became `key.typ.typ`.
 - Scroll to the caret when it jumps far ahead in a document that just opened, as ⌘↓ does.
 - Save an edit in the Library panel when the app quits.
 - Draw hairlines between the sidebar and the content, and under the header, as Finder does.
