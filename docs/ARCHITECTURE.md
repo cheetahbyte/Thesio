@@ -68,6 +68,8 @@ Adding a source also looks for its paper: arXiv first, then the locations Unpayw
 
 On macOS papers open in `native_pdf.rs`, a PDFKit `PDFView` above the GPUI surface. It hides what GPUI draws beneath it, so the viewer steps aside while a menu or dialog is open. PDFKit was chosen over the `hayro` renderer because it brings text selection and writes standard PDF annotations, which future annotation work can build on. Other platforms open papers in the system app.
 
+Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `paper.rs` and renamed with the key.
+
 A document has one of three bibliography modes, read from its text (`library::mode`):
 
 - **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`. The editor folds it into one row and keeps the caret out of it, and Show bibliography data in the document menu reveals it. Home cards and search ignore it.

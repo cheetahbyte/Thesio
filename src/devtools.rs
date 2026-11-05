@@ -6,7 +6,8 @@
 //!   mark <text> (IME composition) | commit <text> | nkey <letter> (a real
 //!   key press through AppKit, so the active input method sees it) |
 //!   activate (make the window key; takes focus) | quit |
-//!   pick <path>[|<path>...] (answers the next file dialog instead of showing it)
+//!   pick <path>[|<path>...] (answers the next file dialog instead of showing it) |
+//!   pdfselect <text> (selects the first match in the open paper before the next highlight)
 //! For profiling: bench <n> <step> (runs the step n times, drawing a frame
 //!   synchronously after each, and prints step / frame / editor-render times) |
 //!   wheel x y dy (one scroll-wheel event).
@@ -32,6 +33,12 @@ pub static RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 static POINTER: Mutex<(f32, f32)> = Mutex::new((640., 400.));
 static CURSOR_LOG: Mutex<Option<(Instant, std::fs::File)>> = Mutex::new(None);
 static PICK: Mutex<Option<Vec<std::path::PathBuf>>> = Mutex::new(None);
+static PDF_SELECT: Mutex<Option<String>> = Mutex::new(None);
+
+/// Text the next highlight should select first: mouse steps cannot reach the native viewer.
+pub fn take_pdf_select() -> Option<String> {
+    PDF_SELECT.lock().unwrap().take()
+}
 
 /// The scripted answer to the next open / save dialog, if any.
 pub fn take_pick() -> Option<Vec<std::path::PathBuf>> {
@@ -559,6 +566,7 @@ fn run(cmd: &str, rest: &str, window: &mut Window, cx: &mut App) {
                 _ => (cur.0, body),
             });
         }
+        "pdfselect" => *PDF_SELECT.lock().unwrap() = Some(rest.trim().to_string()),
         "pick" => *PICK.lock().unwrap() = Some(rest.trim().split('|').map(std::path::PathBuf::from).collect()),
         // `deskshot name margin`: the window as it sits on screen, with
         // `margin` pt of whatever is below it (a wallpaper backdrop for the

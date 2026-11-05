@@ -43,6 +43,7 @@ Use one command per line. Lines starting with `#` are comments. For complete det
 | `mark <text>` / `commit <text>` | Compose or commit input method text |
 | `clip html\|text <file>` | Set the simulated clipboard content for a subsequent `key cmd-v` |
 | `pick <path>[\|<path>…]` | Supply paths for the next open or save dialog without showing a system panel |
+| `pdfselect <text>` | Select the first match in the open paper before the next highlight; mouse steps cannot reach the native viewer |
 | `resize w h` | Resize the window |
 | `place x y` | Place the window's top-left corner at (x, y) on the primary screen, floating over other windows; use with `THESIO_NOPARK` for desktop screenshots |
 | `deskshot <name> [margin]` | Capture the window and content behind it, with a margin in pt on each side (default 48) |

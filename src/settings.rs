@@ -177,7 +177,7 @@ fn row(title: impl Into<SharedString>, desc: Option<SharedString>, control: impl
 
 
 /// A segmented control: a grey groove and a white selected pill.
-fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
+pub(crate) fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + Clone + 'static, cx: &mut Context<Workspace>) -> Div {
     div().flex_none().h(px(28.)).p(px(2.)).flex().gap(px(2.)).rounded(px(9.)).bg(Theme::fill_hover_strong())
         .children(labels.iter().enumerate().map(|(i, label)| {
             let on = on.clone();

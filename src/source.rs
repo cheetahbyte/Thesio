@@ -116,6 +116,8 @@ pub struct SourceEditor {
     pub block_shown: bool,
     /// What `@` completes to.
     pub sources: Vec<Row>,
+    /// Width of the source popup.
+    pub completion_w: f32,
     completion: Option<Completion>,
     /// The `@` whose popup was accepted or dismissed: it stays closed there.
     settled: Option<usize>,
@@ -132,7 +134,7 @@ impl SourceEditor {
         let buffer = Buffer::new(text);
         let list = ListState::new(buffer.line_count(), ListAlignment::Top, px(400.));
         let spans = if typst { highlights(buffer.text()) } else { vec![] };
-        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion: None, settled: None };
+        let mut editor = Self { buffer, typst, focus: cx.focus_handle(), list, painted: Default::default(), spans, marked: None, selecting: false, goal_x: None, folded: None, block_shown: false, sources: vec![], completion_w: 380., completion: None, settled: None };
         editor.refold();
         editor
     }
@@ -328,7 +330,7 @@ impl SourceEditor {
                 })
                 .on_click(cx.listener(move |e, _, _, cx| e.complete(i, cx)))
         }).collect::<Vec<_>>();
-        let menu = popover().id("completion").occlude().w(px(380.)).py(px(MENU_PAD_Y)).flex().flex_col().shadow(theme::shadow_panel()).children(rows);
+        let menu = popover().id("completion").occlude().w(px(self.completion_w)).py(px(MENU_PAD_Y)).flex().flex_col().shadow(theme::shadow_panel()).children(rows);
         Some(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(at).offset(point(px(0.), px(LINE_HEIGHT + 4.))).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(1).into_any_element())
     }
 

@@ -18,6 +18,15 @@ pub const LIBRARY_FILE: &str = "library.yaml";
 pub const PAPERS_DIR: &str = "sources";
 
 /// The vault path of the paper for `key`. Keys may hold characters a file name should not.
+/// The vault folder that holds notes on sources.
+pub const NOTES_DIR: &str = "notes";
+
+/// The notes document that goes with paper `id`, or with `paper_file(key)`.
+pub fn note_file(paper: &str) -> String {
+    let name = paper.rsplit('/').next().unwrap_or(paper);
+    format!("{NOTES_DIR}/{}.typ", name.strip_suffix(".pdf").unwrap_or(name))
+}
+
 pub fn paper_file(key: &str) -> String {
     let stem: String = key.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '-' }).collect();
     format!("{PAPERS_DIR}/{}.pdf", stem.trim_start_matches('.'))

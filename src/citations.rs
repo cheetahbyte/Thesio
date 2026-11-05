@@ -4,12 +4,13 @@
 use crate::app::{Confirm, View, Workspace};
 use crate::input::{TextField, TextFieldEvent};
 use crate::app::RowMenu;
-use crate::library::{self, Added, Fields, Library, Mode, PAPERS_DIR, Row, paper_file};
+use crate::library::{self, Added, Fields, Library, Mode, PAPERS_DIR, Row, note_file, paper_file};
+use crate::source::SourceEditor;
 use thesio_core::lookup::{self, Identifier};
 use crate::store::natural_cmp;
 use crate::theme::{self, Theme, craft};
 use crate::trash::{dialog, list_header_text, list_line, menu_label, page_header, primary_button, row_hover, scrim, secondary_button};
-use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_icon, ui_text};
+use crate::ui::{Icon, TipExt, TitleBarExt, ToastKind, field_well, icon, menu_glyph, menu_row, popover, primary_icon_button, search_well, toolbar_icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -165,10 +166,10 @@ impl Workspace {
     }
 
     /// Gives the editor the library as it is on disk now.
-    pub(crate) fn offer_sources(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn offer_sources(&mut self, editor: &Entity<SourceEditor>, cx: &mut Context<Self>) {
         self.reload_library();
         let rows = self.visible_rows("");
-        if let Some(editor) = &self.editor { editor.update(cx, |e, cx| { e.sources = rows; cx.notify(); }); }
+        editor.update(cx, |e, cx| { e.sources = rows; cx.notify(); });
     }
 
     /// Every key cited in a document and the files it includes.
@@ -744,47 +745,27 @@ impl Workspace {
         if !crate::native_pdf::supported() { return self.open_paper_externally(id, cx); }
         self.paper = Some(id.to_string());
         self.paper_failed.set(false);
+        self.load_paper_notes(id, cx);
         self.show_view(View::Paper, cx);
     }
 
     /// Scripted runs must not start other apps.
-    fn open_paper_externally(&self, id: &str, cx: &App) {
+    pub(crate) fn open_paper_externally(&self, id: &str, cx: &App) {
         if std::env::var_os("THESIO_SCRIPT").is_none() { cx.open_with_system(&self.store.root().join(id)); }
     }
 
     /// The name a paper goes by: its source's title, or its file name.
-    fn paper_title(&self, id: &str) -> String {
+    pub(crate) fn paper_title(&self, id: &str) -> String {
         let row = self.citations.library.as_ref().and_then(|library| library.rows().into_iter().find(|row| paper_file(&row.key) == id));
         row.map(|row| row.title).filter(|title| !title.is_empty()).unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id).to_string())
     }
 
     /// The viewer goes under what GPUI draws over the pane, or it would hide it.
-    fn paper_covered(&self, window: &Window) -> bool {
+    pub(crate) fn paper_covered(&self, window: &Window) -> bool {
         let c = &self.citations;
         // Most row menus stay over the sidebar, clear of the pane.
         let edge = if self.sidebar_open { self.sidebar_w(window) } else { 0. };
         self.row_menu.as_ref().is_some_and(|menu| f32::from(menu.pos.x) + crate::sidebar::ROW_MENU_W > edge) || self.confirm.is_some() || self.search_open || self.move_dlg.is_some() || c.picker.is_some() || c.form.is_some() || c.lookup.is_some()
-    }
-
-    pub(crate) fn render_paper(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(id) = self.paper.clone() else { return div().into_any_element() };
-        let title = self.paper_title(&id);
-        let external = id.clone();
-        let header = page_header(self, &title, None, 26., cx)
-            .child(toolbar_icon("paper-external", Icon::External).no_drag().tip_label("Open in Default App".to_string(), TipSide::Right)
-                .on_click(cx.listener(move |w, _, _, cx| w.open_paper_externally(&external, cx))));
-        let (pdf, covered, path) = (self.pdf.clone(), self.paper_covered(window), self.store.path(&id).ok());
-        let failed = self.paper_failed.clone();
-        let unreadable = failed.get();
-        let pane = canvas(|_, _, _| (), move |bounds, _, window, _| {
-            let shown = path.as_ref().is_some_and(|path| pdf.show(path, bounds, covered, window));
-            if !shown && !failed.replace(true) { window.on_next_frame(|window, _| window.refresh()); }
-        }).absolute().size_full();
-        div().flex_1().min_w_0().h_full().flex().flex_col().child(header)
-            .child(div().relative().flex_1().min_h_0().flex().items_center().justify_center().bg(Theme::bg_overlay())
-                .child(pane)
-                .when(unreadable, |d| d.child(div().text_size(px(13.)).text_color(Theme::text_caption()).child("This PDF could not be shown here. Try opening it in your default app."))))
-            .into_any_element()
     }
 
     fn choose_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static) {
@@ -824,27 +805,27 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Makes an unlinked paper the paper of `key`.
+    /// Makes an unlinked paper, and any notes on it, the paper of `key`.
     fn link_paper(&mut self, id: &str, key: &str, cx: &mut Context<Self>) {
         let to = paper_file(key);
-        let name = to.rsplit('/').next().unwrap_or(&to).to_string();
-        match self.store.rename(id, &name) {
-            Ok((new, rewritten)) => self.path_changed(id, &new, &rewritten, cx),
-            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not link the paper: {e}"), cx),
-        }
-        self.entries = self.store.list();
-        self.sort();
+        self.follow_key(id, &to, cx);
+        self.follow_key(&note_file(id), &note_file(&to), cx);
         cx.notify();
     }
 
     /// A paper keeps following its entry when the citation key changes.
     fn rename_paper(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
-        let (from, to) = (paper_file(old), paper_file(new));
+        self.follow_key(&paper_file(old), &paper_file(new), cx);
+        self.follow_key(&note_file(&paper_file(old)), &note_file(&paper_file(new)), cx);
+    }
+
+    /// Renames a file that is named after a citation key.
+    fn follow_key(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
         if from == to || !self.entries.iter().any(|e| e.id == from) { return; }
-        let name = to.rsplit('/').next().unwrap_or(&to).to_string();
-        match self.store.rename(&from, &name) {
-            Ok((id, rewritten)) => self.path_changed(&from, &id, &rewritten, cx),
-            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename the paper: {e}"), cx),
+        let name = to.rsplit('/').next().unwrap_or(to).to_string();
+        match self.store.rename(from, &name) {
+            Ok((id, rewritten)) => self.path_changed(from, &id, &rewritten, cx),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not rename {from}: {e}"), cx),
         }
         self.entries = self.store.list();
         self.sort();
@@ -962,7 +943,7 @@ impl Workspace {
             let g = SharedString::from(id);
             menu_row(id, g.clone()).child(menu_glyph(glyph, 16., g.clone())).child(menu_label(label, g, gpui::white()))
         };
-        let (edit, cite, copy, paper, attach, delete) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
+        let (edit, cite, copy, paper, attach, notes, delete) = (key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key.clone(), key);
         let has_paper = self.has_paper(&paper);
         let g = SharedString::from("entry-menu-delete");
         let menu = popover().id("entry-menu").occlude().w(px(180.)).py(px(crate::ui::MENU_PAD_Y))
@@ -985,6 +966,10 @@ impl Workspace {
                 let id = paper_file(&attach);
                 w.choose_pdf(window, cx, move |w, path, _, cx| w.attach_paper(&path, &id, cx));
             }))))
+            .child(item("entry-menu-notes", Icon::Notes, "Notes").on_click(cx.listener(move |w, _, window, cx| {
+                w.citations.row_menu = None;
+                w.open_source_notes(&notes, window, cx);
+            })))
             .child(item("entry-menu-copy", Icon::Copy, "Copy Key").on_click(cx.listener(move |w, _, _, cx| {
                 w.citations.row_menu = None;
                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));

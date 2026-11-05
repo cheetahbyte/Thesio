@@ -206,6 +206,7 @@ pub struct Workspace {
     /// PDFKit could not read `paper`.
     pub(crate) paper_failed: Rc<Cell<bool>>,
     pub(crate) pdf: Rc<crate::native_pdf::PdfPane>,
+    pub(crate) paper_panel: crate::paper::PaperPanel,
     pub store: SharedStore,
     pub entries: Vec<Entry>,
     pub current: Option<String>,
@@ -363,6 +364,7 @@ impl Workspace {
             paper: None,
             paper_failed: Default::default(),
             pdf: Default::default(),
+            paper_panel: Default::default(),
             folded: [false; 2],
             expanded: store_expanded,
             move_dlg: None,
@@ -452,7 +454,7 @@ impl Workspace {
                     if let Some(preview) = &this.preview { preview.update(cx, |p, cx| p.update(text, cx)); }
                     this.schedule_save(window, cx);
                 }
-                SourceEvent::Citing => this.offer_sources(cx),
+                SourceEvent::Citing => this.offer_sources(editor, cx),
                 SourceEvent::Cited => if let Some(id) = this.current.clone() { this.citation_added(&id, cx); },
             }),
         ];
