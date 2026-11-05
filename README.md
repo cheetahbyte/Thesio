@@ -14,7 +14,7 @@ cargo build --release
 scripts/preview.sh                            # bundle and launch dist-preview/Thesio.app
 ```
 
-To build and run a debug version, install `just` and run `just start`.
+To build and run a debug version, install `just` and run `just start`. To replace `/Applications/Thesio.app` with a release build, run `just install`, which needs `mbx`.
 
 To build without the Metal Toolchain, compile shaders at startup instead: `cargo build --release --features gpui/runtime_shaders`.
 
