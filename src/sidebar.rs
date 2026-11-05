@@ -13,11 +13,8 @@ use gpui::{prelude::FluentBuilder, *};
 /// a 1pt border.
 pub(crate) const ROW_MENU_W: f32 = 180.;
 const ROW_ITEM: f32 = crate::ui::MENU_ROW_H;
-const ROW_DIVIDER: f32 = 11.;
-
-fn row_menu_height(items: usize, dividers: usize) -> f32 {
-    2. + crate::ui::MENU_PAD_Y * 2. + items as f32 * ROW_ITEM + dividers as f32 * ROW_DIVIDER
-}
+const CHEVRON_SLOT: f32 = 16.;
+const CHEVRON_R: f32 = 6.;
 
 /// Sidebar geometry (measured from the window edge), shared by the
 /// document and Settings sidebars: selection pills start 14pt in, every row is
@@ -126,7 +123,6 @@ impl Workspace {
 
     pub(crate) fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let entries: Vec<Entry> = self.listed_entries().cloned().collect();
-        self.more_bounds.borrow_mut().clear();
 
         let header = div()
             .h(px(crate::app::HEADER_H))
@@ -268,7 +264,12 @@ impl Workspace {
             .child(div().id("doc-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.list_scroll).child(list)
                 // A drop that no row takes lands in the vault root.
                 .drag_over::<DraggedRow>(|s, _, _, _| s.bg(Theme::sidebar_hover()))
-                .on_drop(cx.listener(|w, row: &DraggedRow, _, cx| w.move_docs(std::slice::from_ref(&row.id), None, cx))))
+                .on_drop(cx.listener(|w, row: &DraggedRow, _, cx| w.move_docs(std::slice::from_ref(&row.id), None, cx)))
+                .on_mouse_down(MouseButton::Right, cx.listener(|w, ev: &MouseDownEvent, _, cx| {
+                    w.row_menu = None;
+                    w.files_menu = Some(ev.position);
+                    cx.notify();
+                })))
             .child(footer)
             .into_any_element()
     }
@@ -347,23 +348,11 @@ impl Workspace {
         )
     }
 
-    /// Section header: the title folds the list (an
-    /// arrow appears on hover); My documents has "+" and Selection mode on the right,
-    /// laid out so the last one lines up with the rows' "…".
+    /// Section header, as in Finder: the title on the left and a chevron at the
+    /// end of the line, lined up with the folders' chevrons. Clicking it folds.
     fn section(&self, idx: usize, title: &'static str, cx: &mut Context<Self>) -> Div {
-        let group = SharedString::from(format!("section-{idx}"));
         let folded = self.folded[idx];
-        let trigger = |id: &'static str, name: Icon| {
-            div()
-                .id(id)
-                .flex_none()
-                .size(px(22.))
-                .p(px(3.))
-                .rounded(px(6.))
-                .cursor_pointer()
-                .child(icon(name, 16., Theme::sidebar_icon()))
-        };
-        let row = div().h(px(SECTION_H)).pl(px(4.)).pt(px(SECTION_TOP)).flex().items_center().group(group.clone());
+        let row = div().h(px(SECTION_H)).pl(px(4.)).pt(px(SECTION_TOP)).flex().items_center();
         if let (1, Some(sel)) = (idx, self.batch.as_ref()) {
             let n = sel.len();
             let all = n > 0 && n >= self.listed_entries().count().min(BATCH_LIMIT);
@@ -408,42 +397,27 @@ impl Workspace {
                             w.row_menu = None;
                             cx.notify();
                         })),
-                )
-                .child(trigger("section-add", Icon::Plus).ml(px(2.)).mr(px(4.)).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))));
+                );
         }
         row.child(
             div()
-                // Keyed by state so the tooltip is rebuilt after a toggle.
-                .id(SharedString::from(format!("section-title-{idx}-{folded}")))
-                .px(px(4.))
+                .id(("section-title", idx))
+                .flex_1()
+                .min_w_0()
+                .pl(px(4.))
+                .pr(px(CHEVRON_R))
                 .h(px(22.))
                 .flex()
                 .items_center()
-                .rounded(px(6.))
+                .justify_between()
                 .cursor_pointer()
-                .tip(if folded { "Click to expand" } else { "Click to collapse" }, None)
-                .child(div().pr(px(4.)).text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(crate::settings::label(title)))
-                .child(
-                    div()
-                        .when(!folded, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
-                        .child(icon(if folded { Icon::ChevronRight } else { Icon::ChevronDown }, 10., Theme::sidebar_icon())),
-                )
+                .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::sidebar_section()).child(crate::settings::label(title)))
+                .child(div().size(px(CHEVRON_SLOT)).flex_none().flex().items_center().justify_center().child(icon(if folded { Icon::ChevronRight } else { Icon::ChevronDown }, 11., Theme::sidebar_icon())))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.folded[idx] = !w.folded[idx];
                     cx.notify();
                 })),
         )
-        .child(div().flex_1())
-        .when(idx == 1, |d| {
-            d.child(trigger("section-batch", Icon::Select).opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)).tip("Select documents", None).on_click(cx.listener(|w, _, _, cx| {
-                w.batch = Some(vec![]);
-                w.folded[1] = false;
-                w.row_menu = None;
-                cx.notify();
-            })))
-            .child(trigger("section-add-folder", Icon::FolderNew).opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)).ml(px(2.)).tip("New folder", None).on_click(cx.listener(|w, _, window, cx| w.new_folder(None, window, cx))))
-            .child(trigger("section-add", Icon::Plus).ml(px(2.)).mr(px(4.)).tip("New document", None).on_click(cx.listener(|w, _, window, cx| w.new_doc(window, cx))))
-        })
     }
 
     /// Check or uncheck a My documents row (entering Selection mode if needed); false
@@ -525,6 +499,8 @@ impl Workspace {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    w.files_menu = None;
                     let batch = in_lib && w.batch.is_some();
                     if batch && !w.batch.as_ref().is_some_and(|b| b.contains(&id2)) && !w.toggle_check(&id2) {
                         return;
@@ -533,60 +509,6 @@ impl Workspace {
                     cx.notify();
                 }),
             )
-    }
-
-    fn more_button(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> Stateful<Div> {
-        let id = e.id.clone();
-        let slot = format!("{key}-{}", e.id);
-        let slot2 = slot.clone();
-        let record = self.more_bounds.clone();
-        let lookup = self.more_bounds.clone();
-        let open = self.row_menu.as_ref().is_some_and(|m| m.id == e.id && m.pos.x < px(0.));
-        div()
-            .id(SharedString::from(format!("more-{slot}")))
-            .relative()
-            .size(px(22.))
-            .mr(px(4.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.))
-            .when(!open, |d| d.opacity(0.).group_hover("doc-row", |s| s.opacity(1.)))
-            .when(open, |d| d.bg(Theme::sidebar_selected()))
-            .child(icon(Icon::Ellipsis, 15., Theme::text_code()))
-            .child(canvas(move |b, _, _| record.borrow_mut().insert(slot.clone(), b), |_, _, _, _| {}).absolute().inset_0())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                    cx.stop_propagation();
-                    // Hang the menu from the button; a negative x marks "from the button".
-                    let b = lookup.borrow().get(&slot2).copied();
-                    let pos = b.map_or(ev.position, |b| point(-b.left() - px(1.), b.top()));
-                    w.row_menu = Some(RowMenu { id: id.clone(), pos, corner: Corner::TopLeft, batch: false });
-                    cx.notify();
-                }),
-            )
-    }
-
-    /// Hover "+" (New child page): a new page under this one, straight away.
-    fn add_button(&self, e: &Entry, key: &str, cx: &mut Context<Self>) -> impl IntoElement {
-        let id = e.id.clone();
-        div()
-            .id(SharedString::from(format!("add-{key}-{}", e.id)))
-            .size(px(22.))
-            .p(px(3.))
-            .flex_none()
-            .rounded(px(6.))
-            .opacity(0.)
-            .group_hover("doc-row", |s| s.opacity(1.))
-            .child(icon(Icon::Plus, 16., Theme::text_code()))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |w, _, window, cx| {
-                cx.stop_propagation();
-                w.row_menu = None;
-                w.new_child(&id, window, cx);
-            }))
     }
 
     fn doc_row(&self, e: &Entry, key: &str, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
@@ -636,7 +558,7 @@ impl Workspace {
             .pl(px(6. + 16. * depth as f32))
             .relative()
             // One guide per ancestor, under its chevron; the extra point bridges ROW_GAP.
-            .children((0..if batch.is_none() { depth } else { 0 }).map(|level| div().absolute().top(px(-ROW_GAP)).bottom_0().left(px(14. + 16. * level as f32)).w(px(1.)).bg(Theme::sidebar_guide())))
+            .children((0..if batch.is_none() { depth } else { 0 }).map(|level| div().absolute().top(px(-ROW_GAP)).bottom_0().left(px(16. + 16. * level as f32)).w(px(1.)).bg(Theme::sidebar_guide())))
             .when(key == "doc" && !renaming && batch.is_none(), |d| {
                 // Dropping on a file means the folder it sits in.
                 let target = if e.folder { Some(e.id.clone()) } else { e.meta.parent.clone() };
@@ -659,29 +581,50 @@ impl Workspace {
                         .child(checkbox(if checked { Check::On } else { Check::Off }, blocked)),
                 )
             })
-            .when(key == "doc", |d| {
-                let slot = div().id(SharedString::from(format!("arrow-{}", e.id))).size(px(16.)).flex_none().flex().items_center().justify_center().rounded(px(4.));
-                d.child(if e.folder {
-                    let toggle = e.id.clone();
-                    let open = self.expanded.contains(&e.id);
-                    slot
-                        .child(icon(Icon::ChevronRight, 9., Theme::sidebar_icon()).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(move |w, _, _, cx| {
-                            cx.stop_propagation();
-                            w.toggle_folder(&toggle, cx);
-                        }))
-                } else {
-                    slot
-                })
-            })
             .when(e.folder, |d| d.child(div().size(px(20.)).flex_none().flex().items_center().justify_center().child(icon(Icon::Folder, ROW_ICON, Theme::sidebar_glyph()))))
             .child(title)
-            .when(!renaming && batch.is_none() && key == "doc" && e.folder, |d| d.child(self.add_button(e, key, cx)))
-            .when(!renaming && batch.is_none(), |d| d.child(self.more_button(e, key, cx).when(key == "doc", |d| d.ml(px(2.)))))
+            .when(key == "doc" && e.folder, |d| {
+                let toggle = e.id.clone();
+                let open = self.expanded.contains(&e.id);
+                d.child(div().id(SharedString::from(format!("arrow-{}", e.id))).size(px(CHEVRON_SLOT)).mr(px(CHEVRON_R)).flex_none().flex().items_center().justify_center()
+                    .child(icon(Icon::ChevronRight, 11., Theme::sidebar_icon()).when(open, |s| s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)))))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |w, _, _, cx| {
+                        cx.stop_propagation();
+                        w.toggle_folder(&toggle, cx);
+                    })))
+            })
     }
 
-    pub(crate) fn render_row_menu(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The menu for the list itself: everything that adds to it lives here.
+    pub(crate) fn render_files_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let position = self.files_menu?;
+        let item = |id: &'static str, glyph: Icon, label: &'static str| {
+            crate::ui::menu_row(id).child(crate::ui::menu_glyph(glyph, 16.)).child(crate::ui::menu_label(label))
+        };
+        let menu = popover().id("files-menu").occlude().w(px(ROW_MENU_W)).py(px(crate::ui::MENU_PAD_Y))
+            .on_mouse_down_out(cx.listener(|w, _, _, cx| {
+                w.files_menu = None;
+                cx.notify();
+            }))
+            .child(item("files-new", Icon::Plus, "New document").on_click(cx.listener(|w, _, window, cx| {
+                w.files_menu = None;
+                w.new_doc(window, cx);
+            })))
+            .child(item("files-new-folder", Icon::FolderNew, "New folder").on_click(cx.listener(|w, _, window, cx| {
+                w.files_menu = None;
+                w.new_folder(None, window, cx);
+            })))
+            .child(item("files-select", Icon::Select, "Select documents").on_click(cx.listener(|w, _, _, cx| {
+                w.files_menu = None;
+                w.batch = Some(vec![]);
+                w.folded[1] = false;
+                cx.notify();
+            })));
+        Some(deferred(anchored().position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2).into_any_element())
+    }
+
+    pub(crate) fn render_row_menu(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(m) = self.row_menu.clone() else { return vec![] };
         let Some((pinned, starred, folder, typst)) = self.entries.iter().find(|e| e.id == m.id).map(|e| (e.meta.pinned, e.meta.starred > 0, e.folder, e.typst)) else { return vec![] };
         let item_c = |id: &'static str, ic: Icon, label: &'static str, color: Hsla, icon_color: Hsla| {
@@ -722,7 +665,6 @@ impl Workspace {
             cx.notify();
         });
         let mut menu = popover().id("row-menu").occlude().w(px(ROW_MENU_W)).px(px(5.)).py(px(crate::ui::MENU_PAD_Y)).on_mouse_down_out(close);
-        let (mut items, mut dividers) = (0, 0);
         let root = self.store.root();
         let reveal = id.clone();
         let reveal_item = item("rm-reveal", Icon::Move, if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in file manager" }).on_click(cx.listener(move |w, _, _, cx| {
@@ -747,8 +689,6 @@ impl Workspace {
                 .child(reveal_item)
                 .child(divider())
                 .child(item_c("rm-del", Icon::Delete, "Delete", Theme::danger(), Theme::danger()).on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))));
-            items += 6;
-            dividers += 2;
         } else {
             let (dup, mv, pin, star, pdf, ren, del, new_window) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
             if typst {
@@ -760,46 +700,26 @@ impl Workspace {
                         cx.notify();
                     })))
                     .child(item("rm-copy", Icon::Copy, "Duplicate").on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup, window, cx))));
-                items += 2;
             }
             menu = menu
                 .child(item("rm-move", Icon::Move, "Move to").on_click(cx.listener(move |w, _, window, cx| w.open_move(vec![mv.clone()], window, cx))))
                 .child(item("rm-pin", if pinned { Icon::Unpin } else { Icon::Pin }, if pinned { "Unpin" } else { "Pin" }).on_click(cx.listener(move |w, _, _, cx| w.toggle_pin(&pin, cx))))
                 .child(item("rm-star", if starred { Icon::Unstar } else { Icon::Star }, if starred { "Remove from favorites" } else { "Add to favorites" }).on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star, cx))))
                 .child(divider());
-            items += 3;
-            dividers += 1;
             if typst {
                 menu = menu.child(item("rm-pdf", Icon::Export, "Export as PDF").on_click(cx.listener(move |w, _, _, cx| {
                     w.row_menu = None;
                     w.export_pdf(&pdf, cx);
                 })));
-                items += 1;
             }
             menu = menu
                 .child(item("rm-rename", Icon::Edit, "Rename").on_click(cx.listener(move |w, _, window, cx| w.start_rename(&ren, window, cx))))
                 .child(reveal_item)
                 .child(divider())
                 .child(item_c("rm-del", Icon::Delete, "Delete", Theme::danger(), Theme::danger()).on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))));
-            items += 3;
-            dividers += 1;
         }
-        let vh = f32::from(window.viewport_size().height);
-        let menu_h = row_menu_height(items, dividers);
-        // From the "…" button: hang 2px below it, or sit 2px above it when
-        // there's no room below. From a right-click: at the pointer.
-        let (origin, corner) = if m.pos.x < px(0.) {
-            let (left, top) = (-m.pos.x, f32::from(m.pos.y));
-            if top + 20. + 2. + menu_h > vh - 8. {
-                (point(left, px(top - 2.)), Corner::BottomLeft)
-            } else {
-                (point(left, px(top + 22.)), Corner::TopLeft)
-            }
-        } else {
-            (m.pos, m.corner)
-        };
         vec![
-            deferred(anchored().anchor(corner).position(origin).snap_to_window_with_margin(px(8.)).child(menu))
+            deferred(anchored().anchor(m.corner).position(m.pos).snap_to_window_with_margin(px(8.)).child(menu))
                 .with_priority(2)
                 .into_any_element(),
         ]

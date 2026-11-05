@@ -11,8 +11,8 @@ use crate::shared_store::SharedStore;
 use crate::theme::{self, Theme, craft};
 use crate::ui::{Icon, TipExt, TipSide, TitleBarExt, ToastKind, icon, ui_text};
 use gpui::{prelude::FluentBuilder, *};
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -223,7 +223,8 @@ pub struct Workspace {
     pub row_menu: Option<RowMenu>,
     pub rename: Option<Rename>,
     /// Last-frame bounds of each row's "…" button, to hang its menu from.
-    pub more_bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
+    /// The sidebar list's own menu, and where it opened.
+    pub files_menu: Option<Point<Pixels>>,
     /// Header "…" menu.
     pub doc_menu: bool,
     pub list_scroll: ScrollHandle,
@@ -333,7 +334,7 @@ impl Workspace {
             status: SaveStatus::Idle,
             row_menu: None,
             rename: None,
-            more_bounds: Default::default(),
+            files_menu: None,
             doc_menu: false,
             list_scroll: ScrollHandle::new(),
             search_scroll: ScrollHandle::new(),
@@ -1066,7 +1067,8 @@ impl Render for Workspace {
         if self.view != View::Paper { self.pdf.close(); }
         self.native_sidebar.sync(if self.sidebar_open { self.sidebar_w(window) } else { 0. }, window);
         let sidebar = if self.sidebar_open { Some(if matches!(self.view, View::Settings | View::Trash) { self.render_settings_sidebar(window, cx) } else { self.render_sidebar(window, cx) }) } else { None };
-        let row_menu = self.render_row_menu(window, cx);
+        let row_menu = self.render_row_menu(cx);
+        let files_menu = self.render_files_menu(cx);
         let resize = self.sidebar_open.then(|| self.render_resize_handle(window, cx));
         let resize_overlay = self.render_resize_overlay(cx);
         let search = self.render_search(window, cx);
@@ -1192,6 +1194,7 @@ impl Render for Workspace {
             .children(resize)
             .children(crate::ui::window_controls(window))
             .children(row_menu)
+            .children(files_menu)
             .children(doc_menu)
             .children(trash_menu)
             .children(confirm)
