@@ -201,12 +201,7 @@ pub struct Rename {
 pub struct Workspace {
     pub settings_page: crate::settings::Page,
     native_sidebar: crate::native_header::NativeSidebar,
-    /// The vault id of the paper the Paper view shows.
-    pub(crate) paper: Option<String>,
-    /// PDFKit could not read `paper`.
-    pub(crate) paper_failed: Rc<Cell<bool>>,
-    pub(crate) pdf: Rc<crate::native_pdf::PdfPane>,
-    pub(crate) paper_panel: crate::paper::PaperPanel,
+    pub(crate) papers: crate::papers::Papers,
     pub store: SharedStore,
     pub entries: Vec<Entry>,
     pub current: Option<String>,
@@ -350,10 +345,7 @@ impl Workspace {
             toast_task: None,
             more_btn_bounds: Rc::new(Cell::new(None)),
             native_sidebar: Default::default(),
-            paper: None,
-            paper_failed: Default::default(),
-            pdf: Default::default(),
-            paper_panel: Default::default(),
+            papers: Default::default(),
             folded: [false; 4],
             backlinks: vec![],
             outline: vec![],
@@ -491,8 +483,8 @@ impl Workspace {
             self.outline_root = paths::is_document(&path).then(|| main.clone());
             if let Some(preview) = &self.preview { preview.update(cx, |p, _| p.set_path(path, main)); }
         }
-        if let Some(path) = self.paper.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.paper = Some(path); }
-        self.paper_panel.path_changed(old, new);
+        if let Some(path) = self.papers.current.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.papers.current = Some(path); }
+        self.papers.panel.path_changed(old, new);
         self.paper_index = std::mem::take(&mut self.paper_index).into_iter().map(|(id, paper)| (paths::moved(&id, old, new).unwrap_or(id), paper)).collect();
         if let Some(batch) = &mut self.batch {
             for id in batch.iter_mut() {
@@ -756,7 +748,7 @@ impl Workspace {
     pub(crate) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.clear_overlay(cx);
         self.view = view;
-        if view != View::Paper { self.pdf.close(); }
+        if view != View::Paper { self.papers.pdf.close(); }
     }
 
     /// A success toast (Deleted successfully, Moved successfully …).
@@ -1036,8 +1028,8 @@ pub(crate) const HEADER_ACTIONS_H: f32 = 32.;
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.view == View::Paper && !self.paper.as_ref().is_some_and(|id| self.entries.iter().any(|e| &e.id == id)) { self.view = View::Sources; }
-        if self.view != View::Paper { self.pdf.close(); }
+        if self.view == View::Paper && !self.papers.current.as_ref().is_some_and(|id| self.entries.iter().any(|e| &e.id == id)) { self.view = View::Sources; }
+        if self.view != View::Paper { self.papers.pdf.close(); }
         self.native_sidebar.sync(if self.sidebar_open { self.sidebar_w(window) } else { 0. }, window);
         let sidebar = if self.sidebar_open { Some(if matches!(self.view, View::Settings | View::Trash) { self.render_settings_sidebar(window, cx) } else { self.render_sidebar(window, cx) }) } else { None };
         let resize = self.sidebar_open.then(|| self.render_resize_handle(window, cx));

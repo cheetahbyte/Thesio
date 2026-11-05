@@ -107,7 +107,7 @@ Adding a source also looks for its paper: arXiv first, then the locations Unpayw
 
 On macOS papers open in `native_pdf.rs`, a PDFKit `PDFView` above the GPUI surface. It hides what GPUI draws beneath it, so the viewer steps aside while a menu or dialog is open. PDFKit was chosen over the `hayro` renderer because it brings text selection and writes standard PDF annotations, which future annotation work can build on. Other platforms open papers in the system app.
 
-Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `paper.rs` and renamed with the key.
+Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `papers/` and renamed with the key.
 
 A document has one of three bibliography modes, read from its text (`bibliography::mode`):
 

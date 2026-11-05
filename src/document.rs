@@ -28,7 +28,7 @@ impl Workspace {
     /// Gives `text` to the editors showing `id`.
     pub(crate) fn show_text(&mut self, id: &str, text: &str, edit: Edit, cx: &mut Context<Self>) {
         let open = self.editor.clone().filter(|_| self.current.as_deref() == Some(id));
-        for editor in open.into_iter().chain(self.paper_panel.notes_editor(id)) {
+        for editor in open.into_iter().chain(self.papers.panel.notes_editor(id)) {
             editor.update(cx, |e, cx| match edit {
                 Edit::Undoable => e.reload(text, cx),
                 Edit::Generated => e.sync_text(text, cx),

@@ -25,7 +25,7 @@ mod native_pdf;
 #[path = "native_pdf_fallback.rs"]
 mod native_pdf;
 mod overlay;
-mod paper;
+mod papers;
 mod preview;
 mod search;
 mod sidebar;

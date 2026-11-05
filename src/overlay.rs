@@ -2,9 +2,11 @@
 //! replaces the last, Esc closes it, and focus goes back where it was.
 
 use crate::app::{AfterSave, Confirm, RowMenu, View, Workspace};
-use crate::citations::{CitePicker, Lookup, TagEditor, TagRename};
+use crate::citations::lookup::Lookup;
+use crate::citations::picker::CitePicker;
+use crate::citations::tags::{TagEditor, TagRename};
 use crate::history::History;
-use crate::paper::QuoteDialog;
+use crate::papers::quote::QuoteDialog;
 use crate::sidebar::ROW_MENU_W;
 use crate::tree::MoveDialog;
 use gpui::*;

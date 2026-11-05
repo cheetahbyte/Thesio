@@ -263,6 +263,12 @@ pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> 
         .child(crate::settings::label(label))
 }
 
+/// A borderless dialog action, beside the buttons but quieter than them.
+pub fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    div().id(id).flex_none().h(px(BUTTON_H)).px(px(4.)).flex().items_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+        .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).child(label)
+}
+
 /// The panel close button: a grey disc with a white cross (measured
 /// #B6B7B8 on #F7F7F7, black at about 26%).
 pub fn close_button(id: &'static str) -> Stateful<Div> {

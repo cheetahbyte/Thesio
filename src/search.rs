@@ -288,7 +288,7 @@ impl Workspace {
             }
             Hit::Source(row) => self.open_entry(Some(row.key), window, cx),
             Hit::Highlight(id, _, highlight) => {
-                self.pdf.go_to_when_open(highlight);
+                self.papers.pdf.go_to_when_open(highlight);
                 self.open_paper(&id, cx);
             }
         }
