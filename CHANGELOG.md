@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Build the Linux apps on Ubuntu 22.04, so they run on glibc 2.35 and later and on any x86-64 CPU. The 0.1.0 builds needed glibc 2.43 and AVX2, and the loader refused them with "CPU ISA level is lower than required".
 - Lay the sidebar out as Finder's: 32-point rows, Home, Library, Sources, Settings and folder glyphs at Finder's size and weight, and the current page's label in bold. The glyphs were about half the size.
