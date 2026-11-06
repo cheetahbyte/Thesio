@@ -149,9 +149,36 @@ jobs:
       #     echo "$WINDOWS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/code-signing.pfx"
       #     echo "WINDOWS_CERTIFICATE_FILE=$RUNNER_TEMP/code-signing.pfx" >> "$GITHUB_ENV"
 
-      - name: Build and upload
+      # Built here, uploaded by the publish job: platforms uploading at the same time
+      # overwrite each other's SHA256SUMS on the release.
+      - name: Build
         env:
           CGO_ENABLED: "1"
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-        run: go tool mygo build -platform "${{ matrix.platform }}" -upload
+        run: go tool mygo build -platform "${{ matrix.platform }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform == 'darwin/universal' && 'darwin' || matrix.platform }}
+          path: build/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          path: builds
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One SHA256SUMS for every platform: the lines of each build's, by file name.
+          cat builds/*/SHA256SUMS | awk '!seen[$2]++' | sort -k2 > SHA256SUMS
+          files=$(find builds -mindepth 3 -type f ! -name SHA256SUMS)
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber $files SHA256SUMS
+          echo "Uploaded to the draft release $GITHUB_REF_NAME; publish it when it looks right:"
+          echo "  gh release edit $GITHUB_REF_NAME --repo $GITHUB_REPOSITORY --draft=false"
