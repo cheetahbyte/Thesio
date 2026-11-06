@@ -29,7 +29,7 @@ Go is held as close to Rust's discipline as it gets; `.golangci.yml` makes the l
 
 ## Checks
 
-Run `scripts/check.sh` before committing: Rust tests and clippy, the library build, `gofmt`, `go vet`, `golangci-lint run`, `go test -race -cover`, `govulncheck`, and the `checkptr` tests of the unsafe packages. Install the tools once with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest golang.org/x/vuln/cmd/govulncheck@latest`. `CGO_ENABLED=1` is required for anything that imports `internal/typst`.
+Run `scripts/check.sh` before committing: Rust tests and clippy, the library build, `gofmt`, `go vet`, `golangci-lint run`, `go test -race -cover`, `govulncheck`, and the `checkptr` tests of the unsafe packages. Install the tools once with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` and `go install golang.org/x/vuln/cmd/govulncheck@latest`. `CGO_ENABLED=1` is required for anything that imports `internal/typst`.
 
 ## User data
 
