@@ -62,11 +62,17 @@ const (
 	eprintTypeName = "arxiv"
 )
 
-func field(label, hint string, slot Slot, biblatex string) Field { return Field{Label: label, Hint: hint, Slot: slot, Biblatex: biblatex} }
-func wrapped(label string, slot Slot, biblatex string) Field { return Field{Label: label, Long: true, Slot: slot, Biblatex: biblatex} }
-func unexported(label, hint string, slot Slot) Field { return Field{Label: label, Hint: hint, Slot: slot} }
+func field(label, hint string, slot Slot, biblatex string) Field {
+	return Field{Label: label, Hint: hint, Slot: slot, Biblatex: biblatex}
+}
+func wrapped(label string, slot Slot, biblatex string) Field {
+	return Field{Label: label, Long: true, Slot: slot, Biblatex: biblatex}
+}
+func unexported(label, hint string, slot Slot) Field {
+	return Field{Label: label, Hint: hint, Slot: slot}
+}
 
-func own(name string) Slot { return Slot{SlotOwn, name} }
+func own(name string) Slot    { return Slot{SlotOwn, name} }
 func serial(kind string) Slot { return Slot{SlotSerial, kind} }
 
 var workIDKinds = []string{"doi", "arxiv", "pmid", "isbn"}
@@ -110,10 +116,10 @@ var (
 	orgSlot      = own("organization")
 )
 
-func container(label string) Field { return wrapped(label, parentTitle, "booktitle") }
-func genre(hint string) Field { return field("Type", hint, genreSlot, "type") }
+func container(label string) Field    { return wrapped(label, parentTitle, "booktitle") }
+func genre(hint string) Field         { return field("Type", hint, genreSlot, "type") }
 func organization(label string) Field { return field(label, "", orgSlot, "organization") }
-func person(label string) Field { return field(label, "", Authors.Slot, "author") }
+func person(label string) Field       { return field(label, "", Authors.Slot, "author") }
 
 // Hayagriva's names for the types this package writes.
 const (
@@ -189,7 +195,10 @@ func AllFields() []Field {
 	seen := map[Slot]bool{}
 	for _, kind := range SourceTypes {
 		for _, f := range kind.Fields {
-			if !seen[f.Slot] { seen[f.Slot] = true; fields = append(fields, f) }
+			if !seen[f.Slot] {
+				seen[f.Slot] = true
+				fields = append(fields, f)
+			}
 		}
 	}
 	return fields
@@ -197,21 +206,29 @@ func AllFields() []Field {
 
 // same compares as Rust's eq_ignore_ascii_case.
 func same(a, b string) bool {
-	if len(a) != len(b) { return false }
+	if len(a) != len(b) {
+		return false
+	}
 	for i := 0; i < len(a); i++ {
-		if lowerASCII(a[i]) != lowerASCII(b[i]) { return false }
+		if lowerASCII(a[i]) != lowerASCII(b[i]) {
+			return false
+		}
 	}
 	return true
 }
 
 func lowerASCII(b byte) byte {
-	if 'A' <= b && b <= 'Z' { return b + 'a' - 'A' }
+	if 'A' <= b && b <= 'Z' {
+		return b + 'a' - 'A'
+	}
 	return b
 }
 
 // arxivID is the arXiv ID an entry states, or that its link holds.
 func arxivID(entry *yaml.Node) string {
-	if stated := read(entry, Arxiv.Slot); stated != "" { return stated }
+	if stated := read(entry, Arxiv.Slot); stated != "" {
+		return stated
+	}
 	return ArxivOfLink(read(entry, URL.Slot))
 }
 
@@ -224,7 +241,9 @@ func isPreprint(entry *yaml.Node) bool {
 // knownAs is the type this table knows a Hayagriva type by.
 func knownAs(kind string) string {
 	for _, t := range typeNames {
-		if same(t[0], kind) { return t[1] }
+		if same(t[0], kind) {
+			return t[1]
+		}
 	}
 	return kind
 }
@@ -234,12 +253,18 @@ func biblatexType(entry *yaml.Node) string {
 	kind := read(entry, Slot{Kind: SlotType})
 	if same(kind, typeArticle) {
 		parent := parentOf(entry)
-		if parent == nil { return "misc" }
-		if same(knownAs(text(get(parent, "type"))), typeProceedings) { return "inproceedings" }
+		if parent == nil {
+			return "misc"
+		}
+		if same(knownAs(text(get(parent, "type"))), typeProceedings) {
+			return "inproceedings"
+		}
 		return "article"
 	}
 	for _, t := range typeNames {
-		if same(t[0], kind) { return t[2] }
+		if same(t[0], kind) {
+			return t[2]
+		}
 	}
 	return "misc"
 }
@@ -248,7 +273,9 @@ func biblatexType(entry *yaml.Node) string {
 func parentOf(entry *yaml.Node) *yaml.Node {
 	parent := get(entry, "parent")
 	if parent != nil && parent.Kind == yaml.SequenceNode {
-		if len(parent.Content) == 0 { return nil }
+		if len(parent.Content) == 0 {
+			return nil
+		}
 		return asMap(parent.Content[0])
 	}
 	return asMap(parent)
@@ -256,7 +283,9 @@ func parentOf(entry *yaml.Node) *yaml.Node {
 
 // ensureParent is the entry's parent, made if it has none.
 func ensureParent(entry *yaml.Node) *yaml.Node {
-	if parentOf(entry) == nil { set(entry, "parent", newMap()) }
+	if parentOf(entry) == nil {
+		set(entry, "parent", newMap())
+	}
 	return parentOf(entry)
 }
 
@@ -267,20 +296,32 @@ func sourceTypeOf(entry *yaml.Node) *SourceType {
 	kind := knownAs(read(entry, Slot{Kind: SlotType}))
 	parent, hasParent := "", false
 	if p := parentOf(entry); p != nil {
-		if t := get(p, "type"); t != nil && t.Kind == yaml.ScalarNode && t.ShortTag() == "!!str" { parent, hasParent = knownAs(t.Value), true }
+		if t := get(p, "type"); t != nil && t.Kind == yaml.ScalarNode && t.ShortTag() == "!!str" {
+			parent, hasParent = knownAs(t.Value), true
+		}
 	}
 	var first *SourceType
 	for _, t := range SourceTypes {
-		if !same(t.entry, kind) { continue }
-		if first == nil { first = t }
+		if !same(t.entry, kind) {
+			continue
+		}
+		if first == nil {
+			first = t
+		}
 		switch {
 		case t.parent != "" && hasParent:
-			if same(t.parent, parent) { return t }
+			if same(t.parent, parent) {
+				return t
+			}
 		case t.parent == "" && !hasParent:
-			if t.genre == "" || isPreprint(entry) { return t }
+			if t.genre == "" || isPreprint(entry) {
+				return t
+			}
 		}
 	}
-	if first != nil { return first }
+	if first != nil {
+		return first
+	}
 	return Other
 }
 
@@ -289,9 +330,13 @@ func (t *SourceType) DropsParent(e Entry) bool { return t.dropsParent(e.node) }
 
 func (t *SourceType) dropsParent(entry *yaml.Node) bool {
 	parent := parentOf(entry)
-	if t.parent != "" || parent == nil { return false }
+	if t.parent != "" || parent == nil {
+		return false
+	}
 	for _, name := range keys(parent) {
-		if name != "type" { return true }
+		if name != "type" {
+			return true
+		}
 	}
 	return false
 }
@@ -302,55 +347,87 @@ func (t *SourceType) Apply(e Entry) { t.apply(e.node) }
 
 func (t *SourceType) apply(entry *yaml.Node) {
 	write(entry, Slot{Kind: SlotType}, t.entry)
-	if read(entry, genreSlot) == preprintGenre { write(entry, genreSlot, "") }
-	if t.genre != "" { write(entry, genreSlot, t.genre) }
-	if t.parent != "" { write(entry, Slot{Kind: SlotParentType}, t.parent) } else { set(entry, "parent", nil) }
+	if read(entry, genreSlot) == preprintGenre {
+		write(entry, genreSlot, "")
+	}
+	if t.genre != "" {
+		write(entry, genreSlot, t.genre)
+	}
+	if t.parent != "" {
+		write(entry, Slot{Kind: SlotParentType}, t.parent)
+	} else {
+		set(entry, "parent", nil)
+	}
 }
 
 // publisherOf is the publisher, which a chapter's import leaves on its book.
 func publisherOf(entry *yaml.Node) *yaml.Node {
-	if p := get(entry, "publisher"); p != nil { return p }
+	if p := get(entry, "publisher"); p != nil {
+		return p
+	}
 	return get(parentOf(entry), "publisher")
 }
 
 func personName(n *yaml.Node) (string, bool) {
 	n = deref(n)
-	if n == nil { return "", false }
+	if n == nil {
+		return "", false
+	}
 	if n.Kind == yaml.MappingNode {
 		name := get(n, "name")
-		if name == nil || name.Kind != yaml.ScalarNode || name.ShortTag() != "!!str" { return "", false }
-		if given := get(n, "given-name"); given != nil && given.Kind == yaml.ScalarNode && given.ShortTag() == "!!str" { return name.Value + ", " + given.Value, true }
+		if name == nil || name.Kind != yaml.ScalarNode || name.ShortTag() != "!!str" {
+			return "", false
+		}
+		if given := get(n, "given-name"); given != nil && given.Kind == yaml.ScalarNode && given.ShortTag() == "!!str" {
+			return name.Value + ", " + given.Value, true
+		}
 		return name.Value, true
 	}
-	if n.Kind == yaml.ScalarNode && n.ShortTag() == "!!str" { return n.Value, true }
+	if n.Kind == yaml.ScalarNode && n.ShortTag() == "!!str" {
+		return n.Value, true
+	}
 	return "", false
 }
 
 // persons are the names in a Persons slot, each "Family, Given".
 func persons(entry *yaml.Node, slot Slot) []string {
-	if slot.Kind != SlotPersons { return nil }
+	if slot.Kind != SlotPersons {
+		return nil
+	}
 	value := get(entry, slot.Name)
-	if value == nil { return nil }
+	if value == nil {
+		return nil
+	}
 	items := []*yaml.Node{value}
-	if value.Kind == yaml.SequenceNode { items = value.Content }
+	if value.Kind == yaml.SequenceNode {
+		items = value.Content
+	}
 	var names []string
 	for _, item := range items {
-		if name, ok := personName(item); ok { names = append(names, name) }
+		if name, ok := personName(item); ok {
+			names = append(names, name)
+		}
 	}
 	return names
 }
 
 func firstSurname(entry *yaml.Node) string {
 	names := persons(entry, Authors.Slot)
-	if len(names) == 0 { return "" }
+	if len(names) == 0 {
+		return ""
+	}
 	words := strings.Fields(strings.SplitN(names[0], ",", 2)[0])
-	if len(words) == 0 { return "" }
+	if len(words) == 0 {
+		return ""
+	}
 	return words[len(words)-1]
 }
 
 func entryYear(entry *yaml.Node) string {
 	date := get(entry, "date")
-	if isNumber(date) { return text(date) }
+	if isNumber(date) {
+		return text(date)
+	}
 	runes := []rune(text(date))
 	return string(runes[:min(4, len(runes))])
 }
@@ -358,20 +435,31 @@ func entryYear(entry *yaml.Node) string {
 // tags are an entry's tags, which only Thesio reads. A hand-written `tags: reading` counts as one.
 func tags(entry *yaml.Node) []string {
 	value := get(entry, "tags")
-	if value == nil { return nil }
+	if value == nil {
+		return nil
+	}
 	items := []*yaml.Node{value}
-	if value.Kind == yaml.SequenceNode { items = value.Content }
+	if value.Kind == yaml.SequenceNode {
+		items = value.Content
+	}
 	var names []string
 	for _, item := range items {
-		if name, ok := scalar(item); ok { names = append(names, name) }
+		if name, ok := scalar(item); ok {
+			names = append(names, name)
+		}
 	}
 	return names
 }
 
 func setTags(entry *yaml.Node, names []string) {
-	if len(names) == 0 { set(entry, "tags", nil); return }
+	if len(names) == 0 {
+		set(entry, "tags", nil)
+		return
+	}
 	items := make([]*yaml.Node, len(names))
-	for i, name := range names { items[i] = newStr(name) }
+	for i, name := range names {
+		items[i] = newStr(name)
+	}
 	set(entry, "tags", newSeq(items))
 }
 
@@ -380,14 +468,20 @@ func setTags(entry *yaml.Node, names []string) {
 // bare arXiv ID as a number.
 func workIDs(entry *yaml.Node) [][2]string {
 	serial := asMap(get(entry, "serial-number"))
-	if serial == nil { return nil }
+	if serial == nil {
+		return nil
+	}
 	var ids [][2]string
 	for i := 0; i+1 < len(serial.Content); i += 2 {
 		k := serial.Content[i]
-		if k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str" { continue }
+		if k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str" {
+			continue
+		}
 		kind := strings.ToLower(k.Value)
 		number, ok := scalar(serial.Content[i+1])
-		if !contains(workIDKinds, kind) || !ok || number == "" { continue }
+		if !contains(workIDKinds, kind) || !ok || number == "" {
+			continue
+		}
 		ids = append(ids, [2]string{kind, strings.ToLower(number)})
 	}
 	return ids
@@ -395,7 +489,9 @@ func workIDs(entry *yaml.Node) [][2]string {
 
 func contains[T comparable](list []T, item T) bool {
 	for _, x := range list {
-		if x == item { return true }
+		if x == item {
+			return true
+		}
 	}
 	return false
 }
@@ -412,12 +508,18 @@ func read(entry *yaml.Node, slot Slot) string {
 	case SlotParent:
 		return text(get(parentOf(entry), slot.Name))
 	case SlotEither:
-		if v := get(entry, slot.Name); v != nil { return text(v) }
+		if v := get(entry, slot.Name); v != nil {
+			return text(v)
+		}
 		return text(get(parentOf(entry), slot.Name))
 	case SlotSerial:
 		value := get(entry, "serial-number")
-		if value != nil && value.Kind == yaml.MappingNode { return text(get(value, slot.Name)) }
-		if slot.Name == plainSerial { return text(value) }
+		if value != nil && value.Kind == yaml.MappingNode {
+			return text(get(value, slot.Name))
+		}
+		if slot.Name == plainSerial {
+			return text(value)
+		}
 		return ""
 	case SlotPersons:
 		return strings.Join(persons(entry, slot), "; ")
@@ -425,14 +527,20 @@ func read(entry *yaml.Node, slot Slot) string {
 		return text(get(entry, "date"))
 	case SlotPublisher:
 		publisher := publisherOf(entry)
-		if publisher != nil && publisher.Kind == yaml.MappingNode { return text(get(publisher, "name")) }
+		if publisher != nil && publisher.Kind == yaml.MappingNode {
+			return text(get(publisher, "name"))
+		}
 		return text(publisher)
 	case SlotPlace:
-		if location := get(publisherOf(entry), "location"); location != nil { return text(location) }
+		if location := get(publisherOf(entry), "location"); location != nil {
+			return text(location)
+		}
 		return text(get(entry, "location"))
 	case SlotURL:
 		url := get(entry, "url")
-		if url != nil && url.Kind == yaml.MappingNode { return text(get(url, "value")) }
+		if url != nil && url.Kind == yaml.MappingNode {
+			return text(get(url, "value"))
+		}
 		return text(url)
 	case SlotAccessed:
 		return text(get(get(entry, "url"), "date"))
@@ -441,7 +549,9 @@ func read(entry *yaml.Node, slot Slot) string {
 }
 
 func valueOf(new string) *yaml.Node {
-	if new = strings.TrimSpace(new); new != "" { return newStr(new) }
+	if new = strings.TrimSpace(new); new != "" {
+		return newStr(new)
+	}
 	return nil
 }
 
@@ -470,7 +580,11 @@ func write(entry *yaml.Node, slot Slot, new string) {
 	case SlotParent:
 		set(ensureParent(entry), slot.Name, valueOf(new))
 	case SlotEither:
-		if parent := parentOf(entry); parent != nil && has(parent, slot.Name) { set(parent, slot.Name, valueOf(new)) } else { set(entry, slot.Name, valueOf(new)) }
+		if parent := parentOf(entry); parent != nil && has(parent, slot.Name) {
+			set(parent, slot.Name, valueOf(new))
+		} else {
+			set(entry, slot.Name, valueOf(new))
+		}
 	case SlotSerial:
 		var serial *yaml.Node
 		switch old := get(entry, "serial-number"); {
@@ -483,26 +597,43 @@ func write(entry *yaml.Node, slot Slot, new string) {
 			serial = newMap()
 		}
 		set(serial, slot.Name, valueOf(new))
-		if len(serial.Content) == 0 { serial = nil }
+		if len(serial.Content) == 0 {
+			serial = nil
+		}
 		set(entry, "serial-number", serial)
 	case SlotPersons:
 		var items []*yaml.Node
 		for _, name := range strings.Split(new, ";") {
-			if v := valueOf(name); v != nil { items = append(items, v) }
+			if v := valueOf(name); v != nil {
+				items = append(items, v)
+			}
 		}
-		if len(items) == 0 { set(entry, slot.Name, nil) } else { set(entry, slot.Name, newSeq(items)) }
+		if len(items) == 0 {
+			set(entry, slot.Name, nil)
+		} else {
+			set(entry, slot.Name, newSeq(items))
+		}
 	case SlotDate:
 		// A bare year is a number in Hayagriva files.
 		value := valueOf(new)
 		if value != nil {
-			if year, err := strconv.ParseInt(value.Value, 10, 64); err == nil { value.Tag, value.Value = "!!int", strconv.FormatInt(year, 10) }
+			if year, err := strconv.ParseInt(value.Value, 10, 64); err == nil {
+				value.Tag, value.Value = "!!int", strconv.FormatInt(year, 10)
+			}
 		}
 		set(entry, "date", value)
 	case SlotPublisher, SlotPlace:
-		if parent := parentOf(entry); !has(entry, "publisher") && parent != nil && has(parent, "publisher") { write(parent, slot, new); return }
+		if parent := parentOf(entry); !has(entry, "publisher") && parent != nil && has(parent, "publisher") {
+			write(parent, slot, new)
+			return
+		}
 		publisher := get(entry, "publisher")
 		if slot.Kind == SlotPublisher {
-			if publisher != nil && publisher.Kind == yaml.MappingNode && valueOf(new) != nil { set(publisher, "name", valueOf(new)) } else { set(entry, "publisher", valueOf(new)) }
+			if publisher != nil && publisher.Kind == yaml.MappingNode && valueOf(new) != nil {
+				set(publisher, "name", valueOf(new))
+			} else {
+				set(entry, "publisher", valueOf(new))
+			}
 			return
 		}
 		switch {

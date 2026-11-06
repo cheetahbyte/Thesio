@@ -2,23 +2,24 @@
 
 A local-first workspace for academic research and writing. See [PRODUCT.md](PRODUCT.md) for the pitch.
 
-Thesio edits plain `.typ` files in a folder you own, with a live preview compiled by [Typst](https://typst.app/). Notes and papers share one vault, so `#include` and citations work across everything. Its window and sidebar started from [quiet.md](https://github.com/s1dashu/quiet-md) commit `937b254` (MIT).
+Thesio edits plain `.typ` files in a folder you own, with a live preview compiled by [Typst](https://typst.app/). Notes and papers share one vault, so `#include` and citations work across everything.
+
+The app is Go with [MyGo](https://mygo.egoist.dev) native UI. Typst, typst-ide and Hayagriva are a Rust static library (`typst/`) behind a C ABI, linked with cgo.
 
 ## Build
 
-Requires macOS 13 or later and Xcode with the Metal Toolchain. `rust-toolchain.toml` pins the Rust version.
+Requires Go 1.27 or later, a Rust toolchain (`typst/rust-toolchain.toml` pins the version), and on macOS the Xcode command line tools for cgo.
 
 ```sh
-xcodebuild -downloadComponent MetalToolchain  # once
-cargo build --release
-scripts/preview.sh                            # bundle and launch dist-preview/Thesio.app
+scripts/build-typst.sh            # the Typst library, once and after changes to typst/
+CGO_ENABLED=1 go run .            # the app on ~/Documents/Thesio
+CGO_ENABLED=1 go tool mygo dev    # with live reload
+CGO_ENABLED=1 go tool mygo build  # Thesio.app and a disk image in build/
 ```
 
-To build and run a debug version, install `just` and run `just start`. To replace `/Applications/Thesio.app` with a release build, run `just install`, which needs `mbx`.
+With [just](https://github.com/casey/just): `just start`, `just bundle`, `just check`.
 
-To build without the Metal Toolchain, compile shaders at startup instead: `cargo build --release --features gpui/runtime_shaders`.
-
-The default vault is `~/Documents/Thesio`. Set `THESIO_HOME` to use another folder.
+The default vault is `~/Documents/Thesio`. Set `THESIO_HOME` to use another folder, as in `THESIO_HOME=$(mktemp -d) go run .`; `testdata/sample-vault` is a small vault to try.
 
 ## Docs
 

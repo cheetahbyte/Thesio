@@ -1,4 +1,5 @@
 /target
+/build
 /dist
 /dist-preview
 .DS_Store

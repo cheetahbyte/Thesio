@@ -51,7 +51,9 @@ func CleanQuote(raw string) string {
 // basePage is the numeric page a label stands for: PDFKit's label, or the
 // position in the file when there is none. False for labels like iv.
 func basePage(label string, index int) (int, bool) {
-	if label == "" { return index + 1, true }
+	if label == "" {
+		return index + 1, true
+	}
 	page, err := strconv.ParseInt(label, 10, 32)
 	return int(page), err == nil
 }
@@ -73,7 +75,9 @@ func PrintedPage(label string, index int, offset int) string {
 func PageOffset(label string, index int, entered string) (int, bool) {
 	want, err := strconv.ParseInt(strings.TrimSpace(entered), 10, 32)
 	page, ok := basePage(label, index)
-	if err != nil || !ok { return 0, false }
+	if err != nil || !ok {
+		return 0, false
+	}
 	return int(want) - page, true
 }
 
@@ -85,9 +89,13 @@ func QuoteMarkup(text, key, page string) (string, bool) {
 	cite := "@" + key
 	if page != "" {
 		unit := "p."
-		if strings.ContainsAny(page, "-–,") { unit = "pp." }
+		if strings.ContainsAny(page, "-–,") {
+			unit = "pp."
+		}
 		cite += "[" + unit + " " + vault.EscapeMarkup(page) + "]"
 	}
-	if len(words) >= blockWords { return "#quote(block: true, attribution: [" + cite + "])[" + body + "]", true }
+	if len(words) >= blockWords {
+		return "#quote(block: true, attribution: [" + cite + "])[" + body + "]", true
+	}
 	return "#quote[" + body + "] " + cite, false
 }

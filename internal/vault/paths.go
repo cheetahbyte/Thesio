@@ -27,10 +27,20 @@ const PDFHeader = "%PDF-"
 func WriteAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	file, err := os.Create(tmp)
-	if err != nil { return err }
-	if _, err := file.Write(data); err != nil { file.Close(); return err }
-	if err := file.Sync(); err != nil { file.Close(); return err }
-	if err := file.Close(); err != nil { return err }
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
 	return os.Rename(tmp, path)
 }
 
@@ -41,18 +51,33 @@ func NaturalCompare(a, b string) int {
 	i, j := 0, 0
 	for {
 		switch {
-		case i == len(x) && j == len(y): return strings.Compare(a, b)
-		case i == len(x): return -1
-		case j == len(y): return 1
+		case i == len(x) && j == len(y):
+			return strings.Compare(a, b)
+		case i == len(x):
+			return -1
+		case j == len(y):
+			return 1
 		}
 		p, q := x[i], y[j]
 		if isDigit(p) && isDigit(q) {
 			m, n := digits(x, &i), digits(y, &j)
-			if len(m) != len(n) { if len(m) < len(n) { return -1 }; return 1 }
-			if order := strings.Compare(m, n); order != 0 { return order }
+			if len(m) != len(n) {
+				if len(m) < len(n) {
+					return -1
+				}
+				return 1
+			}
+			if order := strings.Compare(m, n); order != 0 {
+				return order
+			}
 			continue
 		}
-		if p, q := unicode.ToLower(p), unicode.ToLower(q); p != q { if p < q { return -1 }; return 1 }
+		if p, q := unicode.ToLower(p), unicode.ToLower(q); p != q {
+			if p < q {
+				return -1
+			}
+			return 1
+		}
 		i++
 		j++
 	}
@@ -66,7 +91,9 @@ func isDigit(c rune) bool { return c >= '0' && c <= '9' }
 // digits takes the run of digits at *i, without leading zeros.
 func digits(s []rune, i *int) string {
 	start := *i
-	for *i < len(s) && isDigit(s[*i]) { *i++ }
+	for *i < len(s) && isDigit(s[*i]) {
+		*i++
+	}
 	return strings.TrimLeft(string(s[start:*i]), "0")
 }
 
@@ -75,7 +102,9 @@ func IsPDF(name string) bool { return strings.HasSuffix(name, ".pdf") }
 // ParentOf is the folder holding path, false at the vault root.
 func ParentOf(path string) (string, bool) {
 	i := strings.LastIndexByte(path, '/')
-	if i < 0 { return "", false }
+	if i < 0 {
+		return "", false
+	}
 	return path[:i], true
 }
 
@@ -83,12 +112,16 @@ func BaseName(path string) string { return path[strings.LastIndexByte(path, '/')
 
 // Join puts name in parent; parent "" is the vault root.
 func Join(parent, name string) string {
-	if parent == "" { return name }
+	if parent == "" {
+		return name
+	}
 	return parent + "/" + name
 }
 
 func joinParent(parent string, has bool, name string) string {
-	if !has { return name }
+	if !has {
+		return name
+	}
 	return parent + "/" + name
 }
 
@@ -106,13 +139,17 @@ func IsWithin(path, ancestor string) bool {
 
 // MovedPath is where path ends up when from moves to to, if that moves it.
 func MovedPath(path, from, to string) (string, bool) {
-	if !IsWithin(path, from) { return "", false }
+	if !IsWithin(path, from) {
+		return "", false
+	}
 	return to + path[len(from):], true
 }
 
 func documentStem(name string) (string, bool) {
 	i := strings.LastIndexByte(name, '.')
-	if i < 0 || name[i+1:] != Extension { return "", false }
+	if i < 0 || name[i+1:] != Extension {
+		return "", false
+	}
 	return name[:i], true
 }
 
@@ -120,7 +157,9 @@ func IsDocument(name string) bool { _, ok := documentStem(name); return ok }
 
 // DocumentTitle is a file's title: its name, without the extension if it is a document.
 func DocumentTitle(name string) string {
-	if stem, ok := documentStem(name); ok { return stem }
+	if stem, ok := documentStem(name); ok {
+		return stem
+	}
 	return name
 }
 
@@ -130,7 +169,9 @@ func DocumentName(stem string) string { return stem + "." + Extension }
 // belonging to the stem.
 func splitName(name string) (stem, ext string, ok bool) {
 	i := strings.LastIndexByte(name, '.')
-	if i <= 0 || name == ".." { return name, "", false }
+	if i <= 0 || name == ".." {
+		return name, "", false
+	}
 	return name[:i], name[i+1:], true
 }
 
@@ -157,9 +198,13 @@ func walk(dir, parent string, has bool, visit func(Item)) {
 	for _, item := range items {
 		name := item.Name()
 		info, err := item.Info()
-		if err != nil || strings.HasPrefix(name, ".") { continue }
+		if err != nil || strings.HasPrefix(name, ".") {
+			continue
+		}
 		id, path := joinParent(parent, has, name), filepath.Join(dir, name)
 		visit(Item{ID: id, Name: name, Parent: parent, HasParent: has, Path: path, Info: info})
-		if info.IsDir() { walk(path, id, true, visit) }
+		if info.IsDir() {
+			walk(path, id, true, visit)
+		}
 	}
 }

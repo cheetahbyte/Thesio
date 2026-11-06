@@ -22,18 +22,26 @@ var dateShape = regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2})?)?$`)
 
 func (fakeHayagriva) Check(yamlText string) error {
 	entries, err := parseMapping(yamlText)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	for i := 0; i+1 < len(entries.Content); i += 2 {
 		entry := asMap(entries.Content[i+1])
-		if entry == nil { return fmt.Errorf("%s: an entry must be a mapping", entries.Content[i].Value) }
-		if date := get(entry, "date"); date != nil && !dateShape.MatchString(text(date)) { return fmt.Errorf("%s: invalid date %q", entries.Content[i].Value, text(date)) }
+		if entry == nil {
+			return fmt.Errorf("%s: an entry must be a mapping", entries.Content[i].Value)
+		}
+		if date := get(entry, "date"); date != nil && !dateShape.MatchString(text(date)) {
+			return fmt.Errorf("%s: invalid date %q", entries.Content[i].Value, text(date))
+		}
 	}
 	return nil
 }
 
 func (fakeHayagriva) Entries(text string) ([]ParsedEntry, error) {
 	entries, err := parseMapping(text)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var list []ParsedEntry
 	for i := 0; i+1 < len(entries.Content); i += 2 {
 		entry := asMap(entries.Content[i+1])
@@ -52,7 +60,9 @@ func scanBibtex(text string) []bibRecord {
 	var records []bibRecord
 	for {
 		at := strings.IndexByte(text, '@')
-		if at < 0 { return records }
+		if at < 0 {
+			return records
+		}
 		text = text[at+1:]
 		open := strings.IndexByte(text, '{')
 		comma := strings.IndexByte(text, ',')
@@ -60,7 +70,9 @@ func scanBibtex(text string) []bibRecord {
 		text = text[comma+1:]
 		for {
 			text = strings.TrimLeft(text, " \t\r\n,")
-			if text == "" || text[0] == '}' { break }
+			if text == "" || text[0] == '}' {
+				break
+			}
 			eq := strings.IndexByte(text, '=')
 			name := strings.ToLower(strings.TrimSpace(text[:eq]))
 			text = strings.TrimLeft(text[eq+1:], " \t\r\n")
@@ -69,8 +81,18 @@ func scanBibtex(text string) []bibRecord {
 			case '{':
 				depth, i := 0, 0
 				for ; i < len(text); i++ {
-					if text[i] == '\\' { i++; continue }
-					if text[i] == '{' { depth++ } else if text[i] == '}' { depth--; if depth == 0 { break } }
+					if text[i] == '\\' {
+						i++
+						continue
+					}
+					if text[i] == '{' {
+						depth++
+					} else if text[i] == '}' {
+						depth--
+						if depth == 0 {
+							break
+						}
+					}
 				}
 				value, text = text[1:i], text[i+1:]
 			case '"':
@@ -94,7 +116,9 @@ func personNode(name string) *yaml.Node {
 	}
 	person := newMap()
 	set(person, "name", newStr(strings.TrimSpace(family)))
-	if given = strings.TrimSpace(given); given != "" { set(person, "given-name", newStr(given)) }
+	if given = strings.TrimSpace(given); given != "" {
+		set(person, "given-name", newStr(given))
+	}
 	return person
 }
 
@@ -111,16 +135,24 @@ func (fakeHayagriva) ImportBiblatex(bibtex string) (BiblatexImport, error) {
 	for _, r := range scanBibtex(bibtex) {
 		f := r.fields
 		kinds, ok := bibTypes[r.kind]
-		if !ok { kinds = [2]string{typeMisc, ""} }
+		if !ok {
+			kinds = [2]string{typeMisc, ""}
+		}
 		journal := f["journaltitle"] + f["journal"]
-		if r.kind == "article" && journal != "" { kinds[1] = typePeriodical }
+		if r.kind == "article" && journal != "" {
+			kinds[1] = typePeriodical
+		}
 		entry := newMap()
 		write(entry, Slot{Kind: SlotType}, kinds[0])
 		write(entry, Title.Slot, f["title"])
 		for _, role := range []string{"author", "editor"} {
-			if f[role] == "" { continue }
+			if f[role] == "" {
+				continue
+			}
 			var people []*yaml.Node
-			for _, name := range strings.Split(f[role], " and ") { people = append(people, personNode(name)) }
+			for _, name := range strings.Split(f[role], " and ") {
+				people = append(people, personNode(name))
+			}
 			set(entry, role, newSeq(people))
 		}
 		write(entry, Date.Slot, f["date"]+f["year"])
@@ -130,11 +162,23 @@ func (fakeHayagriva) ImportBiblatex(bibtex string) (BiblatexImport, error) {
 			write(entry, parentTitle, journal+f["booktitle"])
 			parent = parentOf(entry)
 		}
-		on := func(target *yaml.Node, name, value string) { if value != "" { set(target, name, newStr(value)) } }
+		on := func(target *yaml.Node, name, value string) {
+			if value != "" {
+				set(target, name, newStr(value))
+			}
+		}
 		periodical := kinds[1] == typePeriodical
-		if periodical { on(parent, "volume", f["volume"]); on(parent, "issue", f["number"]) } else { on(entry, "volume", f["volume"]); write(entry, number.Slot, f["number"]) }
+		if periodical {
+			on(parent, "volume", f["volume"])
+			on(parent, "issue", f["number"])
+		} else {
+			on(entry, "volume", f["volume"])
+			write(entry, number.Slot, f["number"])
+		}
 		publisher := entry
-		if r.kind == "inbook" || r.kind == "incollection" { publisher = parent }
+		if r.kind == "inbook" || r.kind == "incollection" {
+			publisher = parent
+		}
 		if f["publisher"] != "" && f["address"] != "" {
 			m := newMap()
 			on(m, "name", f["publisher"])
@@ -151,7 +195,9 @@ func (fakeHayagriva) ImportBiblatex(bibtex string) (BiblatexImport, error) {
 		on(entry, "organization", f["school"]+f["institution"]+f["organization"])
 		on(entry, "note", f["note"])
 		on(entry, "abstract", f["abstract"])
-		for _, id := range [][2]string{{"doi", "doi"}, {"isbn", "isbn"}, {"issn", "issn"}, {"eprint", "arxiv"}, {"version", "version"}} { write(entry, serial(id[1]), f[id[0]]) }
+		for _, id := range [][2]string{{"doi", "doi"}, {"isbn", "isbn"}, {"issn", "issn"}, {"eprint", "arxiv"}, {"version", "version"}} {
+			write(entry, serial(id[1]), f[id[0]])
+		}
 		write(entry, URL.Slot, f["url"])
 		write(entry, Accessed.Slot, f["urldate"])
 		set(entries, r.key, entry)
@@ -169,13 +215,17 @@ func TestMain(m *testing.M) {
 
 func library(t *testing.T) *Library {
 	l, err := Load(t.TempDir())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return l
 }
 
 func must(t *testing.T, err error) {
 	t.Helper()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func importing(t *testing.T, l *Library, text string) (int, int) {
@@ -186,14 +236,18 @@ func importing(t *testing.T, l *Library, text string) (int, int) {
 }
 
 func tagsOf(t *testing.T, l *Library, key string) []string {
-	if row, ok := rowOf(l, key); ok { return row.Tags }
+	if row, ok := rowOf(l, key); ok {
+		return row.Tags
+	}
 	t.Fatalf("no row %s", key)
 	return nil
 }
 
 func rowOf(l *Library, key string) (Row, bool) {
 	for _, row := range l.Rows() {
-		if row.Key == key { return row, true }
+		if row.Key == key {
+			return row, true
+		}
 	}
 	return Row{}, false
 }
@@ -212,36 +266,52 @@ const zoteroExport = `
 
 func zotero(t *testing.T) *Library {
 	l := library(t)
-	if added, skipped := importing(t, l, zoteroExport); added != 7 || skipped != 0 { t.Fatalf("imported %d, skipped %d", added, skipped) }
+	if added, skipped := importing(t, l, zoteroExport); added != 7 || skipped != 0 {
+		t.Fatalf("imported %d, skipped %d", added, skipped)
+	}
 	return l
 }
 
 func kinds(l *Library) [][2]string {
 	var list [][2]string
-	for _, row := range l.Rows() { list = append(list, [2]string{row.Key, row.Kind}) }
+	for _, row := range l.Rows() {
+		list = append(list, [2]string{row.Key, row.Kind})
+	}
 	sort.Slice(list, func(i, j int) bool { return list[i][0] < list[j][0] })
 	return list
 }
 
 func TestAZoteroExportKeepsItsTypes(t *testing.T) {
 	want := [][2]string{{"arx2021", "Preprint"}, {"chap2020", "Book Section"}, {"knuth1984", "Book"}, {"parry2022", "Journal Article"}, {"phd2020", "Thesis"}, {"sw2022", "Software, Data"}, {"web2024", "Web Page"}}
-	if got := kinds(zotero(t)); !reflect.DeepEqual(got, want) { t.Fatal(got) }
+	if got := kinds(zotero(t)); !reflect.DeepEqual(got, want) {
+		t.Fatal(got)
+	}
 }
 
 func TestKeywordsBecomeTags(t *testing.T) {
 	var names []string
-	for _, tag := range zotero(t).Tags() { names = append(names, tag.Name) }
-	if !reflect.DeepEqual(names, []string{"flaky tests", "testing"}) { t.Fatal(names) }
+	for _, tag := range zotero(t).Tags() {
+		names = append(names, tag.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"flaky tests", "testing"}) {
+		t.Fatal(names)
+	}
 }
 
 func TestImportReadsWhatHayagrivaDropsAndWhatItFilesOnTheParent(t *testing.T) {
 	l := zotero(t)
-	if got := l.FieldText("parry2022", Language); got != "en" { t.Fatal(got) }
-	if got := l.FieldText("chap2020", Publisher); got != "Pub" { t.Fatal(got) }
+	if got := l.FieldText("parry2022", Language); got != "en" {
+		t.Fatal(got)
+	}
+	if got := l.FieldText("chap2020", Publisher); got != "Pub" {
+		t.Fatal(got)
+	}
 }
 
 func TestImportingTheSameFileAgainAddsNothing(t *testing.T) {
-	if added, skipped := importing(t, zotero(t), zoteroExport); added != 0 || skipped != 7 { t.Fatal(added, skipped) }
+	if added, skipped := importing(t, zotero(t), zoteroExport); added != 0 || skipped != 7 {
+		t.Fatal(added, skipped)
+	}
 }
 
 func tagged(t *testing.T) *Library {
@@ -253,53 +323,79 @@ func tagged(t *testing.T) *Library {
 func TestARenamedTagChangesOnEveryEntry(t *testing.T) {
 	l := tagged(t)
 	must(t, l.RenameTag("old", "fresh"))
-	if got := tagsOf(t, l, "a"); !reflect.DeepEqual(got, []string{"fresh", "keep"}) { t.Fatal(got) }
+	if got := tagsOf(t, l, "a"); !reflect.DeepEqual(got, []string{"fresh", "keep"}) {
+		t.Fatal(got)
+	}
 }
 
 func TestARenamedTagMergesIntoOneInUse(t *testing.T) {
 	l := tagged(t)
 	must(t, l.RenameTag("old", "MERGED"))
-	if got := l.Tags(); !reflect.DeepEqual(got, []TagCount{{"keep", 1}, {"merged", 3}}) { t.Fatal(got) }
-	if got := tagsOf(t, l, "b"); !reflect.DeepEqual(got, []string{"merged"}) { t.Fatal(got) }
+	if got := l.Tags(); !reflect.DeepEqual(got, []TagCount{{"keep", 1}, {"merged", 3}}) {
+		t.Fatal(got)
+	}
+	if got := tagsOf(t, l, "b"); !reflect.DeepEqual(got, []string{"merged"}) {
+		t.Fatal(got)
+	}
 }
 
 func TestADeletedTagLeavesNoEmptyListBehind(t *testing.T) {
 	l := library(t)
 	importing(t, l, "@book{a, title = {A}, keywords = {only}}")
 	must(t, l.DeleteTag("only"))
-	if len(l.Tags()) != 0 || strings.Contains(l.Text(), "tags") { t.Fatal(l.Text()) }
+	if len(l.Tags()) != 0 || strings.Contains(l.Text(), "tags") {
+		t.Fatal(l.Text())
+	}
 }
 
 func TestChoosingPreprintSticksAndChoosingAgainLeavesNoTrace(t *testing.T) {
 	l := library(t)
 	importing(t, l, "@article{a, title = {A}}")
 	must(t, l.SetSourceType("a", Preprint))
-	if kind, _ := l.SourceType("a"); kind.Label != "Preprint" { t.Fatal(kind.Label) }
+	if kind, _ := l.SourceType("a"); kind.Label != "Preprint" {
+		t.Fatal(kind.Label)
+	}
 	must(t, l.SetSourceType("a", JournalArticle))
-	if kind, _ := l.SourceType("a"); kind.Label != "Journal Article" { t.Fatal(kind.Label) }
-	if strings.Contains(l.Text(), "genre") { t.Fatal(l.Text()) }
+	if kind, _ := l.SourceType("a"); kind.Label != "Journal Article" {
+		t.Fatal(kind.Label)
+	}
+	if strings.Contains(l.Text(), "genre") {
+		t.Fatal(l.Text())
+	}
 }
 
 func TestADeletedEntryCanComeBackFromAVersion(t *testing.T) {
 	l := zotero(t)
 	before := l.Text()
 	must(t, l.DeleteEntries([]string{"knuth1984"}))
-	if l.Contains("knuth1984") { t.Fatal("still there") }
+	if l.Contains("knuth1984") {
+		t.Fatal("still there")
+	}
 	versions := l.Versions().List()
-	if kept, err := l.Versions().Read(versions[0]); err != nil || kept != before { t.Fatal(kept, err) }
+	if kept, err := l.Versions().Read(versions[0]); err != nil || kept != before {
+		t.Fatal(kept, err)
+	}
 	must(t, l.Restore(before))
-	if !l.Contains("knuth1984") { t.Fatal("not restored") }
+	if !l.Contains("knuth1984") {
+		t.Fatal("not restored")
+	}
 }
 
 func TestAVersionThatDoesNotParseChangesNothing(t *testing.T) {
 	l := zotero(t)
 	before := l.Text()
-	if l.Restore("not: [valid") == nil { t.Fatal("restored") }
-	if l.Text() != before { t.Fatal(l.Text()) }
+	if l.Restore("not: [valid") == nil {
+		t.Fatal("restored")
+	}
+	if l.Text() != before {
+		t.Fatal(l.Text())
+	}
 }
 
 func TestANewKeyForAKnownDOIIsADuplicate(t *testing.T) {
-	if added, skipped := importing(t, zotero(t), "@article{other, title = {Flaky}, doi = {10.1145/3476105}}"); added != 0 || skipped != 1 { t.Fatal(added, skipped) }
+	if added, skipped := importing(t, zotero(t), "@article{other, title = {Flaky}, doi = {10.1145/3476105}}"); added != 0 || skipped != 1 {
+		t.Fatal(added, skipped)
+	}
 }
 
 func entryOf(t *testing.T, text string) Entry {
@@ -311,17 +407,25 @@ func entryOf(t *testing.T, text string) Entry {
 func TestANumericArxivIDIsADuplicate(t *testing.T) {
 	l := library(t)
 	first, err := l.AddFetched(entryOf(t, "type: Article\ntitle: A\nserial-number:\n  arxiv: 2112.12331\n"))
-	if err != nil || first != (Added{Key: "entry"}) { t.Fatal(first, err) }
+	if err != nil || first != (Added{Key: "entry"}) {
+		t.Fatal(first, err)
+	}
 	second, err := l.AddFetched(entryOf(t, "type: Article\ntitle: B\nserial-number:\n  arxiv: 2112.12331\n"))
-	if err != nil || second != (Added{Key: "entry", Duplicate: true}) { t.Fatal(second, err) }
+	if err != nil || second != (Added{Key: "entry", Duplicate: true}) {
+		t.Fatal(second, err)
+	}
 }
 
 func TestNumbersManyWorksShareDoNotMakeADuplicate(t *testing.T) {
 	l := library(t)
-	entry := func(doi string) Entry { return entryOf(t, "type: Article\ntitle: T\nserial-number:\n  doi: "+doi+"\n  issn: 1049-331X\n  version: 1\n") }
+	entry := func(doi string) Entry {
+		return entryOf(t, "type: Article\ntitle: T\nserial-number:\n  doi: "+doi+"\n  issn: 1049-331X\n  version: 1\n")
+	}
 	_, err := l.AddFetched(entry("10.1/a"))
 	must(t, err)
-	if added, err := l.AddFetched(entry("10.1/b")); err != nil || added.Duplicate { t.Fatal(added, err) }
+	if added, err := l.AddFetched(entry("10.1/b")); err != nil || added.Duplicate {
+		t.Fatal(added, err)
+	}
 }
 
 func TestALibraryThatCannotBeReadBackIsNotReplaced(t *testing.T) {
@@ -331,8 +435,12 @@ func TestALibraryThatCannotBeReadBackIsNotReplaced(t *testing.T) {
 	importing(t, l, "@book{a, title = {A}}")
 	unreadable := []byte{0xff, 0xfe, 'a'}
 	must(t, os.WriteFile(filepath.Join(root, vault.LibraryFile), unreadable, 0o644))
-	if l.DeleteEntries([]string{"a"}) == nil { t.Fatal("replaced") }
-	if data, _ := os.ReadFile(filepath.Join(root, vault.LibraryFile)); string(data) != string(unreadable) { t.Fatal(data) }
+	if l.DeleteEntries([]string{"a"}) == nil {
+		t.Fatal("replaced")
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, vault.LibraryFile)); string(data) != string(unreadable) {
+		t.Fatal(data)
+	}
 }
 
 func TestARefusedEditGivesItsReasonApartFromThePath(t *testing.T) {
@@ -340,20 +448,32 @@ func TestARefusedEditGivesItsReasonApartFromThePath(t *testing.T) {
 	importing(t, l, "@book{a, title = {A}}")
 	_, err := l.SaveFields("a", "a", []FieldValue{{Date, "not a date"}})
 	var invalid *InvalidLibrary
-	if !errors.As(err, &invalid) { t.Fatal(err) }
-	if invalid.Reason == "" || strings.Contains(invalid.Reason, vault.LibraryFile) { t.Fatal(invalid.Reason) }
+	if !errors.As(err, &invalid) {
+		t.Fatal(err)
+	}
+	if invalid.Reason == "" || strings.Contains(invalid.Reason, vault.LibraryFile) {
+		t.Fatal(invalid.Reason)
+	}
 }
 
 func TestExportThenImportLosesNothingItCanHold(t *testing.T) {
 	first, second := zotero(t), library(t)
-	if added, skipped := importing(t, second, first.ExportBiblatex()); added != 7 || skipped != 0 { t.Fatal(added, skipped) }
-	if !reflect.DeepEqual(kinds(second), kinds(first)) { t.Fatal(kinds(second)) }
+	if added, skipped := importing(t, second, first.ExportBiblatex()); added != 7 || skipped != 0 {
+		t.Fatal(added, skipped)
+	}
+	if !reflect.DeepEqual(kinds(second), kinds(first)) {
+		t.Fatal(kinds(second))
+	}
 	for _, row := range first.Rows() {
 		kind, _ := first.SourceType(row.Key)
 		for _, f := range kind.Fields {
-			if a, b := second.FieldText(row.Key, f), first.FieldText(row.Key, f); a != b { t.Errorf("%s: %s: %q, want %q", row.Key, f.Label, a, b) }
+			if a, b := second.FieldText(row.Key, f), first.FieldText(row.Key, f); a != b {
+				t.Errorf("%s: %s: %q, want %q", row.Key, f.Label, a, b)
+			}
 		}
-		if a, b := tagsOf(t, second, row.Key), tagsOf(t, first, row.Key); !reflect.DeepEqual(a, b) { t.Errorf("%s: tags %v, want %v", row.Key, a, b) }
+		if a, b := tagsOf(t, second, row.Key), tagsOf(t, first, row.Key); !reflect.DeepEqual(a, b) {
+			t.Errorf("%s: tags %v, want %v", row.Key, a, b)
+		}
 	}
 }
 
@@ -363,6 +483,10 @@ func TestEditingAnEntryKeepsKeyOrderAndUnknownFields(t *testing.T) {
 	l, err := Load(root)
 	must(t, err)
 	changed, err := l.SaveFields("b", "b", []FieldValue{{Title, "New"}})
-	if err != nil || !changed { t.Fatal(changed, err) }
-	if want := "b:\n  type: Book\n  title: New\n  custom: kept # a note\na:\n  type: Book\n  title: A\n"; l.Text() != want { t.Fatalf("%q", l.Text()) }
+	if err != nil || !changed {
+		t.Fatal(changed, err)
+	}
+	if want := "b:\n  type: Book\n  title: New\n  custom: kept # a note\na:\n  type: Book\n  title: A\n"; l.Text() != want {
+		t.Fatalf("%q", l.Text())
+	}
 }

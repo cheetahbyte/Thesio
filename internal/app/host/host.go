@@ -10,6 +10,7 @@ import (
 	"github.com/cheetahbyte/thesio/internal/project"
 	"github.com/cheetahbyte/thesio/internal/vault"
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 )
 
 // View is what the main pane shows.
@@ -76,6 +77,9 @@ type Host interface {
 	GoToSource(path string, offset int)
 	// FollowLink opens a linked file, or says that it is gone.
 	FollowLink(path string)
+	// Bar is a page's top bar, content in a row: it drags the window, keeps
+	// clear of the traffic lights and shows the sidebar toggle when the sidebar is closed.
+	Bar(c *ui.Context, content func())
 
 	// The open document ("" when none) and what documents hold now: the open
 	// editor's copy, or the file.

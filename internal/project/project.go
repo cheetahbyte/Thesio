@@ -47,7 +47,9 @@ var DefinesLabel func(text, key string) bool
 // project would.
 func Candidates(main, file string) []string {
 	var out []string
-	for dir, ok := vault.ParentOf(main); ok; dir, ok = vault.ParentOf(dir) { out = append(out, dir+"/"+file) }
+	for dir, ok := vault.ParentOf(main); ok; dir, ok = vault.ParentOf(dir) {
+		out = append(out, dir+"/"+file)
+	}
 	return append(out, file)
 }
 
@@ -71,7 +73,9 @@ func parse(path, text string) *file {
 	f := &file{path: path, text: text}
 	dir := vault.DirParts(path)
 	for _, in := range parsed.Includes {
-		if target, ok := vault.ResolveLiteral(dir, in.Literal); ok { f.includes = append(f.includes, include{in.Offset, target}) }
+		if target, ok := vault.ResolveLiteral(dir, in.Literal); ok {
+			f.includes = append(f.includes, include{in.Offset, target})
+		}
 	}
 	for _, h := range parsed.Headings {
 		h.Path = path
@@ -102,16 +106,27 @@ func Within(main, start string, read Read) *Project {
 	for len(pending) > 0 {
 		wanted := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		if _, ok := p.found[wanted]; ok { continue }
+		if _, ok := p.found[wanted]; ok {
+			continue
+		}
 		path, text, ok := "", "", false
 		for _, candidate := range Candidates(main, wanted) {
-			if text, ok = read(candidate); ok { path = candidate; break }
+			if text, ok = read(candidate); ok {
+				path = candidate
+				break
+			}
 		}
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		p.found[wanted] = path
-		if p.Contains(path) { continue }
+		if p.Contains(path) {
+			continue
+		}
 		f := parse(path, text)
-		for _, in := range f.includes { pending = append(pending, in.path) }
+		for _, in := range f.includes {
+			pending = append(pending, in.path)
+		}
 		p.files = append(p.files, f)
 	}
 	p.start, p.hasStart = p.found[start]
@@ -119,7 +134,11 @@ func Within(main, start string, read Read) *Project {
 }
 
 func (p *Project) file(path string) *file {
-	for _, f := range p.files { if f.path == path { return f } }
+	for _, f := range p.files {
+		if f.path == path {
+			return f
+		}
+	}
 	return nil
 }
 
@@ -127,7 +146,9 @@ func (p *Project) Contains(path string) bool { return p.file(path) != nil }
 
 func (p *Project) Files() []FileText {
 	out := make([]FileText, len(p.files))
-	for i, f := range p.files { out[i] = FileText{f.path, f.text} }
+	for i, f := range p.files {
+		out[i] = FileText{f.path, f.text}
+	}
 	return out
 }
 
@@ -135,17 +156,23 @@ func (p *Project) Files() []FileText {
 // includes itself is followed once.
 func (p *Project) Outline() []Heading {
 	var out []Heading
-	if p.hasStart { p.readHeadings(p.start, nil, &out) }
+	if p.hasStart {
+		p.readHeadings(p.start, nil, &out)
+	}
 	return out
 }
 
 func (p *Project) readHeadings(path string, open []string, out *[]Heading) {
 	f := p.file(path)
-	if f == nil || slices.Contains(open, path) { return }
+	if f == nil || slices.Contains(open, path) {
+		return
+	}
 	open = append(open, path)
 	var includes []include
 	for _, in := range f.includes {
-		if found, ok := p.found[in.path]; ok { includes = append(includes, include{in.offset, found}) }
+		if found, ok := p.found[in.path]; ok {
+			includes = append(includes, include{in.offset, found})
+		}
 	}
 	for _, h := range f.headings {
 		for len(includes) > 0 && includes[0].offset < h.Offset {
@@ -154,7 +181,9 @@ func (p *Project) readHeadings(path string, open []string, out *[]Heading) {
 		}
 		*out = append(*out, h)
 	}
-	for _, in := range includes { p.readHeadings(in.path, open, out) }
+	for _, in := range includes {
+		p.readHeadings(in.path, open, out)
+	}
 }
 
 type document struct {
@@ -173,11 +202,16 @@ func LoadDocuments(ids []string, read Read) *Documents {
 	known := map[string]result{}
 	cached := func(path string) (string, bool) {
 		r, seen := known[path]
-		if !seen { r.text, r.ok = read(path); known[path] = r }
+		if !seen {
+			r.text, r.ok = read(path)
+			known[path] = r
+		}
 		return r.text, r.ok
 	}
 	d := &Documents{}
-	for _, id := range ids { d.projects = append(d.projects, document{id, Open(id, cached)}) }
+	for _, id := range ids {
+		d.projects = append(d.projects, document{id, Open(id, cached)})
+	}
 	return d
 }
 
@@ -185,7 +219,9 @@ func LoadDocuments(ids []string, read Read) *Documents {
 func (d *Documents) Includers(id string) []string {
 	var out []string
 	for _, doc := range d.projects {
-		if doc.id != id && doc.project.Contains(id) { out = append(out, doc.id) }
+		if doc.id != id && doc.project.Contains(id) {
+			out = append(out, doc.id)
+		}
 	}
 	return out
 }
@@ -194,7 +230,9 @@ func (d *Documents) Includers(id string) []string {
 // it and that nothing includes, or id itself.
 func (d *Documents) TopDocument(id string) string {
 	for _, top := range d.Includers(id) {
-		if len(d.Includers(top)) == 0 { return top }
+		if len(d.Includers(top)) == 0 {
+			return top
+		}
 	}
 	return id
 }
@@ -203,9 +241,13 @@ func (d *Documents) TopDocument(id string) string {
 // that `@key` there means the label. A label a script makes is not seen.
 func (d *Documents) HasLabel(id, key string) bool {
 	for _, doc := range d.projects {
-		if !doc.project.Contains(id) { continue }
+		if !doc.project.Contains(id) {
+			continue
+		}
 		for _, f := range doc.project.files {
-			if DefinesLabel(f.text, key) { return true }
+			if DefinesLabel(f.text, key) {
+				return true
+			}
 		}
 	}
 	return false
@@ -216,9 +258,13 @@ func (d *Documents) HasLabel(id, key string) bool {
 func Newest(ids []string, modified []int64) (string, bool) {
 	best := -1
 	for i := range ids {
-		if best < 0 || modified[i] > modified[best] { best = i }
+		if best < 0 || modified[i] > modified[best] {
+			best = i
+		}
 	}
-	if best < 0 { return "", false }
+	if best < 0 {
+		return "", false
+	}
 	return ids[best], true
 }
 
@@ -236,16 +282,26 @@ func Launch(root string) (LaunchTarget, bool) {
 	}
 	var docs []doc
 	vault.Walk(root, func(item vault.Item) {
-		if !item.IsDocument() { return }
-		if data, err := os.ReadFile(item.Path); err == nil && utf8.Valid(data) { docs = append(docs, doc{item.ID, item.Modified(), string(data)}) }
+		if !item.IsDocument() {
+			return
+		}
+		if data, err := os.ReadFile(item.Path); err == nil && utf8.Valid(data) {
+			docs = append(docs, doc{item.ID, item.Modified(), string(data)})
+		}
 	})
 	ids, modified := make([]string, len(docs)), make([]int64, len(docs))
-	for i, d := range docs { ids[i], modified[i] = d.id, d.modified }
+	for i, d := range docs {
+		ids[i], modified[i] = d.id, d.modified
+	}
 	document, ok := Newest(ids, modified)
-	if !ok { return LaunchTarget{}, false }
+	if !ok {
+		return LaunchTarget{}, false
+	}
 	slices.SortStableFunc(docs, func(a, b doc) int { return cmp.Compare(b.modified, a.modified) })
 	texts := map[string]string{}
-	for i, d := range docs { ids[i], texts[d.id] = d.id, d.text }
+	for i, d := range docs {
+		ids[i], texts[d.id] = d.id, d.text
+	}
 	read := func(path string) (string, bool) { text, ok := texts[path]; return text, ok }
 	main := LoadDocuments(ids, read).TopDocument(document)
 	return LaunchTarget{Document: document, Main: main, Text: texts[document]}, true

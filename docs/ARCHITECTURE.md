@@ -349,9 +349,14 @@ Long work (compiles, downloads, lookups) runs on goroutines and reaches the stat
 Feature packages never import `internal/app`. They reach the workspace through
 `internal/app/host.Host` (see `host.go`, which is the contract), and the workspace
 implements it. Shared looks live in `internal/app/theme`: the icon set (`theme.Icons.*`,
-Lucide SVGs embedded from `assets/icons/`), the monospace font name (`theme.Mono`), and
-the few tokens MyGo's theme lacks (`theme.Caption(t)`, `theme.Danger(t)`, `theme.Hairline(t)`,
-`theme.Selected(t)`); everything else is `c.Theme()`.
+drawn with `theme.Glyph` as SF Symbols on macOS and the Lucide SVGs in `icons/`
+elsewhere), the monospace font name (`theme.Mono`), the few tokens MyGo's theme lacks
+(`theme.Caption(t)`, `theme.Danger(t)`, `theme.Hairline(t)`, `theme.Hover(t)`,
+`theme.Selected(t)`, `theme.Ring(t)`), and the chrome every page shares: `theme.BarHeight`,
+`theme.Title`, `theme.IconButton`, `theme.AddButton`, `theme.EmptyState`, and
+`theme.Dialog` for modals. A page's top bar is `host.Host.Bar`, which keeps clear of the
+traffic lights; the sidebar sits on the window's sidebar material, the main pane on
+`t.Background`. Everything else is `c.Theme()`.
 
 ### internal/app/document
 
@@ -401,7 +406,7 @@ func New(h host.Host) *State
 func (s *State) LibraryView(c *ui.Context)      // the whole Library page: header, tag chips, table, inspector
 func (s *State) Overlays(c *ui.Context)         // its dialogs and popovers, built every frame
 func (s *State) DocMenuItems(m *ui.Menu)        // Citation Style…, Insert citation, Show/Hide bibliography data, Embed/Link/Remove bibliography
-func (s *State) OpenPicker(); OpenLookup(); OpenEntry(key string); OpenNewEntry(); OpenSourcePicker(purpose PickFor)
+func (s *State) OpenPicker(); OpenLookup(); OpenEntry(key string); OpenNewEntry(); OpenSourcePicker(opts host.PickSourceOptions)
 func (s *State) TableChanged()
 func (s *State) CloseInspector(); SaveInspector()
 func (s *State) VisibleRows(query string) []library.Row  // by title ascending
@@ -411,7 +416,7 @@ func (s *State) SyncBibliographies(); EnsureBibliography(id string); RenameCitat
 func (s *State) BibliographyMode(id string) typst.BibMode; SetBibliography(mode typst.BibMode); SetStyle(style string)
 func (s *State) LibraryRestored(text string)
 func (s *State) OpenLibraryHistory()
-type PickFor struct{ Cite bool; Attach string; Link string }  // one of
+// Hooks the shell sets: ToggleBlock func(), BlockShown func() bool, OpenHistory func().
 ```
 
 ### internal/app/papers
@@ -453,5 +458,17 @@ through `Workspace.PathChanged`.
 
 ## Limits
 
-See the previous architecture's limits list in git history; those that still hold are
-noted in each package's doc comment.
+- The paper viewer is WKWebView's PDF viewer: its selection cannot be read, so
+  Highlight Selection takes the text the user copied, and a highlight is the first
+  occurrence of that text on the page it was found on.
+- One window per app for now; "Open in new window" is gone.
+- MyGo draws no frames for a window that is hidden or fully covered; results of
+  compiles arrive once it shows again.
+- Pages of files other than the open one render at half scale and are not blurred.
+- Only macOS is built and tested. Linux and Windows need the Rust library built
+  for them and `internal/pdfkit`'s stub leaves highlights out there.
+- Everything in the previous Rust app's limits list that concerns Typst still holds:
+  fonts are the set bundled with Typst, `@preview` names are not offered in `#import`,
+  paths built at run time are not updated by a move, two windows on one file are not
+  kept in sync, and changes other programs make to the open file are overwritten by the
+  next save.
