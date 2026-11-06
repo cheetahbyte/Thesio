@@ -1,139 +1,214 @@
 # Architecture
 
-Thesio is a single-process GPUI application written in Rust, with approximately 40,000 lines of code. In memory, a document is a block tree (`model.rs`). On disk, it is a DocxXML file (`docxml.rs`). The editor renders the tree as a virtualized list.
+Thesio is a single-process GPUI application in Rust. It edits plain `.typ` files in a vault and shows a live preview compiled by Typst.
 
 The repository is a Cargo workspace with two crates:
 
-- **`crates/core` (`thesio_core`, approximately 10,000 lines):** The document engine. It contains the model, DocxXML, editing core and undo, disk library, Markdown and HTML import, and Markdown export. It does not depend on GPUI and can be built and tested independently with `cargo test -p thesio_core`. It also contains the fuzzer.
-- **Root crate (`thesio`):** The GPUI application, including windows, views, rendering, menus, and overlays. `main.rs` re-exports `thesio_core` modules at the crate root. `editor/mod.rs` re-exports `editor::core` and `editor::table_ops`, so application code still uses `crate::model` and `super::core`.
+- **`crates/core` (`thesio_core`)** is the engine. It has no GPUI dependency and can be built and tested alone.
+- **The root crate (`thesio`)** is the GPUI application: window, views, and menus.
 
-Dependencies point from the application to core only. Core modules reference only other core modules.
+Dependencies point only from the application to core. Inside the application, `ui.rs`, `theme.rs`, `completion.rs`, `source.rs`, and `preview.rs` do not know `Workspace`, so a view can be read without it. Workspace state lives in structs owned by the feature that uses it: `OpenDocument`, `Sidebar`, `Outline`, `Search`, `Citations`, `Papers`.
 
-```text
-main.rs - window
-  └─ app.rs  Workspace (window root view)
-       ├─ store.rs        Library: docs/*.xml + index.json (see FORMAT.md) [core]
-       ├─ sidebar / home / search / trash / tree / docmenu / docinfo / modes
-       └─ editor::Editor (view.rs)    Open document
-            └─ editor::Core (core.rs) Document + selection + undo stack     [core]
+```
+main.rs: window
+  app.rs: Workspace, the window's root view
+    actions.rs: every action's name, menu entry, default keys, and handler
+    system.rs: file dialogs, other apps, the clipboard; scripted runs stop here
+    store.rs: the vault on disk [core]
+    document.rs: OpenDocument, its saves, and every write to a document
+    overlay.rs: the one menu or dialog over the window
+    chrome.rs: the page header and header buttons the views share
+    sidebar, tree, home, search, trash, confirm, docmenu
+    citations/: the Library table, inspector, tags, picker, lookup, bibliographies
+    papers/: Sources, the viewer, notes, quotes
+    settings, preferences, appearance
+    source.rs: SourceEditor, the open file's text
+      text.rs: shaping and painting a line, shared with TextField
+      completion.rs: what a provider of the popup's items answers
+      typst_code.rs: the provider of Typst code
+      buffer.rs: text, selection, undo [core]
+      syntax.rs: highlighting from Typst's parser [core]
+    preview.rs: Preview, the view of the pages and diagnostics
+    session.rs: DocumentSession, one document's compiles and its newest result
+      compiler.rs: the Typst World, PDF export, page images [core]
+      ide.rs: completion and hover from typst-ide [core]
 ```
 
-## Layers
+## Core modules
 
-| Layer | Files | Responsibility | Rule |
-|---|---|---|---|
-| Model | `model.rs` | `Document`, `Block`, `BlockKind`, `RichText` (text and style runs), and inline objects `Inline { kind, xml }` | Pure data. `BlockKind::nests()` determines which blocks can have children. |
-| Format | `docxml.rs` | DocxXML and `Document` conversion | Unknown elements are preserved verbatim as `Raw`. Inline objects retain their original XML and have their type parsed once on input. Output is stable; see `FORMAT.md`. |
-| Editing core | `editor/core.rs`, `editor/table_ops.rs` | Document operations: input, deletion, merging, indentation, conversion, dragging, tables, folding, inline objects, and undo | Lives in `thesio_core`, does not use GPUI, and supports direct unit testing and fuzzing. |
-| Editor view | `editor/view.rs` and other `editor/*` files | Keyboard and mouse events to Core calls; overlays, menus, and block interactions | Document changes go through Core, with the exceptions described in this document. |
-| Rendering | `editor/render.rs`, `editor/text.rs` | Blocks to GPUI elements; `text.rs` is a custom-drawn rich text element | Reads the document only. |
-| Application | `app.rs` and other top-level modules | Sidebar, home, search, trash, document tree, import and export, and printing | Reads and writes disk through `Store`. |
+| Module | Responsibility |
+|---|---|
+| `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
+| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, labels, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
+| `ide.rs` | Asks `typst-ide` what can follow the caret and what is under the pointer. See [Completion](#completion). |
+| `packages.rs` | Finds Typst packages on disk and fetches missing ones. See [Packages](#packages). |
+| `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
+| `syntax.rs` | Highlight spans from `typst-syntax`. |
+| `library.rs` | The citation library. |
+| `biblatex.rs` | BibLaTeX import and export. Hayagriva parses, and export takes every name from the field table. |
+| `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
+| `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
+| `images.rs` | Images coming into the vault: what Typst can show, the name a copy takes, and the figure text. See [Images](#images). |
+| `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
+| `lookup.rs` | Fetches entries by identifier and downloads open-access papers and Typst packages. The only code that reaches the network. |
+| `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
+| `references.rs` | Note links, citations, and rewriting path arguments after a move. |
+| `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
+| `history.rs` | `Versions`: a file's earlier versions and how often they are kept. |
+| `diff.rs` | What changed between two texts, by line. |
+| `quote.rs` | A PDF highlight as Typst: cleaned text, page numbers, and the quotation's markup. |
+| `paths.rs` | Vault path helpers, file naming, natural order, atomic writes. |
+| `time.rs` | Local dates without a time zone database, in UTC when the offset is unknown. |
 
 ## Editing flow
 
-Each edit follows this order:
+1. `SourceEditor` turns keys, mouse events, and input-method text into `Buffer` edits.
+2. It recomputes highlights and emits `SourceEvent::Changed`.
+3. `Workspace` passes the text to the `DocumentSession` and schedules a save 500 ms later.
+4. `DocumentSession` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `session::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
+5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
+6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last or stand for newer text, so an underline an edit ended comes back even when the new result says the same. The editor holds the same session, which answers completion and hover. An editor with no `Preview`, such as paper notes, gets a session from `DocumentSession::without_pages`, which compiles and renders no pages, with the note as its own main file.
 
-1. The view receives an event and calls `core.checkpoint(kind)`. It records an undo snapshot, increments `generation`, and sets `dirty`. Consecutive input in the same block, less than 700 ms apart, is grouped into one step.
-2. Call a Core operation to modify `core.doc` or `core.sel`.
-3. Call `Editor::changed()`:
-   - First, `core.reveal_caret()` unfolds any heading or list item hiding either end of the selection or block selection.
-   - If there are changes, it emits `EditorEvent::Changed` and refreshes search results, the slash menu, and the @ panel.
-4. `Workspace` receives `Changed` and calls `schedule_save`. After 500 ms, `flush()` writes to disk. On failure, changes remain unsaved, the top bar shows an error, and the user is prompted before switching documents, creating a document, or quitting.
+A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
 
-`crates/core/src/editor/fuzz_tests.rs` checks Core invariants after each random edit:
+Text that does not come from typing goes through `Workspace::write_document`, which writes the file and updates its entry, the editors showing it, and the preview. `Workspace::text_of` reads a document, from the open editor if it is the open one. Errors other than a failed save appear as toasts.
 
-- Selection endpoints are visible caret stops in the same scope, either the same cell or the document body.
-- Block IDs are unique, and runs are in bounds and do not overlap. Inline object runs contain only U+FFFC.
-- Column proportions sum to 1, and merged table cells do not overlap.
-- Only blocks for which `nests()` is true and containers (quotes, callouts, grids, and columns) have children.
-- Code blocks contain no styles or inline objects.
-- Saving and reading back produces the same result.
-- Undoing all steps and then redoing them returns to the same state.
+## Packages
 
-### Direct modification exceptions
+`#import "@preview/name:version"` works as it does in the typst CLI, and the two share their folders through `typst-kit`: `~/Library/Application Support/typst/packages` for local packages and `~/Library/Caches/typst/packages` for downloads on macOS, and each system's equivalents elsewhere. A package on disk compiles with no network at all.
 
-Structural changes, including adding, deleting, or moving blocks and merging or splitting text, all live in Core. A few view modules directly modify **single-block properties** through `core.block_mut(id)`, with `checkpoint` and `changed` around the modification:
+A download happens outside the compile, so a slow one holds up neither typing nor the compiler's lock. A compile that meets a missing `@preview` package stops there and lists it in `Compilation::missing`. Its diagnostic reads `Downloading @preview/name:version…`, not as an error. `DocumentSession` fetches the package on a background thread and compiles the newest text again when the fetch ends, which also reaches packages that a package imports, one at a time. PDF export has no session, so `Compiler::compile_fetching` does the same on its own thread. Only the `preview` namespace downloads.
 
-- Image size, crop, and description (`image.rs`)
-- Countdown settings (`countdown.rs`)
-- Code block name (`caption.rs`)
-- Icon and cover (`cover.rs`)
-- Title rename (`view.rs`)
-- Some check and fold toggles (`view.rs`, `render.rs`)
+`typst-kit` unpacks into a temporary folder and moves it into place whole, so a failed download leaves nothing in the cache. The failure itself stays in memory for 30 seconds and shows as an error at the import. Compiles in that time report it without asking again, since a compile follows every pause in typing; the first compile after that tries again.
 
-These operations do not change the tree structure and therefore do not break the listed invariants. Add every new structural operation to Core and add a random operation to the fuzzer's `step`.
+Importing a package is the only network use a document can trigger. It requests the package's archive from `packages.typst.org`, plus the package index if the archive is not found, and sends nothing from the document but the package's name and version.
 
-## Undo
+## Images
 
-- Each step is a snapshot (`Snapshot`) of the entire `Document`, stored in a `VecDeque`. History is limited to 500 steps and approximately 256 MB, but retains at least 20 steps regardless of document length.
-- Document icons and fold states are outside history. `keep_outside_history` preserves their current values during undo and redo.
-- `generation` increments on every change, including folding. The rendering cache, table of contents, and word count use it to determine when to recompute.
+Dropping a file on a Typst editor or pasting an image goes the same way. `SourceEditor` emits `SourceEvent::Images`, `Workspace::add_images` copies each one with `Store::add_image`, and `SourceEditor::insert_figures` writes the figures as one undoable edit. Undo removes the text and leaves the file. Paper notes work the same way. Another kind of text file takes no drops, and pastes only text.
 
-Snapshots are simple and reliable, but each step copies the entire document. In a measured history of a million-character document, synchronous input frame processing had a p50 of 5.06 ms. This excludes display latency.
+The rule for where a copy goes is one folder: `images/` beside the document, so a document's path is always `images/<name>`, and `notes/images/` holds what paper notes bring in. The name is the file's own, cleaned as a new document's is, or `pasted`. A name already taken is compared byte for byte: the same content is used as it is, and otherwise the next number is tried, `plot 1.png`, so a second drop of a changed file finds the first copy of it. Nothing is ever written over.
 
-## Rendering and virtualization
+Typst decides what counts: `ImageFormat::detect` reads the bytes, and that gives PNG, JPEG, GIF, WebP, SVG, and PDF. A file whose extension disagrees is copied under the right one, since Typst goes by the extension. Anything else is refused with a toast, including BMP, TIFF, and HEIC files. A dropped gzip file is refused too: Typst takes gzip for compressed SVG, which only its extension would settle. Pasted bytes become PNG unless they are PNG or SVG already, so a TIFF on the clipboard works where a TIFF file does not.
 
-- The page is a GPUI `List`. Its items are the header (`Item::Header`), each visible top-level block, and `Item::Below` (the references list).
-- Children of text, heading, and list blocks each occupy a row (`flattens`). Children of container blocks render inside the container's row.
-- `sync_items` computes a key, `hash_block`, for each row and compares it with the previous frame. It calls `splice` only for the changed interval outside the common prefix and suffix, so only changed rows have their height remeasured.
-- For text, `hash_block` uses only the length. The list remeasures visible rows every frame, so an equal-length edit, such as ⌘B on a whole paragraph, can at most temporarily stale the cached height of an off-screen row. Hashing the text itself adds approximately 3 ms per keystroke in a million-character document. Measurements are recorded in comments in `render.rs`.
-- The scrollbar uses `ListState::estimated_scroll_metrics`, added to vendor GPUI. It estimates unmeasured rows using the average row height; see `vendor/PATCHES.md`.
+A paste asks for image files first, since a file copied in Finder also holds its name as text and its icon as an image. GPUI's clipboard has no files, so `system.rs` reads them from `NSPasteboard` on macOS. Without files it takes what GPUI gives, which is text ahead of a bitmap. File drops come from GPUI as an `ExternalPaths` drag, and need no patch.
 
-## Module map
+A figure stands in paragraphs of its own, cutting the line at the caret. It goes past a `figure` call around the caret, because the caret sits in a caption after an insert, and a second drop would otherwise land inside it. A selection is replaced as a paste would.
 
-Document engine (`crates/core/src/`):
+A moved document's `image` path is rewritten like any other, and the image stays where it is: `images/` does not follow the document.
 
-| Module | Contents |
-|---|---|
-| `model.rs` | Document model, including inline object types and `display_title` |
-| `docxml.rs` | DocxXML parsing and serialization; `to_inline` constructs inline objects |
-| `store.rs` | Library reads and writes, index recovery, trash, settings, and `image_path` |
-| `paste.rs` | HTML and Markdown to blocks, shared by paste and import |
-| `markdown.rs` | Markdown export |
-| `lang.rs` | Code language table |
-| `palette.rs` | Text, background, and callout palettes (RGBA, independent of GPUI; `theme.rs` converts them to GPUI colors) |
-| `time.rs` | Date conversion, local time zone, and current time |
-| `editor/core.rs` | Editing core |
-| `editor/table_ops.rs` | Table operations and cell selection (`CellSel`) |
-| `editor/fuzz_tests.rs` | Random edit fuzzer |
+## Editor rendering
 
-Application top level (`src/`):
+`SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret through `text.rs`, which `TextField` shares. Painted rows are kept from frame to frame to resolve mouse positions and vertical caret movement. `Buffer` reports each edit as a `Change`, and only the rows it names are replaced, which keeps the scroll position and measured heights.
 
-| Module | Contents |
-|---|---|
-| `main.rs` | Entry point, `THESIO_SCRIPT` script mode, and `thesio_core` module re-exports |
-| `app.rs` | `Workspace`: two-column window, open, create, save, delete, save status, and reminder scheduling |
-| `html.rs`, `printing.rs`, `transfer.rs` | HTML and PDF export, printing, and import and export UI |
-| `clipboard.rs` | System clipboard HTML reading and simulated clipboard in script mode |
-| `sidebar.rs`, `tree.rs` | Sidebar and document tree, including subdocuments and move-to |
-| `home.rs`, `trash.rs` | Home and trash |
-| `search.rs` | Search dialog and advanced search |
-| `docmenu.rs`, `docinfo.rs`, `modes.rs` | “…” menu, document information, edit and read mode switching, and shortcuts panel |
-| `theme.rs` | Design tokens: `craft` color scale, semantic `Theme::*` colors, display colors for named colors, `shadow_*` shadows, type scale, and note panel dimensions |
-| `ui.rs`, `input.rs` | Shared widgets (menu shell, menu row, white pill button, tips, and toast) and single-line input |
-| `highlight.rs` | Code highlighting |
-| `assets.rs` | Icons, fonts, and cover gallery embedded in the binary |
-| `devtools.rs` | Script driver; see `tools/harness/README.md` |
+Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
 
-Editor (`src/editor/`):
+Rows also paint `Decoration`s: a wavy underline over a byte range, red for an error and amber for a warning, across every wrapped row it reaches. See [Inline diagnostics](#inline-diagnostics).
 
-| Module | Contents |
-|---|---|
-| `view.rs` | `Editor` entity: state, keyboard and mouse handling, and `changed()` |
-| `keymap.rs`, `menus.rs` | Shortcut bindings and slash and conversion menu data |
-| `render.rs`, `text.rs` | Page rendering and rich text element |
-| `overlays.rs` | Handles, slash and + menus, block menu, and floating toolbar |
-| `drag.rs`, `gap.rs` | Block dragging and clicks in gaps between blocks |
-| `table.rs`, `grid.rs` | Table UI (operations are in core's `table_ops.rs`) and columns |
-| `image.rs`, `file.rs`, `cover.rs` | Images, video or files, icons, and covers |
-| `math.rs` | Formulas (`katex-rs` generates HTML, followed by custom layout) |
-| `link.rs`, `links.rs` | Link panel and cards, @document, and references list |
-| `button.rs`, `countdown.rs`, `reminder.rs`, `subpages.rs` | Buttons, countdowns, date reminders, and subpage list |
-| `emoji.rs`, `emoji_picker.rs` | Emoji data and panel |
-| `catalogue.rs`, `find.rs`, `reading.rs`, `scrollbar.rs`, `caption.rs` | Table of contents, find and replace, reading mode and information row, scrollbar, code block names, and image descriptions |
+## Inline diagnostics
 
-## Interface language
+`SourceEditor` subscribes to its session, so paper notes have underlines too, and takes `DocumentSession::problems` on `SessionEvent::Diagnostics`: the newest diagnostics that point into the open file, whichever document was compiled, so a chapter's error shows when the chapter is the open file and only in the list otherwise. The old underlines stay until that event, so nothing flickers while a compile runs.
 
-The interface is English-only. `Preferences::english` remains in persisted preferences for backward compatibility; it does not select the interface language. Existing localization helpers and menu labels still map interface text to English.
+A diagnostic's range is in the text that compile read, which `Compilation::placed` moves onto the buffer through `buffer::difference`. Both ends stay on char boundaries, since the text outside the difference is the same in both. Between compiles, `text_changed` moves each underline with the edit (`buffer::stretch`): an edit inside it resizes it, and one across its edge ends it until the next result. A click in the list goes through `DocumentSession::moved`, for a list older than the text. `SourceEditor::go_to` snaps every jump to a char boundary, as a click on a page also comes from older text.
 
-User titles, body text, attachment names, and saved button text are not translation keys. Interface defaults such as an empty title are presented in English. The application translates known Core storage diagnostic templates while preserving paths, document IDs, and system errors. The document engine does not depend on the interface language. Language regression checks cover interface keys, menu tables, date reminders, and preservation of user content and diagnostic parameters.
+Typst puts a missing token between two characters, so its range can be empty or hold only a newline. `Buffer::visible` shows such a range on the next character of the line, or else on the last text before it. Text inside the folded bibliography has no row, so the fold's row takes the underline and answers the pointer.
+
+Pointing at an underline waits like hover and shows the message and hints of every diagnostic there, instead of asking `typst_ide` about the word. The popover opens under the row pointed at, and a new set of underlines closes it.
+
+## Completion
+
+`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, the other placeholders that Tab selects in order, and optional `info` shown under the list. Citations and note links ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host the accepted `Item`'s kind. The popup keeps six rows on screen and scrolls the rest. With no items it draws nothing and stays open, so deleting a typo brings the items back, and it holds no keys and leaves hover alone meanwhile. An edit that starts before the popup, such as an undo or a reload, closes it, since its range and its items' offsets describe the old text.
+
+`CitationKeys` offers sources and labels in one list. Labels come from `Compilation::labels`, read from the introspector of the session's last good compile through `typst_ide::analyze_labels`, so a chapter sees the labels of its whole document, and a label reads as its caption or text, what the document calls it (a figure's supplement), and its page, counted from the first page. What starts with the query comes first, then what matches further in, with sources ahead of labels in both; a source keeps its place from before labels joined. An accepted label is a `CompletionKind::Reference`, which leaves the bibliography alone.
+
+`TypstCode` in `typst_code.rs` is the provider of Typst code, and it comes last in the list, so `@` and `[[` stay with the other two. Typing opens it after a `#` or the dot of a field access, which `CodeStart` tells from a dot in prose. It keeps the parsed text, so that keystroke costs an edit and not a parse. ⌃Space opens it anywhere, and `Reach` says which of these `find` is answering. `typst_ide` knows the replaced range only once it answers, so an `Item` can override where `find` said it starts.
+
+`typst_ide` reads the text through a compile's `World`, and the text is usually newer than the compile. `Compilation::complete` and `Compilation::hover` take the current text and stand it in for its file, in a copy of the world. `DocumentSession` asks the last compile that had a document, since one that failed on a half-typed line stopped before reading what the document imports. A question may compile the whole document to find a value, so it runs on a background thread on a large stack. `Newest` runs one at a time and skips any that a newer one has overtaken. `typst_ide` finds no call inside a `(` nobody closed, or a string with no closing quote, and the editor closes neither, so `complete` adds what is missing after the caret to the text it asks about. A string nobody closed runs on to the next quote or the end of the file, so one that leaves the caret's line counts as ending at the caret. It also matches what is typed, which `typst_ide` leaves to its caller, and continues a snippet's lines at the line's indent.
+
+Hover follows the pointer through `SourceEditor::text_at`. A pointer on a new word waits 350 ms and then asks the session. The popover closes when the pointer leaves the word or the editor, on a scroll, a click, or an edit, and with Esc, after which that word stays quiet until the pointer moves to another.
+
+## Overlays
+
+`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, the modal and menu shells that close it, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
+
+## Actions
+
+`actions.rs` is one table of the workspace's actions, so a new action is one row: its name, its menu group and label, its default keys, and its handler. `shortcuts.rs` applies `.thesio/shortcuts.json` over those keys, and `shortcuts::hint` reads a tooltip's key back from the keymap, so a custom key shows and an unbound action shows none. The Edit menu names the editor's own actions, which keep their keys in `source.rs` and `input.rs`.
+
+## Vault ids
+
+A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates `OpenDocument`, so its editor and undo history survive, and the session recompiles from wherever the open file and its top document are now. A top document moved to the Trash leaves the open file compiling on its own. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
+
+## Search
+
+The search dialog lists documents, then sources, then PDF highlights, from any PDF in the vault. Highlights live inside each PDF, so `search.rs` reads them with PDFKit when the dialog opens, off the main thread, and keeps them by file time and size. Results fill in once that finishes. Text in a PDF that is not highlighted is not searched.
+
+## Version history
+
+`history.rs` keeps versions as plain files in `.thesio/history/<id>/`: one when a file opens, then at most one every five minutes as it saves, and none if nothing changed. A paper's notes count as a file that opens with the paper, and save the same way, 500 ms after typing stops. Every version stays for a day, then one a day for 90 days, and a file's newest version always stays. `Store::relocate` moves a file's versions with it. Restoring keeps the current text as a version first and goes through the editor, so it can be undone. `Library::commit` keeps `library.yaml` the same way before it writes, so a run of quick edits leaves the state before the first, and a version that no longer parses cannot be restored. A file that cannot be read cannot be kept, so the write stops.
+
+## Sidebar
+
+The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`Project::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
+
+`tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`paths::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
+
+A rename or move also updates the paths in every vault document: `#include`, `#import`, the path arguments of `image`, `bibliography`, `read`, and the data loaders, and `#link`s to `.typ` files. A moved file's own relative paths are adjusted too. A path starting with `/` means the file the compiler finds, nearest the document's main file first (`project::candidates`), so it stays relative to that folder while the main file and the target remain inside it, and names the vault root otherwise. If the open document changes, its editor takes the new text as one undoable edit.
+
+## Note links
+
+A note link is plain Typst, `#link("../notes/idea.typ")[Idea]`, so a document stays valid without the app. Any `link` whose target ends in `.typ` and is not a web address counts (`references::note_links`). A page only keeps the link's text, so a preview click finds the target through the loaded file that wrote it. Linked From reads the links in every document and updates when the open document opens or saves.
+
+## Citations
+
+`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the editor writes only the fields you change, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting entries asks first and says how many documents cite them.
+
+`source_type.rs` lists the source types and each type's fields. A source type is a Hayagriva type plus its parent's type, so it is read from any entry without a new field, and a Hayagriva type outside the table shows as Other and keeps its `type` until changed. An article with no parent is a Preprint only with an arXiv ID or link, an `archive`, or `genre: Preprint`, which choosing that type writes; otherwise it is a Journal Article. The table is our own: Zotero's schema has no licence file, so it is not copied. The inspector beside the table edits the selected entry and saves when a field loses focus.
+
+BibLaTeX goes through Hayagriva, except keywords and language, which it drops and `import_biblatex` reads with the `biblatex` crate. Import then refines `@misc` entries: an arXiv ID makes a Preprint, a version a Software entry, and an access date a Web Page. A test exports the fields of every imported type and reads them back.
+
+The citation style is the `style` argument of the document's `#bibliography`, so it lives in the file and survives block updates. Picking one edits that argument and nothing else, including in a `#bibliography` the user wrote. Changing a citation key rewrites `@key` and `#cite(<key>)` in every document, and leaves plain labels, raw text, and comments alone. A document that writes a label of the same name, in any of its files, keeps its `@key`, which means the label there (`Documents::has_label`); its `#cite(<key>)` still changes.
+
+Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
+
+Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. The only other requests a document can cause come from importing a package that is not on disk (see [Packages](#packages)). An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Other numbers, such as an ISSN or a version, are shared by many works and do not count. Keys are generated as surname and year.
+
+Adding a source also looks for its paper: arXiv first, then the locations Unpaywall lists, when an email is set in Settings. Only PDFs are kept, as `sources/<key>.pdf`, and the Sources page lists that folder. A paper follows its entry when the key changes, and stays when the entry is deleted. A paper can also be added by hand. A PDF in `sources/` whose name matches no key shows as unlinked until it is linked to a source.
+
+On macOS papers open in `native_pdf.rs`, a PDFKit `PDFView` above the GPUI surface. It hides what GPUI draws beneath it, so the viewer steps aside while a menu or dialog is open. PDFKit was chosen over the `hayro` renderer because it brings text selection and writes standard PDF annotations, which future annotation work can build on. Other platforms open papers in the system app.
+
+Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `papers/` and renamed with the key.
+
+A document has one of three bibliography modes, read from its text (`bibliography::mode`):
+
+- **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`. The editor folds it into one row and keeps the caret out of it, and Show bibliography data in the document menu reveals it. Home cards and search ignore it.
+- **Linked:** `#bibliography("library.yaml")`, with a path relative to the document.
+- **Custom:** any other `#bibliography` call, which Thesio leaves alone.
+
+The first citation in a document embeds a block unless one already covers it. A document can have only one bibliography, so the block goes in the top-level document, the one no other file includes, and covers citations in everything it includes. An included file's preview compiles that top-level document for the same reason.
+
+## Limits
+
+- An image goes in as `#figure` wherever the caret is, so in code, math, or a raw block it does not compile.
+- Only files and image data count. An image dragged out of a browser or Photos as a promise of a file is not taken, and files on the clipboard are read on macOS only.
+- An image copied together with text pastes as the text.
+- A copied image stays when no document uses it any more.
+- A file is copied on the main thread, so a very large one holds up the window for that time.
+- Fonts are the set bundled with Typst.
+- `@preview` package names are not offered in `#import`: that needs the package index, which no question may fetch.
+- Fields after a dot come from evaluating the document, so an error earlier in the file leaves `typst_ide` no value to list. Names in the standard library are still offered.
+- `@` offers labels as of the last good compile, so a label just typed joins after the next one. With nothing typed, sources come first, so a large library puts labels out of reach until a letter narrows the list.
+- A label is offered even where `@` cannot use it: Typst refuses a heading or equation with no numbering, and any element that has no number.
+- A label made by a script is not seen when a citation key changes, so `@key` to it is rewritten. Cited In and delete warnings still count an `@key` that means a label.
+- Paper notes compile on their own, so they see what they import but not a document that includes them.
+- A failed package download is tried again only by a compile, so a document left untouched keeps showing the error.
+- An editor with no `Preview`, such as paper notes, downloads packages without showing it.
+- A rename can break code that uses a module by its file name, as in `#import "a.typ"` followed by `a.title`.
+- Paths built at run time, such as `"chapters/" + name`, are not updated by a move.
+- Changes made to the open file by other programs are not picked up, and the next save overwrites them.
+- Two windows on the same file are not kept in sync.
+- A diagnostic with no vault file, such as one inside a package, shows only in the list. So does one in a file that holds nothing but blank space.
+- An underline says nothing about the word under it: `typst_ide`'s hover is not shown there.
+- The editor has no find and replace yet.
+- BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
+- Zotero import and sync are not implemented, and ADS Bibcodes are not supported because ADS requires a personal API key.

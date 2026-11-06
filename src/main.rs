@@ -1,44 +1,51 @@
 #![recursion_limit = "512"]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod actions;
 mod app;
+mod appearance;
 mod shared_store;
 mod window_size;
 mod assets;
-mod clipboard;
+mod chrome;
+mod citations;
+mod completion;
+mod confirm;
 mod devtools;
-mod docinfo;
 mod docmenu;
-mod editor;
-mod highlight;
+mod document;
+mod history;
 mod home;
-mod html;
+mod icon;
 mod input;
-mod modes;
 #[cfg(target_os = "macos")]
-mod native_header;
+mod native_pdf;
 #[cfg(not(target_os = "macos"))]
-#[path = "native_header_fallback.rs"]
-mod native_header;
-mod printing;
+#[path = "native_pdf_fallback.rs"]
+mod native_pdf;
+#[cfg(target_os = "macos")]
+mod native_sidebar;
+#[cfg(not(target_os = "macos"))]
+#[path = "native_sidebar_fallback.rs"]
+mod native_sidebar;
+mod overlay;
+mod papers;
+mod preferences;
+mod preview;
 mod search;
+mod session;
 mod sidebar;
+mod source;
 mod settings;
-mod themes;
 mod shortcuts;
-#[allow(dead_code, unused_imports)]
-mod feishu_theme;
-#[allow(dead_code, unused_imports)]
-mod editor_theme;
-#[allow(dead_code, unused_imports)]
-mod editor_ui;
+mod startup;
+mod system;
+mod text;
 mod theme;
-mod transfer;
 mod trash;
 mod tree;
+mod typst_code;
 mod ui;
-
-use thesio_core::{docxml, lang, markdown, model, palette, paste, store, time};
 
 use gpui::*;
 
@@ -48,6 +55,10 @@ fn set_app_icon() {
     use objc::runtime::Object;
     let png = include_bytes!("../assets/branding/app-icon.png");
     unsafe {
+        // A bundle has its icon from Info.plist, and decoding this one takes 60 ms.
+        let bundle: *mut Object = msg_send![class!(NSBundle), mainBundle];
+        let identifier: *mut Object = msg_send![bundle, bundleIdentifier];
+        if !identifier.is_null() { return; }
         let data: *mut Object = msg_send![class!(NSData), dataWithBytes:png.as_ptr() length:png.len()];
         let image: *mut Object = msg_send![class!(NSImage), alloc];
         let image: *mut Object = msg_send![image, initWithData:data];
@@ -71,7 +82,7 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
             titlebar: Some(TitlebarOptions {
                 title: Some("Thesio".into()),
                 appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
-                traffic_light_position: Some(point(px(20.), px(app::HEADER_H / 2. - 7.))),
+                traffic_light_position: Some(point(px(20.), px(ui::HEADER_H / 2. - 7.))),
             }),
             window_min_size: Some(size(px(480.), px(480.))),
             focus: !scripted,
@@ -79,14 +90,17 @@ fn open_main_window(scripted: bool, document: Option<String>, cx: &mut App) {
         },
         |window, cx| {
             if document.is_none() { devtools::start(window, cx); }
+            startup::mark("window-open");
             cx.new(|cx| app::Workspace::new(document, window, cx))
         },
     );
-    if let Err(e) = result { eprintln!("无法打开文档窗口：{e}"); }
+    if let Err(e) = result { eprintln!("Could not open document window: {e}"); }
 }
 
 fn main() {
-    let scripted = std::env::var_os("THESIO_SCRIPT").is_some();
+    startup::mark("main");
+    session::prepare();
+    let scripted = system::scripted();
     // No single-instance guard: copies may share a library (builds tested
     // side by side). `Store` rereads an index another copy rewrote before
     // writing its own.
@@ -94,20 +108,19 @@ fn main() {
     // Clicking the Dock icon brings the main window back after ⌘W.
     app.on_reopen(|cx| if cx.windows().is_empty() { open_main_window(false, None, cx); });
     app.run(move |cx: &mut App| {
+        startup::mark("app-ready");
         #[cfg(target_os = "macos")]
         set_app_icon();
-        editor::math::load_fonts(cx);
         input::bind_keys(cx);
-        editor::keymap::bind_keys(cx);
-        editor::image::bind_keys(cx);
-        app::bind_keys(cx);
-        settings::load();
-        settings::apply_appearance(&settings::prefs().appearance);
-        settings::sync_dark(cx);
-        themes::load(&settings::prefs().theme_id(), false, || cx.text_system().all_font_names());
+        source::bind_keys(cx);
+        actions::bind_keys(cx);
+        preferences::load();
+        appearance::apply_appearance(&preferences::prefs().appearance);
+        appearance::sync_dark(cx);
+        appearance::sync_accent();
         shortcuts::init(cx);
         cx.set_global(shared_store::SharedStore::open().expect("open document library"));
-        app::set_menus(cx);
+        actions::set_menus(cx);
         open_main_window(scripted, None, cx);
         cx.on_window_closed(move |cx| {
             if (scripted || !cfg!(target_os = "macos")) && cx.windows().is_empty() {

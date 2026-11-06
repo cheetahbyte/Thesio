@@ -2,8 +2,135 @@
 
 ## Unreleased
 
-- Remove quick notes and their system-wide keyboard shortcuts.
+- Keep working when a click lands right after a large deletion, before the editor has redrawn. It used to crash.
+- Keep a real multi-line string as it is when accepting a path inside it, and replace the rest of a path after the caret, so `"fig|.png` gives `"figures/plot.png"`.
+- Offer only labels `@` can reference. Unnumbered headings and equations and labels on plain text are gone from the list, since Typst rejects them.
+- Open the right file when clicking a diagnostic from another file in the list under the preview.
+- Compile a chapter through its main file again as soon as that file is restored from the Trash.
+- Count Home's words from the parsed document, so code, comments, and math stay out. The preview still counts what it draws, the bibliography too.
+- Keep shortcuts working on Home, the Library, and other pages after leaving a document, without a click first.
+- After a move, give editors the updated paths directly. A failed read could leave the old paths to be saved back.
+- Call the top of the vault Files in Trash and the Move dialog, drop "Owner: me" from search results, and describe permanent deletion without "child pages".
 
+- Keep working when undo or redo changes text before an open completion popup. Text with multi-byte characters crashed the app and lost unsaved edits.
+- Replace a typed `:` or `.` when accepting a label, so `@fig:` gives `@fig:plot` and not `@fig:plot:`.
+- Show an underline's message right after typing a typo. A popup with nothing to offer used to block it until the caret moved.
+- Offer file paths with ⌃Space in an unclosed string above other text, not only on the last line of the file.
+- Drag images into the editor, or paste an image or an image file. The image is copied to `images/` beside the document, and a `#figure` goes in at the caret with the path relative to the document and the caret in an empty caption. Several images make several figures, and Tab moves between their captions. PNG, JPEG, GIF, WebP, SVG, and PDF work. A file with the same content is reused and no existing file is replaced. Pasted bitmaps are saved as PNG. Undo removes the figure and leaves the copied file.
+- Underline compile errors in red and warnings in amber in the editor, on the exact text, in paper notes too. Pointing at an underline shows the message and hints. Underlines follow your typing and stay until the new result arrives, and a chapter's errors show in the chapter when it is open. The list under the preview stays.
+- Land on the right place when clicking a diagnostic in the list while newer text compiles.
+- Offer cross-references with `@`. Figures, tables, headings, equations, and any other label in the whole document, included chapters too, join the sources in one list, with their title, kind, and page. Accepting one writes `@label` and adds no bibliography.
+- Keep `@label` when a citation key of the same name changes, in documents that write that label.
+- Complete Typst code. Typing `#` offers functions, variables, and snippets, a dot after code offers fields and methods, and ⌃Space offers parameters, values, labels, and file paths too. Tab moves through a snippet's placeholders. Paper notes have it as well.
+- Show what Typst knows about the code under the pointer: a function's description, or a variable's value. Moving away, typing, or Esc closes it.
+- Support Typst packages. `#import "@preview/name:version"` downloads the package on first use, into the same cache as the typst CLI, and shows that it is downloading or why it failed. A cached package needs no network, and `@local` packages work too.
+- Save paper notes after typing stops rather than on every keystroke, and keep their earlier versions like a document's.
+- Leave Trash with Esc, as the sidebar offered.
+- Say so when a file dialog fails, and when a document cannot be reloaded after a move changed its paths.
+- Keep Version History open with the error when a restore cannot be written. It used to say Restored.
+- Show a highlight's page in search as the viewer numbers it.
+- Keep the citation picker and `@` completion in their own order when the Library table is sorted.
+- Treat only a DOI, arXiv ID, PMID, or ISBN as a duplicate. A shared ISSN or version number blocked new entries, and a bare arXiv ID went unnoticed.
+- Stop before changing a `library.yaml` that cannot be read back, instead of replacing it with no earlier version kept.
+- Keep a file's versions when a rename changes its extension.
+- Undo past a generated edit instead of stopping there.
+- Treat a pasted lone carriage return as a new line in the editor.
+- Name Control, not Command, in Windows tooltips.
+- Use UTC, not UTC+8, for dates when the local offset is unknown.
+- Ask before losing paper notes that could not be saved. Opening another paper, closing the window, or ⌘Q now shows the Save failed dialog; opening another paper used to drop them, and ⌘Q quit without asking.
+- Keep compiling a chapter and showing its Outline when its main file is renamed or moved. If the main file goes to the Trash, the chapter compiles on its own. Both used to end in "file not found".
+- Update a `/` path after a move by the file the compiler finds, nearest the main file. It used to assume the vault root, so a project's own `/lib/a.typ` broke when `a.typ` moved, and an unrelated file at the root could change it.
+- Show the Highlight button's icon outside macOS, where its file was missing.
+- Show keys from `shortcuts.json` in every tooltip, including Search, and no key for an action it unbinds.
+- Reach every citation and note in the completion popup: it scrolls now, instead of stopping at six. ⌃Space opens it where a citation or note link is being written.
+- Keep the caret two lines above the bottom edge when pressing Enter at the end of a document. A new empty line used to send the view to that line.
+- Keep the view still when pressing Enter on the last visible line. The new line used to jump to the top of the view.
+- Keep the preview near the caret after a click, a drag, or Select All as well.
+- Keep the caret out of the folded bibliography after undo or when jumping to a place inside it.
+- Close every menu with Esc, keep a menu from coming back when you return to a page, and return focus to where it was when a dialog closes. Opening a menu or dialog replaces the one before it.
+- Move the paper viewer aside for the sidebar list's menu.
+- Ask before ⌘Q quits with a document that could not be saved. It used to quit and lose the changes.
+- Report every failed operation in a toast, including failed pins, favorites, and saved folder state, and show a failed save away from the document too.
+- Keep unsaved text when the library changes after a failed save.
+- Keep a paper and its notes open when their folder moves, and keep writing notes to their new path after a key change.
+- Leave notes and `preferences.json` alone when they cannot be read, instead of replacing them.
+- Leave generated bibliography data out of the word count on Home.
+- Search sources and PDF highlights along with documents. Enter opens a source in the Library, or a paper at the highlight.
+- Compile on a thread with a large stack. A document embedding a PDF with colour profiles could crash a debug build, and other builds had less margin than they should.
+- Link notes: type `[[` to pick a document, which writes a plain Typst `#link`. ⌘-click it in the editor or click it in the preview to open it, and see what links to a document under Linked From in the sidebar. Links follow files that move.
+- Show which documents cite a source in the Library's panel, and go to the first citation on click.
+- Show the word count of the open file and the whole document under the preview, with every file's count in Word Count in the "…" menu.
+- Keep versions of `library.yaml` before changes, and restore them from Version History in the Library's "…" menu.
+- Keep earlier versions of each document automatically, and compare or restore them from Version History in its "…" menu.
+- Add an Outline to the sidebar: the headings of the whole document in reading order, through its included files, with the current one marked. Click one to go there.
+- Keep the preview near the caret: it scrolls when the caret's place is out of view.
+- Click text in the preview to go to its source, opening the chapter it came from.
+- Stop looking up papers during a BibLaTeX import. Find Missing Papers in the Library's "…" menu does that on request.
+- Stop offering a second bibliography in a chapter whose main document has one.
+- Rename or delete a tag across the Library by right-clicking it in the filter bar. Renaming to a tag in use merges the two.
+- Choose a citation style for a document from its "…" menu. A chapter changes the style of the document that includes it.
+- Update citations in every document when a citation key changes.
+- Import more from BibLaTeX and Zotero: keywords become tags, language is kept, each entry gets its source type, and a known DOI, ISBN, or arXiv ID counts as a duplicate.
+- Export every field the Library shows that BibLaTeX can hold, such as editors, ISBN, edition, and abstract.
+- Save an edit in the Library panel when the app quits.
+- Keep a source's notes named `key.typ` when its citation key changes. They became `key.typ.typ`.
+- Scroll to the caret when it jumps far ahead in a document that just opened, as ⌘↓ does.
+- Draw hairlines between the sidebar and the content, and under the header, as Finder does.
+- Keep the editor's scroll position while typing, saving, and folding the bibliography. It used to jump to the top once you were more than a screen down.
+- Restyle the sidebar after Finder: chevrons sit at the end of the line, and the hover buttons are gone. Right-click the list for New document, New folder, and Select documents, or a row for its actions.
+- Choose from 19 source types in the Library, such as Journal Article, Book, Thesis, and Web Page. Each shows the fields that type has.
+- Edit sources in a panel beside the table instead of a dialog. Changes save when you leave a field, and the toolbar shows or hides the panel.
+- Stripe the Library's rows, and mark the selection in the accent color while the table has the keyboard.
+- Tag sources in the Library: right-click for Tags…, filter by tag above the table, and search by tag. Tags are saved in `library.yaml` and exported to BibLaTeX as `keywords`.
+- Select several Library rows with shift, ⌘, or the arrow keys, then tag or delete them together. A click now selects a row and shows it in the panel; double-click or Return moves the caret there.
+- Resize the Library's columns by dragging their edges.
+- Preview an included file in place: the whole document still compiles, but pages from other files blur and the preview opens at the file's first page.
+- Launch about twice as fast: the first document compiles while the app starts, and the first frame shows it finished.
+- Resolve Typst paths that start with `/` from the document's own project folder, so projects inside a vault compile as they do with `typst compile`.
+- Show how long the last compile took in the corner of the preview.
+- Turn Home into an overview of the vault: recent documents, favorites, counts, and sources not cited yet.
+- Remove the Shortcuts page from Settings. Shortcuts keep working, and keys saved earlier still apply.
+- Draw indent lines under open folders in the sidebar.
+- Insert a highlight as a quotation with its page citation. Correcting a page number once fixes the numbering for that paper.
+- Remove hover highlights outside menus, and let controls show their pressed state only.
+- Use the macOS accent color for controls and sidebar icons, updated when you return to the app. Other platforms keep the blue accent.
+- Move the controls to a flat look of their own: hairline outlines, quiet menu highlights, and a new accent.
+- Redesign the interface: native SF Symbols on macOS, calmer buttons and fields, and grouped forms.
+- Simplify the Library toolbar: Add opens Add by Identifier, with manual entry inside it, and Import and Export move to a "…" menu.
+- Show empty and no-result states in the Library, and prose instead of Typst source on Home cards.
+- Complete citations in the editor: typing `@` offers matching Library entries, and accepting one adds a bibliography if the document has none.
+- Add a Sources page. Adding a source downloads an open-access PDF to `sources/`, from arXiv or, with an email in Settings, Unpaywall.
+- Highlight text in papers and comment on highlights. Both are saved inside the PDF as standard annotations.
+- Keep notes on each source in `notes/<key>.typ`, beside its paper or from the Library menu.
+- Show papers inside the app on macOS, with text selection and zoom.
+- Add PDFs by hand from Sources or a Library row, and link unlinked papers to a source.
+- Add a right-click menu to Library rows: Edit, Cite, Copy Key, and Delete.
+- Remove file icons from the sidebar; folders keep theirs.
+- Remove the empty General settings page.
+- Hide `library.yaml` and `sources/` from the sidebar by default, with a Documents setting to show them.
+- Fix the dialog backdrop brightening the window in dark mode.
+
+- Fix a crash when opening destructive confirmation dialogs.
+
+- Optimize the application crate in debug builds to reduce macOS unwind data.
+
+- Make sidebar text and icons readable on fully transparent macOS glass.
+- Fold the generated bibliography in the editor, and leave it out of Home cards and search.
+- Add entries to the Library by DOI, arXiv ID, PMID, or ISBN.
+- Add `just start` to build and run a debug version.
+
+- Add a Library page for citations, backed by Hayagriva, with BibLaTeX import and export.
+- Add a citation picker, and embed cited entries in the top-level document or link the library file.
+- Preview an included file through the document that includes it.
+- Update `#include`, `#import`, image, and bibliography paths when a file or folder is renamed or moved.
+- Sort the sidebar with folders first and names in natural order, and show every file in the vault.
+- Add drag and drop, new documents and folders inside folders, and separate file and folder menus.
+- Open text files such as `.bib` in the editor, and other files in the system default app.
+- Replace the block editor and DocxXML documents with a Typst source editor and live preview.
+- Store documents as plain `.typ` files in a vault folder. Libraries from earlier builds are not read.
+- Add PDF export through Typst, and a New Folder command.
+- Remove document themes, covers, emoji icons, reminders, and Markdown export.
+- Remove quick notes and their system-wide keyboard shortcuts.
 - Replace the Nucleo interface icons with Lucide icons.
 - Make the interface English-only and remove the language selector.
 - Translate project documentation and bundled theme descriptions into English.

@@ -16,6 +16,13 @@ pub trait AssetSource: 'static + Send + Sync {
 
     /// List the assets at the given path.
     fn list(&self, path: &str) -> Result<Vec<SharedString>>;
+
+    /// quiet.md: draw `path` as an alpha mask for `size` without an SVG, for
+    /// glyphs the platform supplies. The mask may have another size; it is
+    /// centred in the element.
+    fn render_mask(&self, _path: &str, _size: Size<DevicePixels>) -> Option<(Size<DevicePixels>, Vec<u8>)> {
+        None
+    }
 }
 
 impl AssetSource for () {

@@ -1,381 +1,130 @@
-//! The header "…" menu: page width, find & replace, move, pin, star,
-//! duplicate, 下载为 PDF / Markdown, 打印, document info and delete.
+//! The header "…" menu: move, pin, star, duplicate, export, and delete.
 
 use crate::app::Workspace;
-use crate::settings::display_title;
-use crate::store::PageWidth;
-use crate::theme::{self, Theme, craft};
-use crate::ui::{icon, popover};
+use thesio_core::bibliography::{CITATION_STYLES, Mode};
+use crate::theme::{self, Theme};
+use crate::overlay::{Overlay, menu_action, menu_panel, modal};
+use crate::ui::{Icon, ModalAt, anchored_menu};
 use gpui::{prelude::FluentBuilder, *};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DocSub {
-    Width,
-    Download,
-    /// 更多: 显示引用列表.
-    More,
-}
-
 const MENU_W: f32 = 200.;
-/// Gap between the "…" button and the menu.
 const MENU_GAP: f32 = 6.;
-/// Rows: 32 tall; dividers 1px with 5px either side; 6px padding.
-const ROW_H: f32 = crate::ui::MENU_ROW_H;
-const DIV_H: f32 = 11.;
-const PAD: f32 = crate::ui::MENU_PAD_Y;
 
-/// Offset of item `k`'s row from the menu's top with `dividers` divider rows above it.
-fn item_top(k: usize, dividers: usize) -> f32 {
-    1. + PAD + ROW_H * k as f32 + DIV_H * dividers as f32
+fn menu_item(id: &'static str, ic: Icon, label: impl Into<SharedString>) -> Stateful<Div> {
+    crate::ui::menu_row(id)
+        .child(crate::ui::menu_glyph(ic, 16.))
+        .child(div().flex_1().min_w_0().overflow_hidden().child(crate::ui::menu_label(label)))
 }
 
-fn menu_item(id: &'static str, ic: &'static str, label: impl Into<SharedString>, sub: bool, open: bool) -> Stateful<Div> {
-    let g = SharedString::from(id);
-    crate::ui::menu_row(id, g.clone())
-        .when(open, |d| d.bg(Theme::menu_highlight()).text_color(gpui::white()))
-        .child(if open { icon(ic, 16., gpui::white()) } else { crate::ui::menu_glyph(ic, 16., g.clone()) })
-        .child(div().flex_1().min_w_0().overflow_hidden().child(crate::ui::menu_label(label, g.clone(), gpui::white())))
-        .when(sub, |d| d.child(if open { icon("chevron-right", 10., gpui::white()) } else { crate::ui::menu_glyph("chevron-right", 10., g) }))
-}
-
-/// 下载为's text-only items.
-pub(crate) fn sub_item(id: &'static str, label: &'static str) -> Stateful<Div> {
-    crate::ui::menu_row(id, SharedString::from(id)).mx(px(0.)).child(crate::ui::menu_label(label, SharedString::from(id), gpui::white()))
-}
-
-/// Native-menu separator: 1px, 5px either side, inset 13px.
 fn divider() -> Div {
     div().flex_none().mx(px(13.)).my(px(5.)).h(px(1.)).bg(Theme::line_border())
 }
 
 impl Workspace {
-    fn close_doc_menu(&mut self, cx: &mut Context<Self>) {
-        self.doc_menu = false;
-        self.doc_sub = None;
-        cx.notify();
-    }
-
-    pub fn set_page_width(&mut self, width: PageWidth, cx: &mut Context<Self>) {
-        let Some(id) = self.current.clone() else { return };
-        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-            e.meta.width = width;
-        }
-        let _ = self.store.set_width(&id, width);
-        if let Some(ed) = &self.editor {
-            ed.update(cx, |e, cx| {
-                e.page_width = width;
-                cx.notify();
-            });
-        }
-        cx.notify();
-    }
-
-    /// The document as it stands: the open editor's copy, or the file on disk.
-    pub(crate) fn doc_of(&mut self, id: &str, cx: &mut Context<Self>) -> Option<crate::model::Document> {
-        if self.current.as_deref() == Some(id) {
-            self.flush(cx);
-            return self.editor.as_ref().map(|ed| ed.read(cx).core.doc.clone());
-        }
-        self.store.load(id).ok()
-    }
-
-    /// 创建副本: "<标题> 副本", opened right away.
+    /// Duplicates a document beside the original and opens the copy.
     pub fn duplicate_doc(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_doc_menu(cx);
-        self.row_menu = None;
         if let Some(new) = self.copy_doc(id, cx) {
-            self.entries = self.store.list();
-            self.sort();
+            self.refresh_entries(cx);
             self.open(&new, window, cx);
         }
         cx.notify();
     }
 
-    /// Write "<标题> 副本" of `id` to the library; the caller refreshes the list.
     pub(crate) fn copy_doc(&mut self, id: &str, cx: &mut Context<Self>) -> Option<String> {
-        let mut doc = self.doc_of(id, cx)?;
-        let title = format!("{} copy", display_title(&doc.title.text));
-        doc.title = crate::model::RichText::plain(title);
-        let width = self.entries.iter().find(|e| e.id == id).map(|e| e.meta.width).unwrap_or_default();
-        match self.store.create_from(&doc) {
-            Ok(new) => {
-                let _ = self.store.set_width(&new, width);
-                Some(new)
-            }
+        let text = self.read_document(id, cx)?;
+        let entry = self.entries.iter().find(|e| e.id == id)?;
+        let (title, parent) = (format!("{} copy", entry.title), entry.parent.clone());
+        let result = self.store.borrow_mut().create_from(parent.as_deref(), &title, &text);
+        match result {
+            Ok(new) => Some(new),
             Err(e) => {
-                self.status = crate::app::SaveStatus::Failed(format!("Could not duplicate document: {}", crate::settings::diagnostic(&e.to_string())));
+                self.show_toast_kind(crate::ui::ToastKind::Error, &format!("Could not duplicate document: {e}"), cx);
                 None
             }
         }
     }
 
-    /// 查找和替换 (also ⌘F / ⌘⇧H).
-    pub fn find_in_doc(&mut self, replace: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_doc_menu(cx);
-        if let Some(ed) = &self.editor {
-            ed.update(cx, |e, cx| e.open_find(replace, window, cx));
-        }
+    /// Words by file, with the open file marked.
+    pub(crate) fn render_word_count(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let words = self.document.as_ref()?.session.as_ref()?.read(cx).words().to_vec();
+        let total: usize = words.iter().map(|(_, words)| words).sum();
+        let row = |name: String, count: usize, strong: bool| {
+            div().h(px(28.)).flex().items_center().gap(px(16.)).text_size(px(13.))
+                .when(strong, |d| d.font_weight(FontWeight::SEMIBOLD))
+                .child(div().flex_1().min_w_0().truncate().child(crate::ui::ui_text(name)))
+                .child(div().flex_none().text_color(Theme::text_caption()).child(crate::ui::format_count(count)))
+        };
+        let rows = words.iter().map(|(path, count)| row(path.clone(), *count, self.current() == Some(path))).collect::<Vec<_>>();
+        let panel = crate::ui::dialog("word-count").w(px(440.)).p(px(20.)).flex().flex_col()
+            .child(div().mb(px(10.)).text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Word Count"))
+            .child(div().id("word-count-files").max_h(px(320.)).overflow_y_scroll().children(rows))
+            .child(div().mt(px(6.)).pt(px(6.)).border_t_1().border_color(Theme::line_border()).child(row("Total".to_string(), total, true)))
+            .child(div().mt(px(8.)).text_size(px(12.)).line_height(px(16.)).text_color(Theme::text_caption()).child("Counts the text the document draws. The bibliography and page numbers are left out."))
+            .child(div().mt(px(14.)).flex().justify_end().child(crate::ui::secondary_button("word-count-close", "Close").on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx)))));
+        Some(modal("word-count-scrim", ModalAt::Center, false, panel, cx))
     }
 
-    pub(crate) fn render_doc_menu(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        if !self.doc_menu {
-            return vec![];
-        }
-        let Some(id) = self.current.clone() else { return vec![] };
+    pub(crate) fn render_style_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (_, current) = self.style_owner(cx)?;
+        let rows = CITATION_STYLES.iter().enumerate().map(|(i, (label, name))| {
+            crate::ui::menu_row(("style-row", i))
+                .child(div().w(px(16.)).flex_none().when(*name == current, |d| d.child(crate::ui::menu_glyph(Icon::Check, 14.))))
+                .child(crate::ui::menu_label(*label))
+                .on_click(menu_action(cx, move |w, _, cx| w.set_citation_style(name, cx)))
+        }).collect::<Vec<_>>();
+        let menu = menu_panel("style-menu", MENU_W + 40., cx).children(rows);
+        Some(anchored_menu(Corner::TopRight, self.doc_menu_position(window), menu))
+    }
+
+    /// Under the header's "…" button, by its right edge.
+    fn doc_menu_position(&self, window: &Window) -> Point<Pixels> {
+        let button = self.document.as_ref().and_then(|document| document.more_button.get());
+        point(button.map_or(window.viewport_size().width - px(120.), |b| b.right()), button.map_or(px(60.), |b| b.bottom() + px(MENU_GAP)))
+    }
+
+    pub(crate) fn render_doc_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let id = self.current().map(str::to_string)?;
         let entry = self.entries.iter().find(|e| e.id == id);
         let pinned = entry.is_some_and(|e| e.meta.pinned);
         let starred = entry.is_some_and(|e| e.meta.starred > 0);
-        let width = entry.map(|e| e.meta.width).unwrap_or_default();
-        let refs_shown = !entry.is_some_and(|e| e.meta.refs_hidden);
-        let sub = self.doc_sub;
-        let hover_sub = |s: Option<DocSub>| {
-            cx.listener(move |w: &mut Workspace, hovered: &bool, _, cx| {
-                if *hovered && w.doc_sub != s {
-                    w.doc_sub = s;
-                    cx.notify();
-                }
-            })
+        let typst = entry.is_some_and(|e| e.typst);
+        let mode = self.bibliography_mode(cx);
+        let block_shown = self.editor().is_some_and(|e| e.read(cx).block_shown);
+        let owner = self.style_owner(cx);
+        // A document has one bibliography, and a chapter's may be in its main file.
+        let elsewhere = owner.as_ref().is_some_and(|(doc, _)| Some(doc.as_str()) != self.current());
+        let style = owner.map(|(_, style)| style);
+        let bibliography = |id: &'static str, ic: Icon, label: &'static str, target: Mode| {
+            menu_item(id, ic, label).on_click(menu_action(cx, move |w, _, cx| w.set_bibliography(target, cx)))
         };
-        let sub_bounds = self.doc_sub_bounds.clone();
-        let (pin_id, star_id, mv_id, del_id, dup_id, print_id) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone());
-        let menu = popover()
-            .id("doc-menu")
-            .occlude()
-            .w(px(MENU_W))
-            .py(px(PAD))
+        let (pin_id, star_id, mv_id, del_id, dup_id, pdf_id) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
+        let menu = menu_panel("doc-menu", MENU_W, cx)
             .flex()
             .flex_col()
             .shadow(theme::shadow_s4_down())
-            .on_mouse_down_out(cx.listener(move |w, ev: &MouseDownEvent, _, cx| {
-                if sub_bounds.get().is_none_or(|b| !b.contains(&ev.position)) {
-                    w.close_doc_menu(cx);
-                }
-            }))
-            .child(
-                menu_item("dm-width", "page-width", "Page width", true, sub == Some(DocSub::Width))
-                    .on_hover(hover_sub(Some(DocSub::Width))),
-            )
+            .child(menu_item("dm-move", Icon::Move, "Move to").on_click(menu_action(cx, move |w, window, cx| w.open_move(vec![mv_id.clone()], window, cx))))
+            .child(menu_item("dm-pin", if pinned { Icon::Unpin } else { Icon::Pin }, if pinned { "Unpin" } else { "Pin" }).on_click(menu_action(cx, move |w, _, cx| w.toggle_pin(&pin_id, cx))))
+            .child(menu_item("dm-star", if starred { Icon::Unstar } else { Icon::Star }, if starred { "Remove from favorites" } else { "Add to favorites" })
+                .on_click(menu_action(cx, move |w, _, cx| w.toggle_star(&star_id, cx))))
+            .when(typst, |d| d.child(divider())
+                .child(menu_item("dm-copy", Icon::Copy, "Duplicate").on_click(menu_action(cx, move |w, window, cx| w.duplicate_doc(&dup_id, window, cx))))
+                .child(menu_item("dm-words", Icon::Notes, "Word Count").on_click(cx.listener(|w, _, window, cx| w.open_overlay(Overlay::WordCount, window, cx))))
+                .child(menu_item("dm-history", Icon::Restore, "Version History…").on_click(menu_action(cx, |w, window, cx| w.open_history(window, cx))))
+                .child(menu_item("dm-pdf", Icon::Export, "Export as PDF").on_click(menu_action(cx, move |w, _, cx| w.export_pdf(&pdf_id, cx))))
+                .when_some(style, |d, style| {
+                    let label = CITATION_STYLES.iter().find(|(_, name)| *name == style).map_or(style.as_str(), |(label, _)| label);
+                    d.child(divider()).child(menu_item("dm-style", Icon::Quote, format!("Citation Style: {label}")).on_click(cx.listener(|w, _, window, cx| w.open_overlay(Overlay::StyleMenu, window, cx))))
+                })
+                .when(mode != Mode::Custom, |d| d.child(divider())
+                    .child(menu_item("dm-cite", Icon::Quote, "Insert citation").on_click(menu_action(cx, |w, window, cx| w.open_cite_picker(window, cx))))
+                    .when(mode == Mode::Embedded, |d| d.child(menu_item("dm-block", if block_shown { Icon::Hide } else { Icon::Show }, if block_shown { "Hide bibliography data" } else { "Show bibliography data" }).on_click(menu_action(cx, |w, _, cx| {
+                        if let Some(editor) = w.editor() { editor.update(cx, |e, cx| e.toggle_block(cx)); }
+                    }))))
+                    .when(mode != Mode::Embedded && !elsewhere, |d| d.child(bibliography("dm-embed", Icon::Library, "Embed bibliography", Mode::Embedded)))
+                    .when(mode != Mode::Linked && !elsewhere, |d| d.child(bibliography("dm-link", Icon::Library, "Link library file", Mode::Linked)))
+                    .when(mode != Mode::None, |d| d.child(bibliography("dm-unlink", Icon::Close, "Remove bibliography", Mode::None)))))
             .child(divider())
-            .child(
-                menu_item("dm-find", "text-search", "Find and replace", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(|w, _, window, cx| w.find_in_doc(false, window, cx))),
-            )
-            .child(divider())
-            .child(
-                menu_item("dm-move", "folder-input", "Move to", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(move |w, _, window, cx| {
-                        w.close_doc_menu(cx);
-                        w.open_move(vec![mv_id.clone()], window, cx);
-                    })),
-            )
-            .child(
-                menu_item(
-                    "dm-pin",
-                    if pinned { "pin-off" } else { "pin" },
-                    if pinned { "Unpin" } else { "Pin" },
-                    false,
-                    false,
-                )
-                .on_hover(hover_sub(None))
-                .on_click(cx.listener(move |w, _, _, cx| {
-                    w.toggle_pin(&pin_id, cx);
-                    w.close_doc_menu(cx);
-                })),
-            )
-            .child(
-                menu_item("dm-star", if starred { "star-off" } else { "star" }, if starred { "Remove from favorites" } else { "Add to favorites" }, false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(move |w, _, _, cx| w.toggle_star(&star_id, cx))),
-            )
-            .child(divider())
-            .child(
-                menu_item("dm-copy", "copy", "Duplicate", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(move |w, _, window, cx| w.duplicate_doc(&dup_id, window, cx))),
-            )
-            .child(
-                menu_item("dm-download", "export", "Download as", true, sub == Some(DocSub::Download))
-                    .on_hover(hover_sub(Some(DocSub::Download))),
-            )
-            .child(divider())
-            .when(crate::printing::SUPPORTED, |d| d.child(
-                menu_item("dm-print", "printer", "Print", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(move |w, _, window, cx| w.print_doc(&print_id, window, cx))),
-            ).child(divider()))
-            .child(
-                menu_item("dm-info", "info", "Document information", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(|w, _, window, cx| w.open_doc_info(window, cx))),
-            )
-            .child(divider())
-            // 更多 and 删除 share the last group.
-            .child(menu_item("dm-more", "ellipsis", "More", true, sub == Some(DocSub::More)).on_hover(hover_sub(Some(DocSub::More))))
-            .child(
-                menu_item("dm-delete", "bin", "Delete", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del_id, cx))),
-            )
-            .child(divider())
-            .child(
-                menu_item("dm-shortcuts", "keyboard", "Keyboard shortcuts", false, false)
-                    .on_hover(hover_sub(None))
-                    .on_click(cx.listener(|w, _, _, cx| {
-                        w.close_doc_menu(cx);
-                        w.shortcuts = true;
-                        cx.notify();
-                    })),
-            );
-        let vw = window.viewport_size().width;
-        let btn = self.more_btn_bounds.get();
-        let right = btn.map_or(vw - px(120.), |b| b.right());
-        let menu_top = btn.map_or(px(60.), |b| b.bottom() + px(MENU_GAP));
-        let mut out = vec![
-            deferred(anchored().anchor(Corner::TopRight).position(point(right, menu_top)).child(menu))
-                .with_priority(2)
-                .into_any_element(),
-        ];
-        // Submenus open to the left, 4px from the menu, level with their item.
-        let sub_at = point(right - px(MENU_W + 4.), px(0.));
-        let item_top = |k: usize, d: usize| f32::from(menu_top) + item_top(k, d);
-        let record = self.doc_sub_bounds.clone();
-        record.set(None);
-        let recorder = move || {
-            let record = record.clone();
-            canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0()
-        };
-        let sub_el = match sub {
-            Some(DocSub::Width) => Some((item_top(0, 0) - 1. - PAD, self.width_panel(width, cx).child(recorder()).into_any_element())),
-            // Level the submenu's first item with 下载为.
-            Some(DocSub::Download) => Some((
-                item_top(6, 3) - 1. - PAD,
-                {
-                    let pdf = id.clone();
-                    popover()
-                        .id("dm-download-menu")
-                        .occlude()
-                        .w(px(130.))
-                        .px(px(5.))
-                        .py(px(PAD))
-                        .child(recorder())
-                        .when(crate::printing::SUPPORTED, |d| d.child(sub_item("dm-pdf", "PDF").on_click(cx.listener(move |w, _, window, cx| w.export_pdf(&pdf, window, cx)))))
-                        .child(sub_item("dm-md", "Markdown").on_click(cx.listener(move |w, _, _, cx| w.open_export_md(&id, cx))))
-                        .into_any_element()
-                },
-            )),
-            Some(DocSub::More) => Some((
-                if crate::printing::SUPPORTED { item_top(9, 6) } else { item_top(8, 5) } - 1. - PAD,
-                popover()
-                    .id("dm-more-menu")
-                    .occlude()
-                    .w(px(210.))
-                    .px(px(5.))
-                    .py(px(PAD))
-                    .child(recorder())
-                    .child(
-                        sub_item("dm-refs", "Show references")
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .w(px(28.))
-                                    .h(px(16.))
-                                    .rounded_full()
-                                    .p(px(2.))
-                                    .flex()
-                                    .when(refs_shown, |d| d.justify_end())
-                                    .bg(if refs_shown { Theme::primary_500() } else { Theme::block_placeholder() })
-                                    .child(div().size(px(12.)).rounded_full().bg(crate::theme::raised(Theme::bg_body()))),
-                            )
-                            .on_click(cx.listener(move |w, _, _, cx| {
-                                w.close_doc_menu(cx);
-                                w.ask_refs(!refs_shown, cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )),
-            None => None,
-        };
-        if let Some((top, el)) = sub_el {
-            out.push(
-                deferred(anchored().anchor(Corner::TopRight).position(point(sub_at.x, px(top))).snap_to_window_with_margin(px(8.)).child(el))
-                    .with_priority(2)
-                    .into_any_element(),
-            );
-        }
-        out
-    }
-
-    /// 为当前窗口选择合适页宽: 默认 / 较宽 / 全宽 cards.
-    fn width_panel(&self, current: PageWidth, cx: &mut Context<Self>) -> Stateful<Div> {
-        let card = |id: &'static str, label: &'static str, w: PageWidth, line: f32| {
-            let on = w == current;
-            let line_color = if on { Theme::primary() } else { theme::c(craft::N400) };
-            div()
-                .id(id)
-                .w(px(56.))
-                .h(px(66.))
-                .p(px(4.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .rounded(px(9.))
-                .border_1()
-                .border_color(if on { Theme::primary() } else { Theme::line_border() })
-                .bg(crate::theme::raised(Theme::bg_body()))
-                .cursor_pointer()
-                .when(!on, |d| d.hover(|s| s.border_color(Theme::primary())))
-                .child(
-                    div()
-                        .w(px(46.))
-                        .h(px(28.))
-                        .pt(px(7.))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(2.))
-                        .rounded(px(2.))
-                        .bg(if on { theme::c(craft::B100) } else { theme::c(craft::N100) })
-                        .children((0..4).map(move |_| div().w(px(line)).h(px(2.)).flex_none().bg(line_color))),
-                )
-                .child(
-                    div()
-                        .mt(px(6.))
-                        .text_size(px(12.))
-                        .line_height(px(18.))
-                        .text_color(if on { Theme::primary() } else { Theme::text() })
-                        .child(crate::settings::label(label)),
-                )
-                .on_click(cx.listener(move |ws, _, _, cx| ws.set_page_width(w, cx)))
-        };
-        popover()
-            .id("dm-width-panel")
-            .occlude()
-            .relative()
-            .w(px(238.))
-            .h(px(136.))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(19.))
-                    .top(px(14.))
-                    .text_size(px(12.))
-                    .line_height(px(18.))
-                    .text_color(Theme::text_caption())
-                    .child("Choose a page width for this window"),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left(px(19.))
-                    .top(px(47.))
-                    .flex()
-                    .gap(px(16.))
-                    .child(card("pw-standard", "Default", PageWidth::Standard, 20.))
-                    .child(card("pw-wide", "Wide", PageWidth::Wide, 28.))
-                    .child(card("pw-full", "Full width", PageWidth::Full, 38.)),
-            )
+            .child(menu_item("dm-delete", Icon::Delete, "Delete").on_click(cx.listener(move |w, _, window, cx| w.ask_delete(&del_id, window, cx))));
+        Some(anchored_menu(Corner::TopRight, self.doc_menu_position(window), menu))
     }
 }

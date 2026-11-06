@@ -1,48 +1,50 @@
 //! Small shared UI pieces: icons, tooltips, popover shells.
 
 use crate::theme::{self, Theme, craft};
-use crate::time::civil;
+use thesio_core::time::civil;
 use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
-    svg().path(SharedString::from(format!("icons/{name}.svg"))).size(px(size)).flex_none().text_color(color)
+pub use crate::icon::Icon;
+
+pub fn icon(name: Icon, size: f32, color: Hsla) -> Svg {
+    svg().path(SharedString::from(name.path(size))).size(px(size)).flex_none().text_color(color)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ToastKind {
     Success,
     Error,
-    Info,
 }
 
-/// Toast: a white rounded card 32px below the top, centred, with a filled
-/// status circle (green check / red x / accent i). It lasts 3s and fades over
-/// its last .3s; None once it is over.
-pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, window: &mut Window) -> Option<AnyElement> {
+/// How long a toast lasts, and when it starts to fade, in seconds.
+const TOAST_LIFE: f32 = 3.;
+pub const TOAST_FADE_AT: f32 = 2.7;
+
+/// A toast `top` below the window top, centred. None once it is over.
+pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, top: f32, window: &mut Window) -> Option<AnyElement> {
     let e = t0.elapsed().as_secs_f32();
-    if e >= 3. {
+    if e >= TOAST_LIFE {
         return None;
     }
-    let op = if e > 2.7 {
+    let op = if e > TOAST_FADE_AT {
         window.request_animation_frame();
-        (3. - e) / 0.3
+        (TOAST_LIFE - e) / (TOAST_LIFE - TOAST_FADE_AT)
     } else {
         1.
     };
-    let (fill, mark, mark_size) = match kind {
-        ToastKind::Success => (theme::c(craft::old::G500), "check", 10.),
-        ToastKind::Error => (Theme::danger(), "x", 10.),
-        ToastKind::Info => (Theme::primary(), "info-mark", 12.),
+    let (fill, mark) = match kind {
+        ToastKind::Success => (theme::c(craft::G500), Icon::Check),
+        ToastKind::Error => (Theme::danger(), Icon::Close),
     };
     let vw = window.viewport_size().width;
     let card = div()
         .flex()
         .items_center()
         .px(px(14.))
-        .py(px(10.))
-        .rounded(px(12.))
+        .py(px(8.))
+        .rounded(px(8.))
         .bg(crate::theme::raised(Theme::bg_body()))
         .border_1()
         .border_color(Theme::line_border())
@@ -60,25 +62,23 @@ pub fn toast_el(kind: ToastKind, msg: &SharedString, t0: std::time::Instant, win
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(icon("circle-filled", 16., fill).absolute().top_0().left_0())
-                .child(icon(mark, mark_size, gpui::white())),
+                .child(icon(Icon::Circle, 16., fill).absolute().top_0().left_0())
+                .child(icon(mark, 10., gpui::white())),
         )
-        .child(ui_text(crate::settings::label(msg)));
+        .child(ui_text(msg.clone()));
     Some(
         deferred(
             anchored()
                 .position_mode(AnchoredPositionMode::Window)
-                .position(point(px(0.), px(32.)))
+                .position(point(px(0.), px(top)))
                 .child(div().w(vw).flex().justify_center().opacity(op).child(card)),
         )
-        .with_priority(20)
+        .with_priority(layer::TOAST)
         .into_any_element(),
     )
 }
 
-/// Popover shell shared by the slash menu, block menu and toolbar dropdowns:
-/// the light panel (macOS 26 menu material, near-white), hairline,
-/// radius 12, soft drop.
+/// Popover shell shared by menus and dropdowns.
 pub fn popover() -> Div {
     div()
         .bg(crate::theme::raised(Theme::popover_bg()))
@@ -90,95 +90,195 @@ pub fn popover() -> Div {
         .text_color(Theme::text())
 }
 
-/// Second-level panels (color panel, link editor): white, larger drop.
-/// The header button: a white pill on the note (hairline, 1px drop, radius 12).
-pub fn pill() -> Div {
-    div()
-        .flex_none()
-        .rounded(px(12.))
-        .bg(crate::theme::raised(Theme::bg_body()))
-        .border_1()
-        .border_color(Theme::button_border())
-        .shadow(theme::shadow_button())
-}
-
-/// Column headers of the page lists: tertiary text (measured #88898B on
-/// the name / last-viewed / created columns).
+/// Column headers of the page lists.
 pub fn list_header_text() -> Hsla {
     theme::c(0x88898b)
 }
 
-/// Hairline under a list header and between rows (black 4.5%).
+/// Hairline under a list header and between rows.
 pub fn list_line() -> Hsla {
     theme::ca(craft::N1000, 0.045)
 }
 
-/// The quiet list hover: a rounded fill that also hides the row's
-/// hairline above it.
-pub fn row_hover(s: StyleRefinement) -> StyleRefinement {
-    s.bg(Theme::fill_hover()).border_color(transparent_black()).rounded(px(ROW_RADIUS))
+
+/// Stacking of what GPUI draws above the page, lowest first.
+pub mod layer {
+    pub const COMPLETION: usize = 1;
+    pub const MENU: usize = 2;
+    pub const DIALOG: usize = 3;
+    /// A full-window layer that holds the pointer during a drag.
+    pub const DRAG: usize = 4;
+    pub const TOAST: usize = 20;
 }
 
-
-/// The window dimmed under a modal dialog: a light black veil.
 pub fn scrim() -> Hsla {
-    theme::ca(craft::N1000, 0.25)
+    theme::rgbaf(0, 0, 0, if theme::dark() { 0.45 } else { 0.25 })
 }
 
-/// The modal dialog: white, radius 16, deep soft drop.
 pub fn dialog(id: &'static str) -> Stateful<Div> {
-    div().id(id).occlude().rounded(px(16.)).bg(crate::theme::raised(Theme::bg_body())).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
+    div().id(id).occlude().rounded(px(12.)).bg(crate::theme::raised(Theme::bg_body())).border_1().border_color(Theme::line_border()).shadow(theme::shadow_dialog()).font_family(theme::UI_FONT).text_color(Theme::text())
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
-/// The primary button: the accent, a white 13pt semibold label, 30 tall, radius 9.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ModalAt { Center, Top }
+
+/// `panel` over the dimmed window. `on_press` takes a press beside it.
+pub fn modal_layer(id: &'static str, at: ModalAt, on_press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static, panel: impl IntoElement) -> AnyElement {
+    deferred(div().id(id).absolute().inset_0().bg(scrim()).flex().justify_center().occlude()
+        .when(at == ModalAt::Center, |d| d.items_center())
+        .when(at == ModalAt::Top, |d| d.items_start().pt(px(96.)))
+        .on_mouse_down(MouseButton::Left, on_press)
+        .child(panel)).with_priority(layer::DIALOG).into_any_element()
+}
+
+/// `menu` floating at `position`, kept inside the window.
+pub fn anchored_menu(corner: Corner, position: Point<Pixels>, menu: impl IntoElement) -> AnyElement {
+    deferred(anchored().anchor(corner).position(position).snap_to_window_with_margin(px(8.)).child(menu)).with_priority(layer::MENU).into_any_element()
+}
+
+/// Centred empty state: a large glyph, a title, and a caption.
+pub fn empty_state(glyph: Icon, title: &'static str, text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .pb(px(64.))
+        .child(icon(glyph, 44., Theme::text_placeholder()))
+        .child(div().mt(px(14.)).text_size(px(15.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().mt(px(2.)).text_size(px(13.)).line_height(px(18.)).text_color(Theme::text_caption()).child(text))
+}
+
 pub fn primary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    colored_button(id, label, false)
+}
+
+pub fn danger_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    colored_button(id, label, true)
+}
+
+fn colored_button(id: &'static str, label: &'static str, danger: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
-        .h(px(30.))
-        .px(px(16.))
+        .h(px(BUTTON_H))
+        .px(px(12.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.))
+        .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
-        .bg(Theme::primary())
-        .shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::B600)))
-        .active(|s| s.bg(theme::c(craft::B700)))
+        .bg(if danger { Theme::danger() } else { Theme::primary() })
+        .active(move |s| s.bg(if danger { theme::c(craft::R700) } else { Theme::primary_strong() }))
         .text_size(px(13.))
         .line_height(px(20.))
-        .font_weight(FontWeight::SEMIBOLD)
         .text_color(gpui::white())
-        .child(crate::settings::label(label))
+        .child(label)
 }
 
-/// The secondary button: white with a hairline and a 1px drop, 30 tall, radius 9.
+/// A primary button led by a glyph.
+pub fn primary_icon_button(id: &'static str, glyph: Icon, label: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .h(px(BUTTON_H))
+        .pl(px(9.))
+        .pr(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .rounded(px(BUTTON_RADIUS))
+        .cursor_pointer()
+        .bg(Theme::primary())
+        .active(|s| s.bg(Theme::primary_strong()))
+        .text_size(px(13.))
+        .line_height(px(20.))
+        .text_color(gpui::white())
+        .child(icon(glyph, 14., gpui::white()))
+        .child(label)
+}
+
+/// A segmented control: a grey groove and a white selected pill.
+pub fn segmented(id: &'static str, labels: &[&'static str], selected: usize, on: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Div {
+    let on = Rc::new(on);
+    div().flex_none().h(px(BUTTON_H)).flex().gap(px(2.))
+        .children(labels.iter().enumerate().map(|(i, label)| {
+            let on = on.clone();
+            div().id((id, i)).h_full().px(px(12.)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+                .text_size(px(13.)).line_height(px(18.))
+                // In dark mode the picked segment is lighter than the groove (macOS: #636366).
+                .when(i == selected, |d| d.bg(Theme::fill_hover_strong()).text_color(Theme::text()))
+                .when(i != selected, |d| d.text_color(Theme::text_caption()))
+                .child(*label)
+                .on_click(move |_, window, cx| on(&i, window, cx))
+        }))
+}
+
+pub fn toolbar_icon(id: &'static str, glyph: Icon) -> Stateful<Div> {
+    div().id(id).no_drag().flex_none().size(px(TOOLBAR_ITEM)).flex().items_center().justify_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+        .active(|s| s.bg(Theme::fill_pressed())).child(icon(glyph, 15., Theme::text_code()))
+}
+
+/// A count with thousands set apart: 18,420.
+pub fn format_count(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) { out.push(','); }
+        out.push(digit);
+    }
+    out
+}
+
+pub fn toolbar_group() -> Div {
+    div().flex_none().flex().items_center().gap(px(2.))
+}
+
+/// A text field: a hairline outline that takes the accent while focused.
+pub fn field_well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    well(field, window, cx).child(field.clone())
+}
+
+/// A search field: a magnifier, then `field`.
+pub fn search_well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    well(field, window, cx).gap(px(6.)).child(icon(Icon::Search, 13., Theme::text_caption())).child(div().flex_1().min_w_0().child(field.clone()))
+}
+
+fn well(field: &Entity<crate::input::TextField>, window: &Window, cx: &App) -> Div {
+    let focused = field.read(cx).is_focused(window);
+    div().h(px(BUTTON_H)).px(px(9.)).flex().items_center().rounded(px(BUTTON_RADIUS)).text_size(px(13.))
+        .border_1().border_color(if focused { Theme::primary() } else { Theme::line_border() })
+}
+
 pub fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
-        .h(px(30.))
-        .px(px(16.))
+        .h(px(BUTTON_H))
+        .px(px(12.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.))
+        .rounded(px(BUTTON_RADIUS))
         .cursor_pointer()
-        .bg(crate::theme::raised(Theme::bg_body()))
         .border_1()
-        .border_color(Theme::button_border())
-        .shadow(theme::shadow_button())
-        .hover(|s| s.bg(theme::c(craft::N100)))
-        .active(|s| s.bg(theme::c(craft::N200)))
+        .border_color(Theme::line_border())
+        .active(|s| s.bg(Theme::fill_pressed()))
         .text_size(px(13.))
         .line_height(px(20.))
         .text_color(Theme::text())
-        .child(crate::settings::label(label))
+.child(label)
 }
 
-/// The panel close button: a grey disc with a white cross (measured
-/// #B6B7B8 on #F7F7F7, black at about 26%).
+/// A borderless dialog action, beside the buttons but quieter than them.
+pub fn plain_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    div().id(id).flex_none().h(px(BUTTON_H)).px(px(4.)).flex().items_center().rounded(px(BUTTON_RADIUS)).cursor_pointer()
+        .text_size(px(13.)).line_height(px(20.)).text_color(Theme::primary()).child(label)
+}
+
+/// The panel close button: a grey disc with a white cross.
 pub fn close_button(id: &'static str) -> Stateful<Div> {
     div()
         .id(id)
@@ -190,28 +290,30 @@ pub fn close_button(id: &'static str) -> Stateful<Div> {
         .rounded_full()
         .cursor_pointer()
         .bg(theme::ca(craft::N1000, 0.26))
-        .hover(|s| s.bg(theme::ca(craft::N1000, 0.36)))
-        .child(icon("x", 16., gpui::white()))
+        .child(icon(Icon::Close, 16., gpui::white()))
 }
 
-/// Menus and popovers round at 12 (the native menu panel); their
-/// rows at 6, 5pt in from the edge.
-pub const MENU_RADIUS: f32 = 12.;
-pub const ROW_RADIUS: f32 = 6.;
+/// The height of every header, and of the actions in it.
+pub const HEADER_H: f32 = 48.;
+pub const HEADER_ACTIONS_H: f32 = 32.;
 
-/// A menu row like a native menu's: 26 tall, 13pt label, 16pt glyph;
-/// hovering paints the accent. `group` names the row so its glyph
-/// ([`menu_glyph`]) and label ([`menu_label`]) can turn white with it.
-pub const MENU_ROW_H: f32 = 32.;
-pub const MENU_PAD_Y: f32 = 6.;
+pub const BUTTON_H: f32 = 26.;
+pub const BUTTON_RADIUS: f32 = 6.;
+const TOOLBAR_ITEM: f32 = 28.;
 
-pub fn menu_row(id: impl Into<ElementId>, group: SharedString) -> Stateful<Div> {
+/// Menus and popovers round at 8; their rows at 5, 4pt in from the edge.
+pub const MENU_RADIUS: f32 = 8.;
+pub const ROW_RADIUS: f32 = 5.;
+
+pub const MENU_ROW_H: f32 = 26.;
+pub const MENU_PAD_Y: f32 = 5.;
+
+pub fn menu_row(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
-        .group(group)
         .flex_none()
         .h(px(MENU_ROW_H))
-        .mx(px(5.))
+        .mx(px(4.))
         .px(px(8.))
         .flex()
         .items_center()
@@ -224,26 +326,14 @@ pub fn menu_row(id: impl Into<ElementId>, group: SharedString) -> Stateful<Div> 
         .hover(|s| s.bg(Theme::menu_highlight()))
 }
 
-/// A [`crate::ui::menu_row`] label that turns `hover` (white) while its row
-/// is highlighted. GPUI fixes a text's colour when it lays the text out,
-/// before hover is known, so a hover text colour on the row never reaches
-/// the label; instead a `hover` copy lies over it and the two swap through
-/// `group_hover` opacity, which is resolved at paint.
-pub fn menu_label(label: impl Into<SharedString>, group: SharedString, hover: Hsla) -> Div {
-    let label: SharedString = crate::settings::label(label.into()).into();
-    div()
-        .relative()
-        .whitespace_nowrap()
-        .child(div().group_hover(group.clone(), |s| s.opacity(0.)).child(label.clone()))
-        .child(div().absolute().top_0().left_0().text_color(hover).opacity(0.).group_hover(group, |s| s.opacity(1.)).child(crate::settings::label(label)))
+pub fn menu_label(label: impl Into<SharedString>) -> Div {
+    div().whitespace_nowrap().child(label.into())
 }
 
-/// Glyph of a [`menu_row`]: secondary, white while its row is hovered.
-pub fn menu_glyph(name: &str, size: f32, group: SharedString) -> Svg {
-    icon(name, size, Theme::text_code()).group_hover(group, |s| s.text_color(gpui::white()))
+pub fn menu_glyph(name: Icon, size: f32) -> Svg {
+    icon(name, size, Theme::text_code())
 }
 
-/// Tooltip bubble: the dark rounded tip (12pt white on near-black, radius 7, arrow).
 pub struct Tooltip {
     /// One or more lines.
     label: SharedString,
@@ -254,33 +344,31 @@ pub struct Tooltip {
     side: TipSide,
 }
 
-/// Preferred side: chrome shows tooltips below, document controls above,
-/// menu items to the right. Flipped when there is no room.
+/// Preferred side: chrome shows tooltips below, menu items to the right.
+/// Flipped when there is no room.
 #[derive(Clone, Copy, PartialEq)]
 pub enum TipSide {
     Below,
-    Above,
     Right,
 }
 
-const TIP_GAP: f32 = 8.;
-const TIP_ARROW: f32 = 5.;
-const TIP_PAD: f32 = 12.;
-const TIP_LINE: f32 = 18.;
-const TIP_BG: u32 = 0x2a2c2f;
-/// Tooltips stay dark in both looks (a step lighter on the dark page).
-fn tip_bg() -> Hsla { if theme::dark() { theme::rgbaf(0x3a, 0x3b, 0x3d, 1.) } else { theme::rgbaf((TIP_BG >> 16) as u8, (TIP_BG >> 8) as u8, TIP_BG as u8, 1.) } }
+const TIP_GAP: f32 = 6.;
+const TIP_PAD: f32 = 6.;
+const TIP_LINE: f32 = 14.;
+const TIP_TEXT: f32 = 11.;
 
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let lines: Vec<SharedString> = self.label.split('\n').map(|l| SharedString::from(l.to_string())).collect();
         let bubble = div()
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(7.))
-            .bg(tip_bg())
-            .text_color(gpui::white())
-            .text_size(px(12.))
+            .px(px(6.))
+            .py(px(3.))
+            .rounded(px(5.))
+            .bg(theme::raised(Theme::popover_bg()))
+            .border_1()
+            .border_color(Theme::line_border())
+            .text_color(Theme::text())
+            .text_size(px(TIP_TEXT))
             .line_height(px(TIP_LINE))
             .font_family(theme::UI_FONT)
             .whitespace_nowrap()
@@ -290,111 +378,59 @@ impl Render for Tooltip {
         let Some(anchor) = self.anchor else {
             return div().pl(px(8.)).pt(px(10.)).child(bubble).into_any_element();
         };
-        // 10px from the trigger with an arrow pointing at it, on the preferred
-        // side unless it doesn't fit, and kept inside the window.
+        // Beside the trigger on the preferred side, unless it doesn't fit, and kept inside the window.
         let mut style = window.text_style();
         style.font_family = theme::UI_FONT.into();
         let text_w = lines
             .iter()
             .map(|l| {
                 let runs = ui_text(l.clone()).runs(&style);
-                window.text_system().shape_line(l.clone(), px(12.), &runs, None).width
+                window.text_system().shape_line(l.clone(), px(TIP_TEXT), &runs, None).width
             })
             .fold(px(0.), |a, b| a.max(b));
-        let w = text_w + px(20.);
+        let w = text_w + px(12.);
         let h = px(TIP_PAD + TIP_LINE * lines.len() as f32);
         let vp = window.viewport_size();
         let gap = px(TIP_GAP);
-        let s = px(TIP_ARROW);
-        // (bubble origin, arrow base centre, arrow direction)
-        let (x, y, arrow): (Pixels, Pixels, Box<dyn Fn(&mut PathBuilder)>) = if self.side == TipSide::Right
-            && (anchor.right() + gap + w <= vp.width || anchor.left() - gap - w < px(0.))
-        {
-            let x = anchor.right() + gap;
-            let cy = anchor.center().y;
-            let y = (cy - h / 2.).min(vp.height - h).max(px(0.));
-            let tip_y = cy.max(y + px(10.)).min(y + h - px(10.));
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(x, tip_y - s));
-                p.line_to(point(x - s * 0.88, tip_y - px(0.8)));
-                p.line_to(point(x - s * 0.88, tip_y + px(0.8)));
-                p.line_to(point(x, tip_y + s));
-            }))
-        } else if self.side == TipSide::Right {
-            let x = anchor.left() - gap - w;
-            let cy = anchor.center().y;
-            let y = (cy - h / 2.).min(vp.height - h).max(px(0.));
-            let tip_y = cy.max(y + px(10.)).min(y + h - px(10.));
-            let bx = x + w;
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(bx, tip_y - s));
-                p.line_to(point(bx + s * 0.88, tip_y - px(0.8)));
-                p.line_to(point(bx + s * 0.88, tip_y + px(0.8)));
-                p.line_to(point(bx, tip_y + s));
-            }))
+        let (x, y) = if self.side == TipSide::Right {
+            let x = if anchor.right() + gap + w <= vp.width || anchor.left() - gap - w < px(0.) { anchor.right() + gap } else { anchor.left() - gap - w };
+            (x, (anchor.center().y - h / 2.).min(vp.height - h).max(px(0.)))
         } else {
-            let cx = anchor.center().x;
-            let x = (cx - w / 2.).min(vp.width - w).max(px(0.));
-            let fits_below = anchor.bottom() + gap + h <= vp.height;
-            let fits_above = anchor.top() - gap - h >= px(0.);
-            let below = if self.side == TipSide::Above { !fits_above } else { fits_below };
-            let y = if below { anchor.bottom() + gap } else { anchor.top() - gap - h };
-            let tip_x = cx.max(x + px(10.)).min(x + w - px(10.));
-            let (base, apex) = if below { (y, y - s) } else { (y + h, y + h + s) };
-            (x, y, Box::new(move |p: &mut PathBuilder| {
-                p.move_to(point(tip_x - s, base));
-                p.line_to(point(tip_x - px(0.8), apex + (base - apex) * 0.12));
-                p.line_to(point(tip_x + px(0.8), apex + (base - apex) * 0.12));
-                p.line_to(point(tip_x + s, base));
-            }))
+            let below = anchor.bottom() + gap + h <= vp.height;
+            ((anchor.center().x - w / 2.).min(vp.width - w).max(px(0.)), if below { anchor.bottom() + gap } else { anchor.top() - gap - h })
         };
         let o = self.origin;
-        let arrow = canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let mut p = PathBuilder::fill();
-                arrow(&mut p);
-                p.close();
-                if let Ok(path) = p.build() {
-                    window.paint_path(path, tip_bg());
-                }
-            },
-        )
-        .absolute()
-        .size(px(1.));
-        div()
-            .size(px(1.))
-            .child(div().absolute().left(x - o.x).top(y - o.y).child(bubble))
-            .child(arrow)
-            .into_any_element()
+        div().size(px(1.)).child(div().absolute().left(x - o.x).top(y - o.y).child(bubble)).into_any_element()
     }
 }
 
 /// Tooltip anchored on the element rather than the mouse.
-pub trait TipExt: Sized {
-    /// Window chrome: below, shortcut in full-width parens ("展开面板（⌘ + ]）").
+pub trait TipExt: ParentElement + StatefulInteractiveElement + Sized {
+    /// Window chrome: below, with the shortcut in full-width parentheses.
     fn tip(self, text: &str, keys: Option<&str>) -> Self {
-        let text = crate::settings::label(text);
         let label = match keys {
             Some(k) => format!("{text}（{k}）"),
             None => text.to_string(),
         };
         self.tip_label(label, TipSide::Below)
     }
-    /// Document controls: above, in the editor's shortcut format
-    /// ("粗体 (⌘ + B)"), optionally with a "Markdown: …" second line.
-    fn tip_above(self, text: &str, keys: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, None), TipSide::Above)
+    /// `tip` with the key the keymap holds for `action`.
+    fn tip_action(self, text: &str, action: &dyn Action, cx: &App) -> Self {
+        self.tip(text, crate::shortcuts::hint(action, cx).as_deref())
     }
-    fn tip_md(self, text: &str, keys: Option<&str>, md: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, md), TipSide::Above)
+    fn tip_label(self, label: String, side: TipSide) -> Self {
+        let bounds = Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
+        let record = bounds.clone();
+        let label = SharedString::from(label);
+        self.child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0()).tooltip(move |window, cx| {
+            let origin = window.mouse_position() + point(px(1.), px(1.));
+            let (label, anchor) = (label.clone(), bounds.get());
+            cx.new(|_| Tooltip { label, anchor, origin, side }).into()
+        })
     }
-    /// Menu items: to the right.
-    fn tip_right(self, text: &str, keys: Option<&str>) -> Self {
-        self.tip_label(doc_tip(text, keys, None), TipSide::Right)
-    }
-    fn tip_label(self, label: String, side: TipSide) -> Self;
 }
+
+impl<E: ParentElement + StatefulInteractiveElement> TipExt for E {}
 
 /// Window chrome above the page's top line works like a native title bar: a
 /// press drags the window, a double press zooms it (per the system setting).
@@ -419,103 +455,30 @@ impl<E: InteractiveElement> TitleBarExt for E {}
 
 pub(crate) const WINDOW_CONTROLS_W: f32 = if cfg!(target_os = "windows") { 163. } else { 0. };
 pub(crate) fn header_right_inset() -> f32 {
-    if cfg!(target_os = "windows") { WINDOW_CONTROLS_W } else { (crate::app::HEADER_H - crate::app::HEADER_ACTIONS_H) / 2. }
+    if cfg!(target_os = "windows") { WINDOW_CONTROLS_W } else { (HEADER_H - HEADER_ACTIONS_H) / 2. }
 }
 
 pub(crate) fn window_controls(window: &Window) -> Option<Div> {
     if !cfg!(target_os = "windows") { return None; }
     let button = |id: &'static str, area: WindowControlArea, label: &'static str| {
-        div().id(id).size(px(crate::app::HEADER_ACTIONS_H)).mx(px(7.)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
-            .occlude().window_control_area(area).hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).tip(label, None)
+        div().id(id).size(px(HEADER_ACTIONS_H)).mx(px(7.)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
+            .occlude().window_control_area(area).active(|s| s.bg(Theme::fill_pressed())).tip(label, None)
     };
     let maximized = window.is_maximized();
     // Native hit-test areas preserve Snap Layouts and the normal WM_CLOSE save guard.
-    Some(div().absolute().top_0().right_0().h(px(crate::app::HEADER_H)).flex().items_center().title_bar()
+    Some(div().absolute().top_0().right_0().h(px(HEADER_H)).flex().items_center().title_bar()
         .child(div().mx(px(12.)).w(px(1.)).h(px(18.)).bg(Theme::line_divider()))
         .child(button("window-minimize", WindowControlArea::Min, "Minimize")
-            .child(icon("minus", 18., Theme::icon())))
-        .child(button("window-maximize", WindowControlArea::Max, if maximized { "Restore" } else { "Maximize" }).child(icon(if maximized { "copy" } else { "expand" }, 18., Theme::icon())))
+            .child(icon(Icon::Minus, 18., Theme::icon())))
+        .child(button("window-maximize", WindowControlArea::Max, if maximized { "Restore" } else { "Maximize" }).child(icon(if maximized { Icon::Copy } else { Icon::Maximize }, 18., Theme::icon())))
         .child(button("window-close", WindowControlArea::Close, "Close")
-            .child(icon("x", 18., Theme::icon()))))
+            .child(icon(Icon::Close, 18., Theme::icon()))))
 }
 
-/// "名称 (键 + 键)" plus an optional "Markdown: …" line.
-pub fn doc_tip(text: &str, keys: Option<&str>, md: Option<&str>) -> String {
-    let text = crate::settings::text(text);
-    let mut s = match keys {
-        Some(k) => format!("{text} ({k})"),
-        None => text.to_string(),
-    };
-    if let Some(m) = md {
-        s.push_str("\nMarkdown: ");
-        s.push_str(crate::settings::text(m));
-    }
-    s
-}
 
-impl TipExt for Stateful<Div> {
-    fn tip_label(self, label: String, side: TipSide) -> Self {
-        let bounds = Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
-        let record = bounds.clone();
-        let label = SharedString::from(label);
-        self.child(canvas(move |b, _, _| record.set(Some(b)), |_, _, _, _| {}).absolute().inset_0()).tooltip(move |window, cx| {
-            let origin = window.mouse_position() + point(px(1.), px(1.));
-            let (label, anchor) = (label.clone(), bounds.get());
-            cx.new(|_| Tooltip { label, anchor, origin, side }).into()
-        })
-    }
-}
-
-/// Human-friendly modification time ("今天 14:03", "昨天", "10月3日").
-pub fn format_time(secs: u64) -> String {
-    let now = crate::time::now();
-    let (y, mo, d, h, mi) = civil(secs);
-    let (ny, nmo, nd, _, _) = civil(now);
-    let (yy, ymo, yd, _, _) = civil(now.saturating_sub(86_400));
-    if (y, mo, d) == (ny, nmo, nd) {
-        format!("Today {h:02}:{mi:02}")
-    } else if (y, mo, d) == (yy, ymo, yd) {
-        format!("Yesterday {h:02}:{mi:02}")
-    } else if y == ny {
-        format!("{mo:02}-{d:02}")
-    } else {
-        format!("{y}-{mo:02}-{d:02}")
-    }
-}
-
-/// Header status time ("刚刚", "5 分钟前", then like `format_time`).
-pub fn format_ago(secs: u64) -> String {
-    let ago = crate::time::now().saturating_sub(secs);
-    if ago < 60 {
-        "just now".into()
-    } else if ago < 3600 {
-        format!("{} min ago", ago / 60)
-    } else {
-        format_time(secs)
-    }
-}
-
-/// Full date ("2025年12月2日"), as in 文档信息.
-pub fn format_date(secs: u64) -> String {
-    let (y, mo, d, _, _) = civil(secs);
-    format!("{y}-{mo:02}-{d:02}")
-}
-
-/// Relative time for 文档信息 ("几秒前", "3 分钟前", "2 小时前", then the date).
-pub fn format_relative(secs: u64) -> String {
-    let ago = crate::time::now().saturating_sub(secs);
-    match ago {
-        0..60 => "a few seconds ago".into(),
-        60..3600 => format!("{} min ago", ago / 60),
-        3600..86_400 => format!("{} hours ago", ago / 3600),
-        _ => format_date(secs),
-    }
-}
-
-/// Search result times (`space.date_format.*`): "刚刚", "N 分钟前",
-/// "今天 / 昨天 / 前天 HH:mm", "M月D日 HH:mm", across years "YYYY年M月D日".
+/// Format search result times relative to the current day.
 pub fn format_visit(secs: u64) -> String {
-    let now = crate::time::now();
+    let now = thesio_core::time::now();
     let ago = now.saturating_sub(secs);
     if ago < 60 {
         return "just now".into();
@@ -802,78 +765,14 @@ impl Element for UiPara {
     }
 }
 
-/// Paint the outside of a continuous corner, including over cover images.
-pub fn continuous_corner_mask(radius: f32, color: Hsla) -> impl IntoElement {
-    canvas(|bounds, _, _| bounds, move |_, b, window, _| {
-        let x = f32::from(b.left()); let y = f32::from(b.top());
-        let w = f32::from(b.size.width); let h = f32::from(b.size.height);
-        let r = radius.min(w / 2.).min(h / 2.);
-        for (sx, sy, ux, uy, vx, vy) in [
-            (x + w - r, y, 1., 0., 0., 1.),
-            (x + w, y + h - r, 0., 1., -1., 0.),
-            (x + r, y + h, -1., 0., 0., -1.),
-            (x, y + r, 0., -1., 1., 0.),
-        ] {
-            let q = |u: f32, v: f32| point(px(sx + r * (u * ux + v * vx)), px(sy + r * (u * uy + v * vy)));
-            let mut path = PathBuilder::fill();
-            path.move_to(q(0., 0.));
-            path.line_to(q(1., 0.));
-            path.line_to(q(1., 1.));
-            path.cubic_bezier_to(q(std::f32::consts::FRAC_1_SQRT_2, 0.2928932), q(1., 0.7928932), q(1., 0.5857864));
-            path.cubic_bezier_to(q(0., 0.), q(0.4142136, 0.), q(0.2071068, 0.));
-            path.close();
-            if let Ok(path) = path.build() { window.paint_path(path, color); }
-        }
-    }).absolute().inset_0()
-}
-
-pub fn continuous_page(radius: f32) -> Div { continuous_surface(radius, Theme::bg_body()) }
-
-pub fn continuous_surface(radius: f32, color: Hsla) -> Div {
-    div().relative().child(canvas(|bounds, _, _| bounds, move |_, bounds, window, _| {
-        let inset = 0.;
-                let x = f32::from(bounds.left()) + inset;
-                let y = f32::from(bounds.top()) + inset;
-                let w = f32::from(bounds.size.width) - inset * 2.;
-                let h = f32::from(bounds.size.height) - inset * 2.;
-                let r = (radius - inset).max(0.).min(w / 2.).min(h / 2.);
-                let pt = |a, b| point(px(a), px(b));
-                let mut path = PathBuilder::fill();
-                // Two cubics per corner: zero curvature at the straight joins,
-                // a shared tangent/curvature at the midpoint, and a circular-size
-                // diagonal inset rather than the previous overly square curve.
-                let corner = |path: &mut PathBuilder, sx: f32, sy: f32, ux: f32, uy: f32, vx: f32, vy: f32| {
-                    let q = |u: f32, v: f32| pt(sx + r * (u * ux + v * vx), sy + r * (u * uy + v * vy));
-                    path.cubic_bezier_to(q(std::f32::consts::FRAC_1_SQRT_2, 0.2928932), q(0.2071068, 0.), q(0.4142136, 0.));
-                    path.cubic_bezier_to(q(1., 1.), q(1., 0.5857864), q(1., 0.7928932));
-                };
-                path.move_to(pt(x + r, y));
-                path.line_to(pt(x + w - r, y));
-                corner(&mut path, x + w - r, y, 1., 0., 0., 1.);
-                path.line_to(pt(x + w, y + h - r));
-                corner(&mut path, x + w, y + h - r, 0., 1., -1., 0.);
-                path.line_to(pt(x + r, y + h));
-                corner(&mut path, x + r, y + h, -1., 0., 0., -1.);
-                path.line_to(pt(x, y + r));
-                corner(&mut path, x, y + r, 0., -1., 1., 0.);
-                path.close();
-                if let Ok(path) = path.build() { window.paint_path(path, color); }
-    }).absolute().inset_0())
-}
-
-pub fn header_icon(id: &'static str, name: &'static str) -> Stateful<Div> {
-    div().id(id).no_drag().size(px(crate::app::HEADER_ACTIONS_H)).rounded(px(8.)).flex_none().flex().items_center().justify_center().cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover())).active(|s| s.bg(Theme::fill_pressed())).child(icon(name, 18., Theme::icon()))
-}
-
-pub(crate) fn checkbox(on: bool) -> Div {
+/// A document's glyph, in a 24 slot.
+pub(crate) fn doc_icon() -> Div {
     div()
-        .size(px(16.))
         .flex_none()
+        .size(px(24.))
+        .mr(px(10.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(4.))
-        .when(on, |d| d.bg(Theme::primary()).child(icon("todo-check", 12., Theme::bg_body())))
-        .when(!on, |d| d.border_1().border_color(Theme::todo_box()).bg(crate::theme::raised(Theme::bg_body())))
+        .child(icon(Icon::Document, 18., Theme::text_caption()))
 }

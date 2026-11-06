@@ -1,23 +1,13 @@
 //! Scripted UI driver for development: `THESIO_SCRIPT=steps.txt` replays input
-//! into the window and `shot <name>` saves PNGs of the window to `THESIO_SHOTS`
-//! (default /tmp). One step per line:
-//!   wait <ms> | key <keystroke> | type <text> | move x y | click x y |
-//!   dclick x y | rclick x y | drag x1 y1 x2 y2 | shot <name> | burst <name> n |
-//!   mark <text> (IME composition) | commit <text> | nkey <letter> (a real
-//!   key press through AppKit, so the active input method sees it) |
-//!   activate (make the window key; takes focus) | quit |
-//!   pick <path>[|<path>...] (answers the next file dialog instead of showing it)
-//! For profiling: bench <n> <step> (runs the step n times, drawing a frame
-//!   synchronously after each, and prints step / frame / editor-render times) |
-//!   wheel x y dy (one scroll-wheel event).
-//! For demo videos: glide x y ms (eased pointer move from the last position) |
-//!   scroll x y dy ms (eased wheel scroll) | record <file.mp4> | record stop |
-//!   caption <text> (a timed note in the pointer track, for titles).
-//!   A recording is 30 fps through ffmpeg (`THESIO_RECORD_FPS` overrides). Frames are rendered offscreen, so
-//!   they have no cursor, traffic lights or rounded corners; the pointer track
-//!   goes to `<file>.cursor` for compositing those in afterwards.
+//! into the window and saves shots to `THESIO_SHOTS` (default /tmp). `COMMANDS`
+//! is the script grammar, and tools/harness/README.md documents each command;
+//! a test keeps the two together.
 
+use crate::system::Clip;
 use gpui::*;
+use std::cell::Cell;
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,18 +15,9 @@ fn fps() -> f64 {
     std::env::var("THESIO_RECORD_FPS").ok().and_then(|v| v.parse().ok()).filter(|&f: &f64| f > 0.).unwrap_or(30.)
 }
 
-/// Time spent in the editor's `render` during the last benched frame.
-pub static RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Last pointer position, and the cursor log of the running recording.
 static POINTER: Mutex<(f32, f32)> = Mutex::new((640., 400.));
 static CURSOR_LOG: Mutex<Option<(Instant, std::fs::File)>> = Mutex::new(None);
-static PICK: Mutex<Option<Vec<std::path::PathBuf>>> = Mutex::new(None);
-
-/// The scripted answer to the next open / save dialog, if any.
-pub fn take_pick() -> Option<Vec<std::path::PathBuf>> {
-    PICK.lock().unwrap().take()
-}
 
 fn log_pointer(x: f32, y: f32, what: &str) {
     use std::io::Write;
@@ -50,15 +31,445 @@ fn ease(t: f32) -> f32 {
     if t < 0.5 { 4. * t * t * t } else { 1. - (-2. * t + 2.).powi(3) / 2. }
 }
 
+/// What `clip` puts on the simulated clipboard.
+#[derive(Debug)]
+enum Clipping {
+    Text(PathBuf),
+    Image(PathBuf),
+    Files(Vec<PathBuf>),
+}
+
+impl Clipping {
+    fn read(&self) -> std::io::Result<Clip> {
+        Ok(match self {
+            Clipping::Text(path) => Clip::Text(std::fs::read_to_string(path)?),
+            Clipping::Image(path) => Clip::Image(std::fs::read(path)?),
+            Clipping::Files(files) => Clip::Files(files.clone()),
+        })
+    }
+}
+
+#[derive(Debug)]
+enum Step {
+    Wait(u64),
+    Key(String),
+    Type(String),
+    Nkey(String),
+    Mark(String),
+    Commit(String),
+    Move(f32, f32),
+    Click(f32, f32),
+    Dclick(f32, f32),
+    Rclick(f32, f32),
+    Cmdclick(f32, f32),
+    Drag(f32, f32, f32, f32),
+    Down(f32, f32, i64),
+    Dragto(f32, f32),
+    Up(f32, f32, i64),
+    Wheel(f32, f32, f32),
+    Shot(String),
+    Burst(String, usize),
+    Deskshot(String, f64),
+    Clip(Clipping),
+    Drop(f32, f32, Vec<PathBuf>),
+    Dropover(f32, f32, Vec<PathBuf>),
+    Pick(Vec<PathBuf>),
+    Pdfselect(String),
+    Resize(f32, f32),
+    Place(f32, f32),
+    Bench { times: usize, label: String, step: Box<Step> },
+    Noop,
+    Record(Option<String>),
+    Glide(f32, f32, f32),
+    Scroll(f32, f32, f32, f32),
+    Caption(String),
+    Activate,
+    Quit,
+}
+
+fn nums<const N: usize>(s: &str) -> Option<[f32; N]> {
+    let n: Vec<f32> = s.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+    n.get(..N)?.try_into().ok()
+}
+
+fn text(s: &str) -> Option<String> { Some(s.trim().to_string()).filter(|s| !s.is_empty()) }
+
+/// `x y` and an optional click count.
+fn press(s: &str) -> Option<(f32, f32, i64)> {
+    let [x, y] = nums(s)?;
+    Some((x, y, nums::<3>(s).map_or(1, |[_, _, clicks]| clicks as i64)))
+}
+
+fn paths(s: &str) -> Vec<PathBuf> { s.trim().split('|').map(PathBuf::from).collect() }
+
+fn clipping(s: &str) -> Option<Step> {
+    let (kind, rest) = s.trim().split_once(' ')?;
+    Some(Step::Clip(match kind {
+        "text" => Clipping::Text(rest.trim().into()),
+        "image" => Clipping::Image(rest.trim().into()),
+        "files" => Clipping::Files(paths(rest)),
+        _ => return None,
+    }))
+}
+
+/// `x y` and the paths after them, which may hold spaces.
+fn file_drag(s: &str) -> Option<(f32, f32, Vec<PathBuf>)> {
+    let mut parts = s.trim().splitn(3, ' ');
+    let (x, y) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+    Some((x, y, paths(parts.next()?)))
+}
+
+fn bench(s: &str) -> Option<Step> {
+    let (times, label) = s.trim().split_once(' ').unwrap_or((s.trim(), "noop"));
+    let step = parse(label).filter(|step| !matches!(step, Step::Bench { .. } | Step::Quit))?;
+    Some(Step::Bench { times: times.parse().ok()?, label: label.to_string(), step: Box::new(step) })
+}
+
+type Parse = fn(&str) -> Option<Step>;
+
+/// The script grammar: each command and what its arguments make.
+const COMMANDS: &[(&str, Parse)] = &[
+    ("wait", |s| Some(Step::Wait(s.trim().parse().ok()?))),
+    ("key", |s| text(s).map(Step::Key)),
+    // Only leading whitespace is insignificant: `type ab ` types a trailing space.
+    ("type", |s| Some(Step::Type(s.to_string()))),
+    ("nkey", |s| text(s).map(Step::Nkey)),
+    ("mark", |s| Some(Step::Mark(s.to_string()))),
+    ("commit", |s| Some(Step::Commit(s.to_string()))),
+    ("move", |s| nums(s).map(|[x, y]| Step::Move(x, y))),
+    ("click", |s| nums(s).map(|[x, y]| Step::Click(x, y))),
+    ("dclick", |s| nums(s).map(|[x, y]| Step::Dclick(x, y))),
+    ("rclick", |s| nums(s).map(|[x, y]| Step::Rclick(x, y))),
+    ("cmdclick", |s| nums(s).map(|[x, y]| Step::Cmdclick(x, y))),
+    ("drag", |s| nums(s).map(|[x0, y0, x1, y1]| Step::Drag(x0, y0, x1, y1))),
+    ("down", |s| press(s).map(|(x, y, clicks)| Step::Down(x, y, clicks))),
+    ("dragto", |s| nums(s).map(|[x, y]| Step::Dragto(x, y))),
+    ("up", |s| press(s).map(|(x, y, clicks)| Step::Up(x, y, clicks))),
+    ("wheel", |s| nums(s).map(|[x, y, dy]| Step::Wheel(x, y, dy))),
+    ("shot", |s| text(s).map(Step::Shot)),
+    ("burst", |s| {
+        let (name, n) = s.trim().split_once(' ').unwrap_or((s.trim(), "10"));
+        Some(Step::Burst(text(name)?, n.trim().parse().ok()?))
+    }),
+    ("deskshot", |s| {
+        let (name, margin) = s.trim().split_once(' ').unwrap_or((s.trim(), "48"));
+        Some(Step::Deskshot(text(name)?, margin.trim().parse().ok()?))
+    }),
+    ("clip", clipping),
+    ("drop", |s| file_drag(s).map(|(x, y, files)| Step::Drop(x, y, files))),
+    ("dropover", |s| file_drag(s).map(|(x, y, files)| Step::Dropover(x, y, files))),
+    ("pick", |s| Some(Step::Pick(paths(s)))),
+    ("pdfselect", |s| text(s).map(Step::Pdfselect)),
+    ("resize", |s| nums(s).map(|[w, h]| Step::Resize(w, h))),
+    ("place", |s| nums(s).map(|[x, y]| Step::Place(x, y))),
+    ("bench", bench),
+    ("noop", |_| Some(Step::Noop)),
+    ("record", |s| Some(Step::Record(text(s).filter(|path| path != "stop")))),
+    ("glide", |s| nums(s).map(|[x, y, ms]| Step::Glide(x, y, ms))),
+    ("scroll", |s| nums(s).map(|[x, y, dy, ms]| Step::Scroll(x, y, dy, ms))),
+    ("caption", |s| text(s).map(Step::Caption)),
+    ("activate", |_| Some(Step::Activate)),
+    ("quit", |_| Some(Step::Quit)),
+];
+
+fn parse(line: &str) -> Option<Step> {
+    let (command, rest) = line.split_once(' ').unwrap_or((line, ""));
+    COMMANDS.iter().find(|(name, _)| *name == command).and_then(|(_, parse)| parse(rest))
+}
+
+fn parse_script(script: &str) -> Vec<Step> {
+    script.lines().map(str::trim_start).filter(|l| !l.trim().is_empty() && !l.starts_with('#')).filter_map(|line| {
+        let step = parse(line);
+        if step.is_none() { eprintln!("devtools: bad step: {line}"); }
+        step
+    }).collect()
+}
+
+/// Lets the frame settle before the next step.
+const SETTLE: Duration = Duration::from_millis(120);
+
+struct Driver {
+    handle: AnyWindowHandle,
+    #[cfg(target_os = "macos")]
+    view: usize,
+    recording: Option<Recording>,
+}
+
+impl Driver {
+    fn in_window(&self, cx: &mut AsyncApp, step: impl FnOnce(&mut Window, &mut App)) {
+        let _ = self.handle.update(cx, |_, window, cx| step(window, cx));
+    }
+
+    async fn stop_recording(&mut self, cx: &mut AsyncApp) {
+        let Some(Recording { stop, writer }) = self.recording.take() else { return };
+        stop.set(true);
+        *CURSOR_LOG.lock().unwrap() = None;
+        let _ = cx.background_spawn(async move { writer.join() }).await;
+    }
+
+    fn wheel(&self, x: f32, y: f32, dy: f32, cx: &mut AsyncApp) {
+        // Positive dy scrolls the content up (reading on).
+        let event = ScrollWheelEvent { position: point(px(x), px(y)), delta: ScrollDelta::Pixels(point(px(0.), px(-dy))), ..Default::default() };
+        self.in_window(cx, |window, cx| { window.dispatch_event(PlatformInput::ScrollWheel(event), cx); });
+    }
+
+    /// Times `step`, drawing a frame synchronously after each run.
+    async fn bench(&mut self, times: usize, label: &str, step: &Step, cx: &mut AsyncApp) {
+        let mut samples = vec![];
+        for _ in 0..times {
+            let t0 = Instant::now();
+            self.step(step, cx).await;
+            let t1 = Instant::now();
+            self.in_window(cx, |window, cx| window.draw(cx).clear());
+            samples.push(((t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3));
+            cx.background_executor().timer(Duration::from_millis(10)).await;
+        }
+        let stat = |f: fn(&(f64, f64)) -> f64| {
+            let mut v: Vec<f64> = samples.iter().map(f).collect();
+            v.sort_by(f64::total_cmp);
+            let at = |q: f64| v.get(((v.len() as f64 - 1.) * q).round() as usize).copied().unwrap_or(0.);
+            format!("p50 {:.2} p95 {:.2} max {:.2}", at(0.5), at(0.95), at(1.))
+        };
+        eprintln!("bench {label:?} x{}: step [{}] frame [{}] ms", samples.len(), stat(|s| s.0), stat(|s| s.1));
+    }
+
+    /// Runs one step and returns how long its frame needs to settle. Mouse
+    /// input goes through AppKit, so it runs outside of any `App` borrow.
+    async fn step(&mut self, step: &Step, cx: &mut AsyncApp) -> Duration {
+        #[cfg(target_os = "macos")]
+        use native::*;
+        #[cfg(target_os = "macos")]
+        let view = self.view;
+        match step {
+            Step::Wait(ms) => {
+                // Draw invalidated frames ourselves: the display link stops
+                // while the screen is locked, and nothing would render.
+                let end = Instant::now() + Duration::from_millis(*ms);
+                while Instant::now() < end {
+                    cx.background_executor().timer(Duration::from_millis(16).min(end - Instant::now())).await;
+                    self.in_window(cx, |window, cx| if window.needs_draw() { window.draw(cx).clear(); });
+                }
+                return Duration::ZERO;
+            }
+            Step::Key(keys) => self.in_window(cx, |window, cx| {
+                for k in keys.split_whitespace() {
+                    match Keystroke::parse(k) {
+                        Ok(ks) => {
+                            let handled = window.dispatch_keystroke(ks, cx);
+                            if std::env::var_os("THESIO_TRACE").is_some() {
+                                eprintln!("devtools: key {k} handled={handled} focused={:?}", window.focused(cx).is_some());
+                            }
+                        }
+                        Err(e) => eprintln!("devtools: bad keystroke {k}: {e:?}"),
+                    }
+                }
+            }),
+            Step::Type(text) => self.in_window(cx, |window, cx| {
+                for ch in text.chars() {
+                    let s = ch.to_string();
+                    let ks = Keystroke { modifiers: Modifiers::default(), key: if ch == ' ' { "space".into() } else { s.clone() }, key_char: Some(s) };
+                    window.dispatch_keystroke(ks, cx);
+                }
+            }),
+            #[cfg(target_os = "macos")]
+            Step::Nkey(letter) => key(view, letter),
+            #[cfg(target_os = "macos")]
+            Step::Mark(text) => ime(view, false, text),
+            #[cfg(target_os = "macos")]
+            Step::Commit(text) => ime(view, true, text),
+            #[cfg(target_os = "macos")]
+            Step::Move(x, y) => {
+                log_pointer(*x, *y, "move");
+                send(view, MOVED, *x, *y, 0);
+            }
+            #[cfg(target_os = "macos")]
+            Step::Click(x, y) => {
+                log_pointer(*x, *y, "click");
+                send(view, MOVED, *x, *y, 0);
+                send(view, LEFT_DOWN, *x, *y, 1);
+                send(view, LEFT_UP, *x, *y, 1);
+            }
+            #[cfg(target_os = "macos")]
+            Step::Dclick(x, y) => {
+                log_pointer(*x, *y, "click");
+                send(view, LEFT_DOWN, *x, *y, 1);
+                send(view, LEFT_UP, *x, *y, 1);
+                send(view, LEFT_DOWN, *x, *y, 2);
+                send(view, LEFT_UP, *x, *y, 2);
+            }
+            // Synthesized right-button NSEvents report buttonNumber 0, so GPUI would
+            // read them as left clicks; feed the right click to GPUI directly.
+            Step::Rclick(x, y) => {
+                log_pointer(*x, *y, "click");
+                let position = point(px(*x), px(*y));
+                self.in_window(cx, |window, cx| {
+                    window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+                    click(MouseButton::Right, position, Modifiers::default(), window, cx);
+                });
+            }
+            Step::Cmdclick(x, y) => {
+                log_pointer(*x, *y, "click");
+                self.in_window(cx, |window, cx| click(MouseButton::Left, point(px(*x), px(*y)), Modifiers { platform: true, ..Default::default() }, window, cx));
+            }
+            #[cfg(target_os = "macos")]
+            Step::Drag(x0, y0, x1, y1) => {
+                log_pointer(*x0, *y0, "down");
+                send(view, MOVED, *x0, *y0, 0);
+                send(view, LEFT_DOWN, *x0, *y0, 1);
+                for i in 1..=8 {
+                    let t = i as f32 / 8.;
+                    let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+                    log_pointer(x, y, "move");
+                    send(view, LEFT_DRAGGED, x, y, 1);
+                }
+                log_pointer(*x1, *y1, "up");
+                send(view, LEFT_UP, *x1, *y1, 1);
+            }
+            #[cfg(target_os = "macos")]
+            Step::Down(x, y, clicks) => {
+                log_pointer(*x, *y, "down");
+                send(view, MOVED, *x, *y, 0);
+                send(view, LEFT_DOWN, *x, *y, *clicks);
+            }
+            #[cfg(target_os = "macos")]
+            Step::Dragto(x, y) => {
+                log_pointer(*x, *y, "move");
+                send(view, LEFT_DRAGGED, *x, *y, 1);
+            }
+            #[cfg(target_os = "macos")]
+            Step::Up(x, y, clicks) => {
+                log_pointer(*x, *y, "up");
+                send(view, LEFT_UP, *x, *y, *clicks);
+            }
+            Step::Wheel(x, y, dy) => {
+                log_pointer(*x, *y, "move");
+                self.wheel(*x, *y, *dy, cx);
+            }
+            Step::Shot(name) => self.in_window(cx, |window, cx| {
+                let path = shot_path(name);
+                match capture(window, cx, &path) {
+                    Ok(()) => eprintln!("devtools: saved {path}"),
+                    Err(e) => eprintln!("devtools: capture failed: {e}"),
+                }
+            }),
+            // Captures ~8ms apart, to catch transient frames.
+            Step::Burst(name, n) => {
+                for i in 0..*n {
+                    let path = shot_path(&format!("{name}-{i:02}"));
+                    self.in_window(cx, |window, cx| { let _ = capture(window, cx, &path); });
+                    cx.background_executor().timer(Duration::from_millis(8)).await;
+                }
+                return Duration::ZERO;
+            }
+            #[cfg(target_os = "macos")]
+            Step::Deskshot(name, margin) => self.in_window(cx, |window, _| {
+                let path = shot_path(name);
+                match desk_grab(window, *margin).and_then(|(w, h, mut px)| {
+                    for p in px.as_chunks_mut::<4>().0 { p.swap(0, 2); p[3] = 255; }
+                    image::save_buffer(&path, &px, w as u32, h as u32, image::ColorType::Rgba8).map_err(Into::into)
+                }) {
+                    Ok(()) => eprintln!("devtools: saved {path}"),
+                    Err(e) => eprintln!("devtools: capture failed: {e}"),
+                }
+            }),
+            Step::Clip(clipping) => match clipping.read() {
+                Ok(clip) => crate::system::script_clipboard(clip),
+                Err(e) => eprintln!("devtools: cannot read {clipping:?}: {e}"),
+            },
+            #[cfg(target_os = "macos")]
+            Step::Dropover(x, y, files) => {
+                log_pointer(*x, *y, "move");
+                drag_files(view, *x, *y, files);
+            }
+            // A mouse up ends it, as `performDragOperation:` would: GPUI activates
+            // the app there, and a script must not take focus.
+            #[cfg(target_os = "macos")]
+            Step::Drop(x, y, files) => {
+                log_pointer(*x, *y, "up");
+                drag_files(view, *x, *y, files);
+                send(view, LEFT_UP, *x, *y, 1);
+                end_file_drag(view);
+            }
+            Step::Pick(paths) => crate::system::script_pick(paths.clone()),
+            Step::Pdfselect(text) => crate::system::script_pdf_selection(text.clone()),
+            Step::Resize(w, h) => self.in_window(cx, |window, _| window.resize(size(px(*w), px(*h)))),
+            #[cfg(target_os = "macos")]
+            Step::Place(x, y) => place_top_left(view, *x as f64, *y as f64),
+            Step::Bench { times, label, step } => {
+                Box::pin(self.bench(*times, label, step, cx)).await;
+                return Duration::ZERO;
+            }
+            Step::Noop => self.in_window(cx, |window, _| window.refresh()),
+            Step::Record(path) => {
+                self.stop_recording(cx).await;
+                if let Some(path) = path { self.recording = Some(start_recording(self.handle, path, cx)); }
+                return Duration::ZERO;
+            }
+            #[cfg(target_os = "macos")]
+            Step::Glide(x, y, ms) => {
+                let (x0, y0) = *POINTER.lock().unwrap();
+                let steps = (ms / 16.).max(1.) as usize;
+                for i in 1..=steps {
+                    let t = ease(i as f32 / steps as f32);
+                    let (x, y) = (x0 + (x - x0) * t, y0 + (y - y0) * t);
+                    send(view, MOVED, x, y, 0);
+                    log_pointer(x, y, "move");
+                    cx.background_executor().timer(Duration::from_millis(16)).await;
+                }
+                return Duration::ZERO;
+            }
+            Step::Scroll(x, y, dy, ms) => {
+                log_pointer(*x, *y, "move");
+                let steps = (ms / 16.).max(1.) as usize;
+                let mut done = 0.;
+                for i in 1..=steps {
+                    let to = dy * ease(i as f32 / steps as f32);
+                    self.wheel(*x, *y, to - done, cx);
+                    done = to;
+                    cx.background_executor().timer(Duration::from_millis(16)).await;
+                }
+                return Duration::ZERO;
+            }
+            Step::Caption(text) => {
+                let (x, y) = *POINTER.lock().unwrap();
+                log_pointer(x, y, &format!("caption {text}"));
+                return Duration::ZERO;
+            }
+            #[cfg(target_os = "macos")]
+            Step::Activate => {
+                activate(view);
+                return Duration::from_millis(300);
+            }
+            Step::Quit => {
+                self.stop_recording(cx).await;
+                let _ = cx.update(|cx| cx.quit());
+            }
+            #[cfg(not(target_os = "macos"))]
+            other => eprintln!("devtools: {other:?} needs macOS"),
+        }
+        SETTLE
+    }
+}
+
+fn click(button: MouseButton, position: Point<Pixels>, modifiers: Modifiers, window: &mut Window, cx: &mut App) {
+    window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button, position, modifiers, click_count: 1, first_mouse: false }), cx);
+    window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button, position, modifiers, click_count: 1 }), cx);
+}
+
+fn shot_path(name: &str) -> String {
+    format!("{}/{name}.png", std::env::var("THESIO_SHOTS").unwrap_or_else(|_| "/tmp".into()))
+}
+
 pub fn start(window: &mut Window, cx: &mut App) {
     let Ok(path) = std::env::var("THESIO_SCRIPT") else { return };
     let Ok(script) = std::fs::read_to_string(&path) else {
         eprintln!("devtools: cannot read {path}");
         return;
     };
+    let steps = parse_script(&script);
     let handle = window.window_handle();
     #[cfg(target_os = "macos")]
-    let Some(ns_view) = ns_view_of(window) else { return };
+    let Some(view) = ns_view_of(window) else { return };
     #[cfg(target_os = "macos")]
     native::no_app_nap();
     cx.spawn(async move |cx| {
@@ -66,10 +477,10 @@ pub fn start(window: &mut Window, cx: &mut App) {
         #[cfg(target_os = "macos")]
         if std::env::var_os("THESIO_NOPARK").is_none() {
             let mut parked = false;
-            for origin in native::park_candidates(ns_view) {
-                native::place(ns_view, origin);
+            for origin in native::park_candidates(view) {
+                native::place(view, origin);
                 cx.background_executor().timer(Duration::from_millis(250)).await;
-                if native::is_visible(ns_view) {
+                if native::is_visible(view) {
                     parked = true;
                     break;
                 }
@@ -78,162 +489,19 @@ pub fn start(window: &mut Window, cx: &mut App) {
                 eprintln!("devtools: no visible off-screen spot; window may stop rendering");
             }
         }
-        let mut recording: Option<std::rc::Rc<std::cell::Cell<bool>>> = None;
-        // Only leading whitespace is insignificant: `type ab ` types a trailing space.
-        for line in script.lines().map(str::trim_start).filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
-            let (cmd, rest) = line.split_once(' ').unwrap_or((line, ""));
-            if cmd == "wait" {
-                // Draw invalidated frames ourselves: the display link stops
-                // while the screen is locked, and nothing would render.
-                let end = Instant::now() + Duration::from_millis(rest.trim().parse().unwrap_or(100));
-                while Instant::now() < end {
-                    cx.background_executor().timer(Duration::from_millis(16).min(end - Instant::now())).await;
-                    let _ = handle.update(cx, |_, window, cx| {
-                        if window.needs_draw() {
-                            window.draw(cx).clear();
-                        }
-                    });
-                }
-                continue;
-            }
-            // `burst name n`: n captures ~8ms apart, to catch transient frames.
-            if cmd == "burst" {
-                let (name, n) = rest.trim().split_once(' ').unwrap_or((rest.trim(), "10"));
-                let dir = std::env::var("THESIO_SHOTS").unwrap_or_else(|_| "/tmp".into());
-                for i in 0..n.trim().parse().unwrap_or(10) {
-                    let path = format!("{dir}/{name}-{i:02}.png");
-                    let _ = handle.update(cx, |_, window, cx| capture(window, cx, &path));
-                    cx.background_executor().timer(Duration::from_millis(8)).await;
-                }
-                continue;
-            }
-            if cmd == "bench" {
-                let (n, step) = rest.trim().split_once(' ').unwrap_or((rest.trim(), "noop"));
-                let (scmd, srest) = step.split_once(' ').unwrap_or((step, ""));
-                let mut samples = vec![];
-                for _ in 0..n.parse().unwrap_or(20) {
-                    let _ = handle.update(cx, |_, window, cx| {
-                        let t0 = Instant::now();
-                        run(scmd, srest, window, cx);
-                        let t1 = Instant::now();
-                        RENDER_NS.store(0, std::sync::atomic::Ordering::Relaxed);
-                        window.draw(cx).clear();
-                        let render = RENDER_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6;
-                        samples.push(((t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3, render));
-                    });
-                    cx.background_executor().timer(Duration::from_millis(10)).await;
-                }
-                let stat = |f: fn(&(f64, f64, f64)) -> f64| {
-                    let mut v: Vec<f64> = samples.iter().map(f).collect();
-                    v.sort_by(f64::total_cmp);
-                    let at = |q: f64| v.get(((v.len() as f64 - 1.) * q).round() as usize).copied().unwrap_or(0.);
-                    format!("p50 {:.2} p95 {:.2} max {:.2}", at(0.5), at(0.95), at(1.))
-                };
-                eprintln!(
-                    "bench {step:?} x{}: step [{}] frame [{}] editor render [{}] ms",
-                    samples.len(),
-                    stat(|s| s.0),
-                    stat(|s| s.1),
-                    stat(|s| s.2)
-                );
-                continue;
-            }
-            let quit = cmd == "quit";
-            if cmd == "record" || (quit && recording.is_some()) {
-                if let Some(stop) = recording.take() {
-                    stop.set(true);
-                    *CURSOR_LOG.lock().unwrap() = None;
-                    // Lets the writer drain and ffmpeg finish the file.
-                    cx.background_executor().timer(Duration::from_millis(300)).await;
-                }
-                if cmd == "record" && rest.trim() != "stop" {
-                    recording = Some(start_recording(handle, rest.trim(), cx));
-                }
-                if !quit {
-                    continue;
-                }
-            }
-            if cmd == "caption" {
-                let (x, y) = *POINTER.lock().unwrap();
-                log_pointer(x, y, &format!("caption {}", rest.trim()));
-                continue;
-            }
+        let mut driver = Driver {
+            handle,
             #[cfg(target_os = "macos")]
-            if cmd == "glide" {
-                let n = nums(rest);
-                if n.len() >= 3 {
-                    let (x0, y0) = *POINTER.lock().unwrap();
-                    let steps = (n[2] / 16.).max(1.) as usize;
-                    for i in 1..=steps {
-                        let t = ease(i as f32 / steps as f32);
-                        let (x, y) = (x0 + (n[0] - x0) * t, y0 + (n[1] - y0) * t);
-                        native::send(ns_view, native::MOVED, x, y, 0);
-                        log_pointer(x, y, "move");
-                        cx.background_executor().timer(Duration::from_millis(16)).await;
-                    }
-                }
-                continue;
-            }
-            if cmd == "scroll" {
-                let n = nums(rest);
-                if n.len() >= 4 {
-                    let steps = (n[3] / 16.).max(1.) as usize;
-                    let mut done = 0.;
-                    for i in 1..=steps {
-                        let to = n[2] * ease(i as f32 / steps as f32);
-                        let event = ScrollWheelEvent {
-                            position: point(px(n[0]), px(n[1])),
-                            // Positive dy scrolls the content up (reading on).
-                            delta: ScrollDelta::Pixels(point(px(0.), px(done - to))),
-                            ..Default::default()
-                        };
-                        done = to;
-                        let _ = handle.update(cx, |_, window, cx| {
-                            window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
-                        });
-                        cx.background_executor().timer(Duration::from_millis(16)).await;
-                    }
-                }
-                continue;
-            }
-            #[cfg(target_os = "macos")]
-            if cmd == "activate" {
-                native::activate(ns_view);
-                cx.background_executor().timer(Duration::from_millis(300)).await;
-                continue;
-            }
-            #[cfg(target_os = "macos")]
-            if cmd == "nkey" {
-                native::key(ns_view, rest.trim());
-                cx.background_executor().timer(Duration::from_millis(120)).await;
-                continue;
-            }
-            #[cfg(target_os = "macos")]
-            if cmd == "mark" || cmd == "commit" {
-                native::ime(ns_view, cmd == "commit", rest);
-                cx.background_executor().timer(Duration::from_millis(120)).await;
-                continue;
-            }
-            #[cfg(target_os = "macos")]
-            let handled = mouse_step(ns_view, cmd, &nums(rest));
-            #[cfg(not(target_os = "macos"))]
-            let handled = false;
-            if !handled {
-                let _ = handle.update(cx, |_, window, cx| run(cmd, rest, window, cx));
-            }
-            if quit {
-                let _ = cx.update(|cx| cx.quit());
-                return;
-            }
-            // Let the frame settle before the next step.
-            cx.background_executor().timer(Duration::from_millis(120)).await;
+            view,
+            recording: None,
+        };
+        for step in &steps {
+            let settle = driver.step(step, cx).await;
+            if matches!(step, Step::Quit) { return; }
+            cx.background_executor().timer(settle).await;
         }
     })
     .detach();
-}
-
-fn nums(s: &str) -> Vec<f32> {
-    s.split_whitespace().filter_map(|n| n.parse().ok()).collect()
 }
 
 /// Mouse input goes through AppKit (the GPUI view's NSResponder methods) so
@@ -425,6 +693,85 @@ mod native {
         }
     }
 
+    /// Where a scripted drag is, as `NSDraggingInfo` reports it.
+    #[repr(C)]
+    struct DragLocation {
+        x: f64,
+        y: f64,
+    }
+
+    unsafe impl objc::Encode for DragLocation {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGPoint=dd}") }
+        }
+    }
+
+    /// Stands in for AppKit's `NSDraggingInfo`, the only part of a file drag
+    /// that cannot be asked for: the window takes everything else from it.
+    fn drag_class() -> &'static objc::runtime::Class {
+        use objc::declare::ClassDecl;
+        use objc::runtime::{Class, Sel};
+        static REGISTER: std::sync::Once = std::sync::Once::new();
+        const NAME: &str = "ThesioScriptedDrag";
+        extern "C" fn pasteboard(this: &Object, _: Sel) -> *mut Object {
+            unsafe { *this.get_ivar::<*mut Object>("pasteboard") }
+        }
+        extern "C" fn location(this: &Object, _: Sel) -> DragLocation {
+            unsafe { DragLocation { x: *this.get_ivar("x"), y: *this.get_ivar("y") } }
+        }
+        REGISTER.call_once(|| unsafe {
+            let mut decl = ClassDecl::new(NAME, class!(NSObject)).unwrap();
+            decl.add_ivar::<*mut Object>("pasteboard");
+            decl.add_ivar::<f64>("x");
+            decl.add_ivar::<f64>("y");
+            decl.add_method(sel!(draggingPasteboard), pasteboard as extern "C" fn(&Object, Sel) -> *mut Object);
+            decl.add_method(sel!(draggingLocation), location as extern "C" fn(&Object, Sel) -> DragLocation);
+            decl.register();
+        });
+        Class::get(NAME).unwrap()
+    }
+
+    fn ns_string(text: &str) -> *mut Object {
+        unsafe {
+            let s: *mut Object = msg_send![class!(NSString), alloc];
+            msg_send![s, initWithBytes: text.as_ptr() length: text.len() encoding: 4usize]
+        }
+    }
+
+    /// Files dragged over the window, through the methods AppKit calls. They
+    /// travel on a pasteboard of their own, so the user's clipboard stays out of it.
+    pub fn drag_files(ns_view: usize, x: f32, y: f32, files: &[std::path::PathBuf]) {
+        unsafe {
+            let view = ns_view as *mut Object;
+            let win: *mut Object = msg_send![view, window];
+            let frame: CGRect = msg_send![view, frame];
+            let names: Vec<*mut Object> = files.iter().map(|file| ns_string(&file.to_string_lossy())).collect();
+            let names: *mut Object = msg_send![class!(NSArray), arrayWithObjects: names.as_ptr() count: names.len()];
+            let pasteboard: *mut Object = msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
+            let kind = ns_string("NSFilenamesPboardType");
+            let kinds: *mut Object = msg_send![class!(NSArray), arrayWithObject: kind];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: isize = msg_send![pasteboard, declareTypes: kinds owner: nil];
+            let _: bool = msg_send![pasteboard, setPropertyList: names forType: kind];
+            let drag: *mut Object = msg_send![drag_class(), new];
+            (*drag).set_ivar("pasteboard", pasteboard);
+            (*drag).set_ivar("x", x as f64);
+            (*drag).set_ivar("y", frame.size.height - y as f64);
+            let _: usize = msg_send![win, draggingEntered: drag];
+            let _: usize = msg_send![win, draggingUpdated: drag];
+            let _: () = msg_send![drag, release];
+            let _: () = msg_send![pasteboard, releaseGlobally];
+        }
+    }
+
+    pub fn end_file_drag(ns_view: usize) {
+        unsafe {
+            let win: *mut Object = msg_send![ns_view as *mut Object, window];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: () = msg_send![win, draggingExited: nil];
+        }
+    }
+
     pub fn send(ns_view: usize, kind: u64, x: f32, y: f32, clicks: i64) {
         unsafe {
             let view = ns_view as *mut Object;
@@ -462,152 +809,6 @@ fn ns_view_of(window: &Window) -> Option<usize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let RawWindowHandle::AppKit(h) = HasWindowHandle::window_handle(window).ok()?.as_raw() else { return None };
     Some(h.ns_view.as_ptr() as usize)
-}
-
-/// Returns true when the step was a mouse step (handled natively).
-#[cfg(target_os = "macos")]
-fn mouse_step(view: usize, cmd: &str, n: &[f32]) -> bool {
-    use native::*;
-    if n.len() >= 2 && matches!(cmd, "move" | "click" | "dclick" | "rclick") {
-        log_pointer(n[0], n[1], if cmd == "move" { "move" } else { "click" });
-    }
-    match cmd {
-        "move" if n.len() >= 2 => send(view, MOVED, n[0], n[1], 0),
-        "click" if n.len() >= 2 => {
-            send(view, MOVED, n[0], n[1], 0);
-            send(view, LEFT_DOWN, n[0], n[1], 1);
-            send(view, LEFT_UP, n[0], n[1], 1);
-        }
-        "dclick" if n.len() >= 2 => {
-            send(view, LEFT_DOWN, n[0], n[1], 1);
-            send(view, LEFT_UP, n[0], n[1], 1);
-            send(view, LEFT_DOWN, n[0], n[1], 2);
-            send(view, LEFT_UP, n[0], n[1], 2);
-        }
-        "drag" if n.len() >= 4 => {
-            send(view, MOVED, n[0], n[1], 0);
-            send(view, LEFT_DOWN, n[0], n[1], 1);
-            for i in 1..=8 {
-                let t = i as f32 / 8.;
-                send(view, LEFT_DRAGGED, n[0] + (n[2] - n[0]) * t, n[1] + (n[3] - n[1]) * t, 1);
-            }
-            send(view, LEFT_UP, n[2], n[3], 1);
-        }
-        // Step-by-step drags, so frames render (and shots land) mid-drag. An
-        // optional third number is the click count ("down x y 2": a double
-        // click's second press, with frames in between).
-        "down" if n.len() >= 2 => {
-            send(view, MOVED, n[0], n[1], 0);
-            send(view, LEFT_DOWN, n[0], n[1], n.get(2).map_or(1, |c| *c as i64));
-        }
-        "dragto" if n.len() >= 2 => send(view, LEFT_DRAGGED, n[0], n[1], 1),
-        // `place x y`: the window's top-left at screen point (x, y) of the main
-        // display, floating (for desktop shots; see tools/harness/README.md).
-        "place" if n.len() >= 2 => place_top_left(view, n[0] as f64, n[1] as f64),
-        "up" if n.len() >= 2 => send(view, LEFT_UP, n[0], n[1], n.get(2).map_or(1, |c| *c as i64)),
-        _ => return false,
-    }
-    true
-}
-
-fn run(cmd: &str, rest: &str, window: &mut Window, cx: &mut App) {
-    match cmd {
-        // Synthesized right-button NSEvents report buttonNumber 0, so GPUI would
-        // read them as left clicks; feed the right click to GPUI directly.
-        "rclick" => {
-            let n = nums(rest);
-            if n.len() >= 2 {
-                let position = point(px(n[0]), px(n[1]));
-                let modifiers = Modifiers::default();
-                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers }), cx);
-                window.dispatch_event(
-                    PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Right, position, modifiers, click_count: 1, first_mouse: false }),
-                    cx,
-                );
-                window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Right, position, modifiers, click_count: 1 }), cx);
-            }
-        }
-        "key" => {
-            for k in rest.split_whitespace() {
-                match Keystroke::parse(k) {
-                    Ok(ks) => {
-                        let handled = window.dispatch_keystroke(ks, cx);
-                        if std::env::var_os("THESIO_TRACE").is_some() {
-                            eprintln!("devtools: key {k} handled={handled} focused={:?}", window.focused(cx).is_some());
-                        }
-                    }
-                    Err(e) => eprintln!("devtools: bad keystroke {k}: {e:?}"),
-                }
-            }
-        }
-        "type" => {
-            for ch in rest.chars() {
-                let s = ch.to_string();
-                let ks = Keystroke { modifiers: Modifiers::default(), key: if ch == ' ' { "space".into() } else { s.clone() }, key_char: Some(s) };
-                window.dispatch_keystroke(ks, cx);
-            }
-        }
-        // `clip html|text <file>`: what the next paste reads instead of the
-        // system clipboard (`clip text` with HTML keeps its plain fallback).
-        "clip" => {
-            let (kind, path) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
-            let body = std::fs::read_to_string(path.trim()).unwrap_or_default();
-            let mut fake = crate::clipboard::FAKE_CLIPBOARD.lock().unwrap();
-            let cur = fake.take().unwrap_or((None, String::new()));
-            *fake = Some(match kind {
-                "html" => (Some(body), cur.1),
-                _ => (cur.0, body),
-            });
-        }
-        "pick" => *PICK.lock().unwrap() = Some(rest.trim().split('|').map(std::path::PathBuf::from).collect()),
-        // `deskshot name margin`: the window as it sits on screen, with
-        // `margin` pt of whatever is below it (a wallpaper backdrop for the
-        // 开始指南 screenshots) and the system's own corners and shadow.
-        #[cfg(target_os = "macos")]
-        "deskshot" => {
-            let mut it = rest.split_whitespace();
-            let name = it.next().unwrap_or("desk").to_string();
-            let margin: f64 = it.next().and_then(|m| m.parse().ok()).unwrap_or(48.);
-            let dir = std::env::var("THESIO_SHOTS").unwrap_or_else(|_| "/tmp".into());
-            let path = format!("{dir}/{name}.png");
-            match desk_grab(window, margin).and_then(|(w, h, mut px)| {
-                for p in px.as_chunks_mut::<4>().0 { p.swap(0, 2); p[3] = 255; }
-                image::save_buffer(&path, &px, w as u32, h as u32, image::ColorType::Rgba8).map_err(Into::into)
-            }) {
-                Ok(()) => eprintln!("devtools: saved {path}"),
-                Err(e) => eprintln!("devtools: capture failed: {e}"),
-            }
-        }
-        "shot" => {
-            let name = rest.trim().to_string();
-            let dir = std::env::var("THESIO_SHOTS").unwrap_or_else(|_| "/tmp".into());
-            let path = format!("{dir}/{name}.png");
-            match capture(window, cx, &path) {
-                Ok(()) => eprintln!("devtools: saved {path}"),
-                Err(e) => eprintln!("devtools: capture failed: {e}"),
-            }
-        }
-        "wheel" => {
-            let n = nums(rest);
-            if n.len() >= 3 {
-                let event = ScrollWheelEvent {
-                    position: point(px(n[0]), px(n[1])),
-                    delta: ScrollDelta::Pixels(point(px(0.), px(-n[2]))),
-                    ..Default::default()
-                };
-                window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
-            }
-        }
-        "resize" => {
-            let n = nums(rest);
-            if n.len() >= 2 {
-                window.resize(size(px(n[0]), px(n[1])));
-            }
-        }
-        "noop" => window.refresh(),
-        "quit" => {}
-        _ => eprintln!("devtools: unknown step {cmd} {rest}"),
-    }
 }
 
 /// The window's content as tightly packed BGRA, rendered offscreen so it
@@ -689,9 +890,14 @@ fn grab(window: &Window) -> anyhow::Result<(usize, usize, Vec<u8>)> {
     Ok((w, h, out))
 }
 
-/// Starts capturing frames into ffmpeg; set the returned flag to stop.
-fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> std::rc::Rc<std::cell::Cell<bool>> {
-    let stop = std::rc::Rc::new(std::cell::Cell::new(false));
+/// A running capture: `stop` ends it, and `writer` then drains into ffmpeg.
+struct Recording {
+    stop: Rc<Cell<bool>>,
+    writer: std::thread::JoinHandle<()>,
+}
+
+fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> Recording {
+    let stop = Rc::new(Cell::new(false));
     let start = Instant::now();
     *CURSOR_LOG.lock().unwrap() = std::fs::File::create(format!("{path}.cursor")).ok().map(|f| (start, f));
     let (x, y) = *POINTER.lock().unwrap();
@@ -701,7 +907,7 @@ fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> st
     let fps = fps();
     // Encoding runs off the main thread; frames that arrive late are repeated
     // so the video keeps wall-clock time.
-    std::thread::spawn(move || {
+    let writer = std::thread::spawn(move || {
         use std::io::Write;
         let mut ffmpeg: Option<std::process::Child> = None;
         let mut next = 0u64;
@@ -742,7 +948,7 @@ fn start_recording(handle: AnyWindowHandle, path: &str, cx: &mut AsyncApp) -> st
         }
     })
     .detach();
-    stop
+    Recording { stop, writer }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -753,4 +959,19 @@ fn capture(_: &mut Window, _: &mut App, _: &str) -> anyhow::Result<()> {
 #[cfg(not(target_os = "macos"))]
 fn grab(_: &Window) -> anyhow::Result<(usize, usize, Vec<u8>)> {
     anyhow::bail!("capture is only implemented on macOS")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::COMMANDS;
+
+    #[test]
+    fn readme_documents_the_commands() {
+        let readme = include_str!("../tools/harness/README.md");
+        let table = readme.split("## Script commands").nth(1).unwrap().split("Environment variables").next().unwrap();
+        let documented: Vec<&str> = table.lines().filter_map(|row| row.strip_prefix('|')?.split('|').next())
+            .flat_map(|cell| cell.split('`').skip(1).step_by(2)).filter_map(|command| command.split(' ').next()).collect();
+        for (name, _) in COMMANDS { assert!(documented.contains(name), "{name} is not in the README"); }
+        for name in documented { assert!(COMMANDS.iter().any(|(known, _)| *known == name), "{name} is not a command"); }
+    }
 }

@@ -1,18 +1,20 @@
-//! 搜索 dialog: a 540-wide white dialog with the input row, 最近浏览 / hit
-//! rows and a gray footer. Locally there is one owner and no sessions or
-//! spaces, so each row's extra line is just 所有者 + the opened / modified
-//! times. Radius 16, quiet row fills, monochrome page glyphs.
+//! The search dialog: documents, sources, and PDF highlights.
 
 use crate::app::Workspace;
-use crate::settings::display_title;
-use crate::store::Entry;
+use crate::input::{TextField, TextFieldEvent};
+use thesio_core::library::Row;
+use crate::native_pdf::{Highlight, read_highlights};
+use thesio_core::store::display_title;
+use thesio_core::store::Entry;
 use crate::theme::{self, Theme};
-use crate::trash::scrim;
-use crate::ui::{ROW_RADIUS, format_visit, icon, ui_runs, ui_text};
+use crate::overlay::Overlay;
+use crate::ui::{Icon, ModalAt, ROW_RADIUS, doc_icon, format_visit, icon, ui_runs, ui_text};
 use gpui::{prelude::FluentBuilder, *};
+use std::collections::HashMap;
 use std::ops::Range;
+use thesio_core::paths::{is_pdf, moved};
 
-/// How many documents 最近浏览 lists.
+/// How many documents Recently viewed lists.
 const RECENT: usize = 20;
 /// Body text kept for a hit's two-line summary.
 const SUMMARY_CHARS: usize = 160;
@@ -21,6 +23,69 @@ const SUMMARY_SEP: &str = "\u{a0}\u{a0}\u{a0}";
 /// Text column of a row: 540 − list padding 4 / 4 + 6 (scrollbar gutter)
 /// − row padding 12 / 8 − icon 24 + 10.
 const INFO_W: f32 = 472.;
+
+#[derive(Clone)]
+pub enum Hit {
+    Doc(Entry),
+    Source(Row),
+    /// A paper's id and title, and the highlight.
+    Highlight(String, String, Highlight),
+}
+
+pub struct Search {
+    pub field: Entity<TextField>,
+    /// Keyboard highlight among the results.
+    pub selected: Option<usize>,
+    /// Highlights by paper.
+    index: HashMap<String, IndexedPaper>,
+    indexing: bool,
+    scroll: ScrollHandle,
+    _subscription: Subscription,
+}
+
+impl Search {
+    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let field = cx.new(|cx| {
+            let mut f = TextField::new("Search", cx);
+            f.placeholder_color = Theme::text_disabled;
+            f
+        });
+        let subscription = cx.subscribe_in(&field, window, |this, _, ev: &TextFieldEvent, window, cx| {
+            match ev {
+                TextFieldEvent::Changed => {
+                    this.search.selected = this.default_search_sel(cx);
+                    this.search.scroll.set_offset(point(px(0.), px(0.)));
+                }
+                TextFieldEvent::Up => this.move_search_sel(-1, cx),
+                TextFieldEvent::Down => this.move_search_sel(1, cx),
+                TextFieldEvent::Submit => {
+                    if let Some(ix) = this.search.selected {
+                        this.pick_search(ix, window, cx)
+                    }
+                }
+                _ => {}
+            }
+            cx.notify();
+        });
+        Self { field, selected: None, index: HashMap::new(), indexing: false, scroll: ScrollHandle::new(), _subscription: subscription }
+    }
+
+    /// Highlights stay filed under a paper when it moves.
+    pub fn path_changed(&mut self, old: &str, new: &str) {
+        self.index = std::mem::take(&mut self.index).into_iter().map(|(id, paper)| (moved(&id, old, new).unwrap_or(id), paper)).collect();
+    }
+}
+
+/// A paper's highlights, read once for each state of its file.
+pub struct IndexedPaper {
+    stamp: (std::time::SystemTime, u64),
+    highlights: Vec<Highlight>,
+}
+
+fn stamp(path: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
 
 /// Case-insensitive match position in `hay`, in `hay`'s own byte offsets.
 pub(crate) fn find_ci(hay: &str, needle_lower: &str) -> Option<Range<usize>> {
@@ -37,7 +102,6 @@ pub(crate) fn find_ci(hay: &str, needle_lower: &str) -> Option<Range<usize>> {
     }
 }
 
-/// Every match of `q` in `hay`.
 fn find_all(hay: &str, q: &str) -> Vec<Range<usize>> {
     let mut out = vec![];
     let mut at = 0;
@@ -107,29 +171,8 @@ pub(crate) fn summary_text(text: String, mut hits: Vec<Range<usize>>, width: f32
     StyledText::new(text).with_runs(runs)
 }
 
-/// A result's icon: the page's emoji, or the page glyph.
-pub(crate) fn entry_icon(e: &Entry) -> Div {
-    match &e.icon {
-        Some(em) => div().flex_none().size(px(24.)).mr(px(10.)).flex().items_center().justify_center().text_size(px(20.)).child(em.clone()),
-        None => doc_icon(),
-    }
-}
-
-/// A page without an emoji: the monochrome page glyph (the sidebar's), in
-/// a 24 slot.
-pub(crate) fn doc_icon() -> Div {
-    div()
-        .flex_none()
-        .size(px(24.))
-        .mr(px(10.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(icon("doc", 18., Theme::text_caption()))
-}
-
 /// The 24px square buttons at the right of the input row.
-fn input_button(id: &'static str, glyph: &'static str, size: f32, color: Hsla) -> Stateful<Div> {
+fn input_button(id: &'static str, glyph: Icon, size: f32, color: Hsla) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -139,12 +182,11 @@ fn input_button(id: &'static str, glyph: &'static str, size: f32, color: Hsla) -
         .justify_center()
         .rounded(px(ROW_RADIUS))
         .cursor_pointer()
-        .hover(|s| s.bg(Theme::fill_hover()))
         .child(icon(glyph, size, color))
 }
 
 /// One `·`-separated part of a row's extra line.
-fn extra_segment(glyph: Option<&'static str>, text: String) -> Div {
+fn extra_segment(glyph: Option<Icon>, text: String) -> Div {
     div()
         .flex_none()
         .flex()
@@ -153,13 +195,13 @@ fn extra_segment(glyph: Option<&'static str>, text: String) -> Div {
         .child(ui_text(text))
 }
 
-/// A result's extra line: 所有者 and the opened / modified times.
+/// A result's extra line: the opened / modified times.
 pub(crate) fn extra_line(e: &Entry) -> Div {
-    let mut extra = vec![extra_segment(None, "Owner: me".into())];
+    let mut extra = vec![];
     if e.meta.opened > 0 {
-        extra.push(extra_segment(Some("eye"), format!("Opened {}", format_visit(e.meta.opened))));
+        extra.push(extra_segment(Some(Icon::Show), format!("Opened {}", format_visit(e.meta.opened))));
     }
-    extra.push(extra_segment(Some("pen-line"), format!("Modified {}", format_visit(e.meta.modified))));
+    extra.push(extra_segment(Some(Icon::Edit), format!("Modified {}", format_visit(e.modified))));
     let last = extra.len() - 1;
     let extra = extra.into_iter().enumerate().flat_map(|(i, seg)| {
         let seg = if i == last { seg.flex_shrink().min_w_0().overflow_hidden() } else { seg };
@@ -179,8 +221,22 @@ pub(crate) fn extra_line(e: &Entry) -> Div {
         .children(extra)
 }
 
-/// A result's title (13pt semibold, hits in the link colour), summary and extra line.
-pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, width: f32, window: &Window) -> Div {
+/// The icon of a result that is not a document.
+fn kind_icon(glyph: Icon) -> Div {
+    div().flex_none().size(px(24.)).mr(px(10.)).flex().items_center().justify_center().child(icon(glyph, 18., Theme::text_placeholder()))
+}
+
+/// A source or highlight: a title, maybe a summary, and what it is.
+fn hit_info(title: String, summary: Option<(String, Vec<Range<usize>>)>, detail: String, q: &str, window: &Window) -> Div {
+    let title_hit = find_ci(&title, q);
+    div().flex_1().min_w_0().flex().flex_col().overflow_hidden()
+        .child(div().text_size(px(13.)).line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::text()).overflow_hidden().whitespace_nowrap().text_ellipsis()
+            .child(ui_text(title).hit(title_hit, Theme::link())))
+        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, INFO_W, window))))
+        .child(div().mt(px(2.)).h(px(20.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(12.)).line_height(px(20.)).text_color(Theme::text_caption()).child(detail))
+}
+
+fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range<usize>>)>, window: &Window) -> Div {
     let title = display_title(&e.title);
     let title_hit = find_ci(&title, q);
     div()
@@ -200,18 +256,20 @@ pub(crate) fn result_info(e: &Entry, q: &str, summary: Option<(String, Vec<Range
                 .text_ellipsis()
                 .child(ui_text(title).hit(title_hit, Theme::link())),
         )
-        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, width, window))))
+        .children(summary.map(|(text, hits)| div().text_size(px(12.)).line_height(px(20.)).child(summary_text(text, hits, INFO_W, window))))
         .child(extra_line(e))
 }
 
 impl Workspace {
+    pub fn query(&self, cx: &App) -> String {
+        self.search.field.read(cx).text().trim().to_lowercase()
+    }
+
     pub(crate) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search_open = true;
-        self.search_sel = Some(0);
-        self.row_menu = None;
-        self.doc_menu = false;
-        self.doc_sub = None;
-        let search = self.search.clone();
+        self.open_overlay(Overlay::Search, window, cx);
+        self.search.selected = Some(0);
+        self.index_papers(cx);
+        let search = self.search.field.clone();
         search.update(cx, |s, cx| {
             // The dialog's query reads at body size, above the 13pt rows.
             s.size = 15.;
@@ -219,55 +277,90 @@ impl Workspace {
             s.set_text("", cx)
         });
         window.focus(&search.focus_handle(cx));
-        self.search_scroll.set_offset(point(px(0.), px(0.)));
+        self.search.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
-    pub(crate) fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.search_open {
-            return;
-        }
-        self.search_open = false;
-        if let Some(ed) = &self.editor {
-            ed.read(cx).focus(window);
-        }
-        cx.notify();
+    /// Reads the highlights of papers that are new or changed, off the main
+    /// thread: results fill in when it is done.
+    fn index_papers(&mut self, cx: &mut Context<Self>) {
+        if self.search.indexing { return; }
+        let papers: Vec<(String, std::path::PathBuf)> = self.entries.iter().filter(|e| is_pdf(&e.id))
+            .filter_map(|e| Some((e.id.clone(), self.store.borrow().path(&e.id).ok()?)))
+            .filter(|(id, path)| stamp(path).is_some_and(|now| self.search.index.get(id).is_none_or(|known| known.stamp != now))).collect();
+        if papers.is_empty() { return; }
+        self.search.indexing = true;
+        let work = cx.background_spawn(async move {
+            papers.into_iter().filter_map(|(id, path)| Some((id, IndexedPaper { stamp: stamp(&path)?, highlights: read_highlights(&path) }))).collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let found = work.await;
+            let _ = this.update(cx, |w, cx| {
+                w.search.index.extend(found);
+                w.search.indexing = false;
+                cx.notify();
+            });
+        }).detach();
     }
 
-    /// First result is selected; an empty result list has no selection.
     pub(crate) fn default_search_sel(&self, cx: &App) -> Option<usize> {
         (!self.search_results(cx).is_empty()).then_some(0)
     }
 
     pub(crate) fn pick_search(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.search_results(cx).get(row).map(|e| e.id.clone()) else { return };
-        self.close_search(window, cx);
-        self.open(&id, window, cx);
-        if let Some(ed) = &self.editor {
-            ed.read(cx).focus(window);
+        let Some(hit) = self.search_results(cx).into_iter().nth(row) else { return };
+        self.close_overlay(window, cx);
+        match hit {
+            Hit::Doc(entry) => {
+                self.open(&entry.id, window, cx);
+                if let Some(ed) = self.editor() { ed.read(cx).focus(window); }
+            }
+            Hit::Source(row) => self.open_entry(Some(row.key), window, cx),
+            Hit::Highlight(id, _, highlight) => {
+                self.when_saved(window, cx, move |w, window, cx| {
+                    w.papers.pdf.go_to_when_open(highlight);
+                    w.open_paper(&id, window, cx);
+                });
+            }
         }
     }
 
     pub(crate) fn move_search_sel(&mut self, delta: isize, cx: &mut Context<Self>) {
         let n = self.search_results(cx).len();
-        if n == 0 { self.search_sel = None; return; }
-        let next = match self.search_sel {
+        if n == 0 { self.search.selected = None; return; }
+        let next = match self.search.selected {
             Some(i) => (i as isize + delta).rem_euclid(n as isize) as usize,
             None if delta > 0 => 0,
             None => n - 1,
         };
-        self.search_sel = Some(next);
+        self.search.selected = Some(next);
         let title = usize::from(self.query(cx).is_empty());
-        self.search_scroll.scroll_to_item(next + title);
+        self.search.scroll.scroll_to_item(next + title);
         cx.notify();
     }
 
-    /// Title hits first, then body hits; with no query, 最近浏览.
-    pub fn search_results(&self, cx: &App) -> Vec<&Entry> {
+    /// Documents, then sources, then highlights; with no query, Recently viewed.
+    pub fn search_results(&self, cx: &App) -> Vec<Hit> {
+        let q = self.query(cx);
+        let mut hits: Vec<Hit> = self.document_results(cx).into_iter().cloned().map(Hit::Doc).collect();
+        if q.is_empty() { return hits; }
+        let rows = self.citations.library.as_ref().map_or(vec![], thesio_core::library::Library::rows);
+        hits.extend(rows.into_iter().filter(|row| row.matches(&q)).map(Hit::Source));
+        let mut papers: Vec<_> = self.search.index.iter().collect();
+        papers.sort_by(|a, b| a.0.cmp(b.0));
+        for (id, paper) in papers {
+            let found = paper.highlights.iter().filter(|h| h.quote.to_lowercase().contains(&q) || h.comment.to_lowercase().contains(&q));
+            hits.extend(found.map(|highlight| Hit::Highlight(id.clone(), self.paper_title(id), highlight.clone())));
+        }
+        hits
+    }
+
+    /// Title hits first, then body hits; with no query, Recently viewed.
+    fn document_results(&self, cx: &App) -> Vec<&Entry> {
         let q = self.query(cx);
         if q.is_empty() {
-            let mut recent: Vec<&Entry> = self.entries.iter().collect();
-            recent.sort_by_key(|e| std::cmp::Reverse(e.meta.opened.max(e.meta.modified)));
+            let mut recent: Vec<&Entry> = self.entries.iter().filter(|e| e.typst).collect();
+            recent.sort_by_key(|e| std::cmp::Reverse(e.meta.opened.max(e.modified)));
             recent.truncate(RECENT);
             return recent;
         }
@@ -275,9 +368,10 @@ impl Workspace {
             .entries
             .iter()
             .filter_map(|e| {
+                if e.folder { return None; }
                 if e.title.to_lowercase().contains(&q) {
                     Some((0, e))
-                } else if e.body.to_lowercase().contains(&q) {
+                } else if thesio_core::bibliography::without_block(&e.body).to_lowercase().contains(&q) {
                     Some((1, e))
                 } else {
                     None
@@ -288,10 +382,22 @@ impl Workspace {
         hits.into_iter().map(|(_, e)| e).collect()
     }
 
-    fn search_row(&self, e: &Entry, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let summary = snippet(&e.body, q);
-        // Result indices match keyboard selection.
-        let row = ix;
+    fn search_row(&self, hit: &Hit, ix: usize, q: &str, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (glyph, info) = match hit {
+            Hit::Doc(e) => (doc_icon(), result_info(e, q, snippet(&thesio_core::bibliography::without_block(&e.body), q), window)),
+            Hit::Source(row) => {
+                let detail = ["Source", row.authors.as_str(), row.year.as_str(), row.key.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+                (kind_icon(Icon::Library), hit_info(row.label().to_string(), None, detail, q, window))
+            }
+            Hit::Highlight(id, title, highlight) => {
+                let text = if highlight.comment.is_empty() { highlight.quote.clone() } else { format!("{}\n{}", highlight.quote, highlight.comment) };
+                let place = match self.highlight_page(id, highlight) {
+                    page if page.is_empty() => "before the first page".to_string(),
+                    page => format!("page {page}"),
+                };
+                (kind_icon(Icon::Quote), hit_info(title.clone(), snippet(&text, q), format!("Highlight · {place}"), q, window))
+            }
+        };
         div()
             .id(("search-hit", ix))
             .flex_none()
@@ -303,25 +409,22 @@ impl Workspace {
             .items_center()
             .rounded(px(ROW_RADIUS))
             .cursor_pointer()
-            .when(self.search_sel == Some(row), |d| d.bg(Theme::fill_hover()))
+            .when(self.search.selected == Some(ix), |d| d.bg(Theme::fill_hover()))
             .on_hover(cx.listener(move |w, hovered: &bool, _, cx| {
-                if *hovered && w.search_sel != Some(row) {
-                    w.search_sel = Some(row);
+                if *hovered && w.search.selected != Some(ix) {
+                    w.search.selected = Some(ix);
                     cx.notify();
                 }
             }))
-            .on_click(cx.listener(move |w, _, window, cx| w.pick_search(row, window, cx)))
-            .child(entry_icon(e))
-            .child(result_info(e, q, summary, INFO_W, window))
+            .on_click(cx.listener(move |w, _, window, cx| w.pick_search(ix, window, cx)))
+            .child(glyph)
+            .child(info)
     }
 
-    pub(crate) fn render_search(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.search_open {
-            return None;
-        }
+    pub(crate) fn render_search(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let q = self.query(cx);
-        let has_text = !self.search.read(cx).text.is_empty();
-        let results: Vec<Entry> = self.search_results(cx).into_iter().cloned().collect();
+        let has_text = !self.search.field.read(cx).text().is_empty();
+        let results = self.search_results(cx);
         let vh = f32::from(window.viewport_size().height);
 
         let input = div()
@@ -339,16 +442,16 @@ impl Workspace {
                     .size(px(16.))
                     .ml(px(4.))
                     .mr(px(10.))
-                    .child(icon("search", 17.5, Theme::text_placeholder()).absolute().top(px(-0.75)).left(px(-0.75))),
+                    .child(icon(Icon::Search, 17.5, Theme::text_placeholder()).absolute().top(px(-0.75)).left(px(-0.75))),
             )
-            .child(div().flex_1().min_w_0().pl(px(2.)).flex().child(self.search.clone()))
+            .child(div().flex_1().min_w_0().pl(px(2.)).flex().child(self.search.field.clone()))
             .when(has_text, |d| {
-                d.child(input_button("search-clear", "search-clear", 18., Theme::text_disabled()).ml(px(8.)).on_click(cx.listener(
+                d.child(input_button("search-clear", Icon::Clear, 18., Theme::text_disabled()).ml(px(8.)).on_click(cx.listener(
                     |w, _, window, cx| {
-                        w.search.update(cx, |s, cx| s.set_text("", cx));
-                        window.focus(&w.search.focus_handle(cx));
-                        w.search_sel = Some(0);
-                        w.search_scroll.set_offset(point(px(0.), px(0.)));
+                        w.search.field.update(cx, |s, cx| s.set_text("", cx));
+                        window.focus(&w.search.field.focus_handle(cx));
+                        w.search.selected = Some(0);
+                        w.search.scroll.set_offset(point(px(0.), px(0.)));
                         cx.notify();
                     },
                 )))
@@ -365,7 +468,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .track_scroll(&self.search_scroll);
+            .track_scroll(&self.search.scroll);
         if q.is_empty() && !results.is_empty() {
             list = list.child(
                 div()
@@ -416,7 +519,7 @@ impl Workspace {
             .overflow_hidden()
             .child(ui_text("Use ↑↓ to select, Enter to open"));
 
-        let modal = div()
+        let panel = div()
             .id("search-dialog")
             .occlude()
             .w(px(540.))
@@ -432,23 +535,7 @@ impl Workspace {
             .child(list)
             .child(footer);
 
-        Some(
-            deferred(
-                div()
-                    .id("search-mask")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .bg(scrim())
-                    .on_mouse_down(MouseButton::Left, cx.listener(|w, _, window, cx| w.close_search(window, cx)))
-                    .child(modal),
-            )
-            .with_priority(3)
-            .into_any_element(),
-        )
+        crate::overlay::modal("search-mask", ModalAt::Center, true, panel, cx)
     }
 }
 
@@ -457,14 +544,22 @@ mod tests {
     use super::snippet;
 
     #[test]
-    fn snippet_context() {
-        let (s, r) = snippet("first line\nsome long prefix text before the Needle here\nnext", "needle").unwrap();
-        assert_eq!(&s[r[0].clone()], "Needle");
-        assert!(s.starts_with('…'));
-        assert!(s.ends_with("\u{a0}\u{a0}\u{a0}next"));
-        let (s, r) = snippet("中文内容测试内容", "内容").unwrap();
-        assert_eq!(r.len(), 2);
-        assert_eq!(&s[r[1].clone()], "内容");
+    fn a_snippet_starts_shortly_before_its_hit_and_runs_on() {
+        let (text, hits) = snippet("first line\nsome long prefix text before the Needle here\nnext", "needle").unwrap();
+        assert_eq!(&text[hits[0].clone()], "Needle");
+        assert!(text.starts_with('…') && !text.contains("first line"), "{text}");
+        assert!(text.ends_with("next"), "{text}");
+    }
+
+    #[test]
+    fn a_snippet_marks_every_hit_in_multibyte_text() {
+        let (text, hits) = snippet("中文内容测试内容", "内容").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(&text[hits[1].clone()], "内容");
+    }
+
+    #[test]
+    fn no_hit_is_no_snippet() {
         assert!(snippet("abc", "x").is_none());
     }
 }

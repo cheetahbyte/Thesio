@@ -60,6 +60,11 @@ impl SvgRenderer {
     ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
         anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
+        // quiet.md: platform glyphs arrive as a finished mask.
+        if let Some(mask) = self.asset_source.render_mask(&params.path, params.size) {
+            return Ok(Some(mask));
+        }
+
         // Load the tree.
         let Some(bytes) = self.asset_source.load(&params.path)? else {
             return Ok(None);
