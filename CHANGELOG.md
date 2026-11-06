@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Build the Linux apps on Ubuntu 22.04, so they run on glibc 2.35 and later and on any x86-64 CPU. The 0.1.0 builds needed glibc 2.43 and AVX2, and the loader refused them with "CPU ISA level is lower than required".
+
 ## 0.1.0
 
 - Rewrite the app in Go on MyGo native UI. Typst, typst-ide and Hayagriva stay in Rust as a static library behind a C ABI; the vault, the citation library, the include graph, and every view are Go. The vault format is unchanged, so an existing vault opens as it is.

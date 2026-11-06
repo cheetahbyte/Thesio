@@ -35,8 +35,11 @@ jobs:
         # and the Rust library is built for each target's triple.
         include:
           - { name: macOS, os: macos-latest, platform: darwin/universal, triples: "aarch64-apple-darwin x86_64-apple-darwin" }
-          - { name: Linux x64, os: ubuntu-latest, platform: linux/amd64, triples: x86_64-unknown-linux-gnu }
-          - { name: Linux arm64, os: ubuntu-24.04-arm, platform: linux/arm64, triples: aarch64-unknown-linux-gnu }
+          # Linux on 22.04: its glibc 2.35 and plain x86-64 baseline are the oldest the app
+          # runs on. 26.04 links glibc 2.43 and marks the binary x86-64-v3, which the loader
+          # refuses on CPUs and VMs without AVX2 ("CPU ISA level is lower than required").
+          - { name: Linux x64, os: ubuntu-22.04, platform: linux/amd64, triples: x86_64-unknown-linux-gnu }
+          - { name: Linux arm64, os: ubuntu-22.04-arm, platform: linux/arm64, triples: aarch64-unknown-linux-gnu }
           - { name: Windows, os: windows-latest, platform: windows/amd64, triples: x86_64-pc-windows-gnu }
     defaults:
       run:
