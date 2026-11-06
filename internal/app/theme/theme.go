@@ -35,6 +35,17 @@ func Glyph(c *ui.Context, i Icon, size float32, col ui.Color) ui.Element {
 	return ui.Icon(c, i.svg).FontSize(size).TextColor(col)
 }
 
+// SidebarGlyph draws i as Finder's sidebar draws its symbols: 23 DIP, and a
+// medium weight, since a symbol rasterized large and scaled down keeps a
+// thinner stroke than one drawn at that size.
+func SidebarGlyph(c *ui.Context, i Icon, col ui.Color) ui.Element {
+	const size = 23
+	if sfsymbols.Available() {
+		return sfsymbols.Symbol(c, i.symbol).Natural().Weight(sfsymbols.Medium).Size(size).Color(col).Fallback(i.svg).Element
+	}
+	return ui.Icon(c, i.svg).FontSize(size).TextColor(col)
+}
+
 // Mono names the system's monospaced font for ui.Font and editor.State.Font.
 const Mono = "monospace"
 
