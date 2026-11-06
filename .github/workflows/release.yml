@@ -187,10 +187,11 @@ jobs:
           # One SHA256SUMS for every platform: the lines of each build's, by file name.
           cat builds/*/SHA256SUMS | awk '!seen[$2]++' | sort -k2 > SHA256SUMS
           # What mygo build -upload publishes: archives, disk images, installers,
-          # packages, install scripts and update files, not the apps' own files.
+          # packages, install scripts and update files, not the apps' own files. Each name
+          # once: every Unix build has its install.sh, and gh fails on a repeated name.
           files=$(find builds -mindepth 3 -maxdepth 3 -type f \( -name '*.tar.gz' -o -name '*.dmg' \
             -o -name '*.deb' -o -name '*-setup-*.exe' -o -name '*.delta' -o -name 'update-*.json' \
-            -o -name 'install.sh' -o -name 'install.ps1' \))
+            -o -name 'install.sh' -o -name 'install.ps1' \) | awk -F/ '!seen[$NF]++')
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber $files SHA256SUMS
           echo "Uploaded to the draft release $GITHUB_REF_NAME; publish it when it looks right:"
           echo "  gh release edit $GITHUB_REF_NAME --repo $GITHUB_REPOSITORY --draft=false"
