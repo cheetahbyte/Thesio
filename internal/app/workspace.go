@@ -145,10 +145,13 @@ func (ws *Workspace) Start(id string) {
 	ws.NewDocument("")
 }
 
+// Store is the vault.
 func (ws *Workspace) Store() *vault.Store { return ws.store }
 
+// Entries is the vault's listing, most recently modified first.
 func (ws *Workspace) Entries() []vault.Entry { return ws.entries }
 
+// Entry finds one by id.
 func (ws *Workspace) Entry(id string) (vault.Entry, bool) {
 	i, ok := ws.index[id]
 	if !ok {
@@ -183,10 +186,13 @@ func (ws *Workspace) sort() {
 	}
 }
 
+// Library is nil while library.yaml cannot be read.
 func (ws *Workspace) Library() *library.Library { return ws.lib }
 
+// LibraryError is why the library cannot be read, "" when it can.
 func (ws *Workspace) LibraryError() string { return ws.libErr }
 
+// ReloadLibrary reads library.yaml again.
 func (ws *Workspace) ReloadLibrary() {
 	lib, err := library.Load(ws.store.Root())
 	ws.lib, ws.libErr = lib, ""
@@ -202,8 +208,10 @@ func (ws *Workspace) libraryRows() []library.Row {
 	return ws.lib.Rows()
 }
 
+// Prefs are the vault's preferences.
 func (ws *Workspace) Prefs() *host.Preferences { return ws.prefs }
 
+// SavePrefs writes the preferences; a failure is toasted.
 func (ws *Workspace) SavePrefs() {
 	if err := ws.prefs.Save(); err != nil {
 		ws.ToastError(fmt.Sprintf("Could not save settings: %v", err))
@@ -211,10 +219,13 @@ func (ws *Workspace) SavePrefs() {
 	ws.Invalidate()
 }
 
+// Toast shows a message.
 func (ws *Workspace) Toast(msg string) { ws.addToast(ui.Toast{Title: msg}) }
 
+// ToastError shows an error.
 func (ws *Workspace) ToastError(msg string) { ws.addToast(ui.Toast{Title: msg, Type: "error"}) }
 
+// Warn toasts the warnings joined, when there are any.
 func (ws *Workspace) Warn(warnings []string) {
 	if len(warnings) > 0 {
 		ws.ToastError(strings.Join(warnings, "; "))
@@ -228,6 +239,8 @@ func (ws *Workspace) addToast(t ui.Toast) {
 	ws.Invalidate()
 }
 
+// Update runs fn on the main thread and draws a frame; safe from any goroutine.
+// Without a window (tests), fn waits for the next frame.
 func (ws *Workspace) Update(fn func()) {
 	if ws.win != nil {
 		ws.win.Update(fn)
@@ -238,12 +251,14 @@ func (ws *Workspace) Update(fn func()) {
 	ws.mu.Unlock()
 }
 
+// Invalidate draws a frame.
 func (ws *Workspace) Invalidate() {
 	if ws.win != nil {
 		ws.win.Invalidate()
 	}
 }
 
+// Window is the main window, nil before it opens.
 func (ws *Workspace) Window() *mygo.Window { return ws.win }
 
 // drain runs what Update queued and shows the toasts waiting.
@@ -260,6 +275,7 @@ func (ws *Workspace) drain(c *ui.Context) {
 	}
 }
 
+// CurrentView is what the main pane shows.
 func (ws *Workspace) CurrentView() host.View { return ws.view }
 
 // ShowView shows a page of the main pane.
@@ -292,6 +308,7 @@ func (ws *Workspace) setView(v host.View) {
 	ws.view = v
 }
 
+// Current is the open document, "" when none.
 func (ws *Workspace) Current() string {
 	if ws.doc == nil {
 		return ""
@@ -331,26 +348,36 @@ func (ws *Workspace) typstIDs() []string {
 	return ids
 }
 
+// Documents are the vault's documents and their includes.
 func (ws *Workspace) Documents() *project.Documents {
 	return project.LoadDocuments(ws.typstIDs(), ws.read)
 }
 
+// TopDocument is the document that includes id, at the top.
 func (ws *Workspace) TopDocument(id string) string { return ws.Documents().TopDocument(id) }
 
+// HasPaper tells whether the source key has a paper.
 func (ws *Workspace) HasPaper(key string) bool { return ws.papers.HasPaper(key) }
 
+// OpenPaper shows a paper.
 func (ws *Workspace) OpenPaper(id string) { ws.papers.OpenPaper(id) }
 
+// FetchPapers downloads the open-access papers of the sources.
 func (ws *Workspace) FetchPapers(keys []string) { ws.papers.FetchPapers(keys) }
 
+// AttachPaper copies a PDF from outside the vault in as paper id.
 func (ws *Workspace) AttachPaper(path, id string) { ws.papers.AttachPaper(path, id) }
 
+// OpenSourceNotes opens the notes of key, starting them if there are none.
 func (ws *Workspace) OpenSourceNotes(key string) { ws.papers.OpenSourceNotes(key) }
 
+// SyncBibliographies brings the embedded bibliographies up to date with the library.
 func (ws *Workspace) SyncBibliographies() { ws.cites.SyncBibliographies() }
 
-func (ws *Workspace) RenameCitations(old, new string) { ws.cites.RenameCitations(old, new) }
+// RenameCitations follows a key change through every document that cites it.
+func (ws *Workspace) RenameCitations(old, renamed string) { ws.cites.RenameCitations(old, renamed) }
 
+// PickSource opens the source picker for a purpose.
 func (ws *Workspace) PickSource(opts host.PickSourceOptions) { ws.cites.OpenSourcePicker(opts) }
 
 // notesID is the paper panel's notes when they are open, else "".
@@ -373,6 +400,7 @@ func (ws *Workspace) QuoteTarget() string {
 	return notes
 }
 
+// InsertQuote puts a quotation into the QuoteTarget.
 func (ws *Workspace) InsertQuote(markup string, block bool) {
 	target := ws.QuoteTarget()
 	switch {
@@ -417,31 +445,42 @@ func (ws *Workspace) PickFiles(ext string, multiple bool) ([]string, error) {
 		opts.Filters = []mygo.FileFilter{{Name: strings.ToUpper(ext), Extensions: []string{ext}}}
 	}
 	paths, err := mygo.Dialog.Open(opts)
-	if err != nil || len(paths) == 0 {
-		return nil, err
+	if err != nil {
+		return nil, fmt.Errorf("the open dialog: %w", err)
+	}
+	if len(paths) == 0 {
+		return nil, nil
 	}
 	return paths, nil
 }
 
 // PickSavePath asks where to save a file named name; "" when canceled.
 func (ws *Workspace) PickSavePath(dir, name string) (string, error) {
-	return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: ws.win, DefaultPath: filepath.Join(dir, name), CreateDirectories: true})
+	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: ws.win, DefaultPath: filepath.Join(dir, name), CreateDirectories: true})
+	if err != nil {
+		return "", fmt.Errorf("the save dialog: %w", err)
+	}
+	return path, nil
 }
 
+// Confirm asks a question with a danger or primary action; safe from any goroutine.
 func (ws *Workspace) Confirm(title, body, action string, danger bool, then func()) {
 	ws.Update(func() {
 		ws.confirm = confirmState{open: true, title: title, body: body, action: action, danger: danger, then: then}
 	})
 }
 
+// Reveal shows path in the system's file manager.
 func (ws *Workspace) Reveal(path string) { mygo.Shell.ShowItemInFolder(path) }
 
+// OpenExternally opens path in its default app.
 func (ws *Workspace) OpenExternally(path string) {
 	if err := mygo.Shell.OpenPath(path); err != nil {
 		ws.ToastError(fmt.Sprintf("Could not open %s: %v", filepath.Base(path), err))
 	}
 }
 
+// CopyText puts text on the clipboard.
 func (ws *Workspace) CopyText(text string) { mygo.Clipboard.WriteText(text) }
 
 // revealPath shows a vault file in the system's file manager.

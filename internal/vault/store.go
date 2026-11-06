@@ -28,6 +28,7 @@ const (
 	settingsFile = "settings.json"
 )
 
+// Untitled is the title of a document that has none.
 const Untitled = "Untitled"
 
 // TrashDays is how long the Trash keeps an item.
@@ -35,6 +36,29 @@ const TrashDays = 30
 
 // Format is the version of `.thesio/`. Bump it when older builds would misread the vault.
 const Format = 1
+
+// message is an error written as a sentence for the user, so its text is shown
+// as it is; being comparable, it serves as a sentinel.
+type message string
+
+func (m message) Error() string { return string(m) }
+
+// Errors the vault returns, matched with errors.Is. Details follow their text.
+var (
+	ErrInvalidPath     error = message("Invalid vault path")
+	ErrTooManyNamed    error = message("Too many files named")
+	ErrMoveIntoItself  error = message("A folder cannot move into itself")
+	ErrNotInTrash      error = message("Not in Trash")
+	ErrCannotRead      error = message("Could not read")
+	ErrVersionNotFound error = message("Could not find the version from")
+	ErrNoImage         error = message("No image given")
+	ErrPastedAsPNG     error = message("Could not save the pasted image as PNG")
+	// ErrExists follows the path that is taken.
+	ErrExists error = message("already exists")
+	// ErrNotImage follows the file's name.
+	ErrNotImage error = message("is not an image Typst can show: use PNG, JPEG, GIF, WebP, SVG, or PDF")
+	ErrNotUTF8        = errors.New("not valid UTF-8")
+)
 
 // DisplayTitle is how a title reads: trimmed, and never blank.
 func DisplayTitle(title string) string {
@@ -82,6 +106,7 @@ type TrashEntry struct {
 	Parent string
 }
 
+// Entry is a visible file or folder as the sidebar and search see it.
 type Entry struct {
 	ID   string
 	Meta Meta
@@ -106,8 +131,10 @@ type Moved struct {
 	Warnings []string
 }
 
+// Rewritten is a document whose paths a move updated, with its new text.
 type Rewritten struct{ ID, Text string }
 
+// Restored is a restore from the Trash that went through.
 type Restored struct {
 	// Renamed: it came back under a new name because its old one was taken.
 	Renamed  bool
@@ -156,8 +183,10 @@ func loadJSON[T any](path, what string, warnings *[]string) T {
 		return v
 	}
 	aside := fmt.Sprintf("%s.corrupt-%d", path, Now())
-	os.Rename(path, aside)
 	name := filepath.Base(aside)
+	if err := os.Rename(path, aside); err != nil {
+		*warnings = append(*warnings, fmt.Sprintf("Could not set %s aside as %s: %v", what, name, err))
+	}
 	var backup T
 	if data, err := os.ReadFile(path + ".bak"); err == nil && json.Unmarshal(data, &backup) == nil {
 		*warnings = append(*warnings, fmt.Sprintf("%s was damaged and restored from backup (original kept as %s)", what, name))
@@ -174,14 +203,14 @@ func saveJSON(path string, v any) error {
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(v); err != nil {
-		return err
+		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
 	if old, err := os.ReadFile(path); err == nil {
-		if err := WriteAtomic(path+".bak", old); err != nil {
-			return err
+		if werr := WriteAtomic(path+".bak", old); werr != nil {
+			return werr
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return fmt.Errorf("read %s: %w", filepath.Base(path), err)
 	}
 	return WriteAtomic(path, bytes.TrimSuffix(out.Bytes(), []byte("\n")))
 }
@@ -228,28 +257,37 @@ func exists(path string) (bool, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, fmt.Errorf("check %s: %w", path, err)
+	}
+	return true, nil
 }
 
-func copyFile(from, to string) error {
+func copyFile(from, to string) (err error) {
 	in, err := os.Open(from)
 	if err != nil {
-		return err
+		return fmt.Errorf("copy: %w", err)
 	}
-	defer in.Close()
+	defer func() {
+		if cerr := in.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("copy: %w", cerr)
+		}
+	}()
 	info, err := in.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("copy: %w", err)
 	}
 	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
-		return err
+		return fmt.Errorf("copy: %w", err)
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+		return errors.Join(fmt.Errorf("copy %s: %w", filepath.Base(from), err), out.Close())
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	return nil
 }
 
 // RootDir is THESIO_HOME, else a folder of its own in the user's Documents.
@@ -267,9 +305,10 @@ func RootDir() string {
 // Open opens the vault at RootDir, with problems found opening it, for the window to show once.
 func Open() (*Store, []string, error) { return OpenAt(RootDir()) }
 
+// OpenAt opens the vault at root, as Open does.
 func OpenAt(root string) (*Store, []string, error) {
 	if err := os.MkdirAll(filepath.Join(root, StateDir), 0o755); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open the vault: %w", err)
 	}
 	state := func(file string) string { return filepath.Join(root, StateDir, file) }
 	var warnings []string
@@ -299,16 +338,17 @@ func OpenAt(root string) (*Store, []string, error) {
 // SetRewriter wires in path rewriting after a move; nil skips it.
 func (s *Store) SetRewriter(r Rewriter) { s.rewriter = r }
 
+// Root is the vault's folder on disk.
 func (s *Store) Root() string { return s.root }
 
 // Path is the file behind id, refusing paths that leave the vault.
 func (s *Store) Path(id string) (string, error) {
 	if id == "" {
-		return "", fmt.Errorf("Invalid vault path: %s", id)
+		return "", fmt.Errorf("%w: %s", ErrInvalidPath, id)
 	}
 	for _, segment := range strings.Split(id, "/") {
 		if segment == "" || segment == "." || segment == ".." {
-			return "", fmt.Errorf("Invalid vault path: %s", id)
+			return "", fmt.Errorf("%w: %s", ErrInvalidPath, id)
 		}
 	}
 	return filepath.Join(s.root, filepath.FromSlash(id)), nil
@@ -343,6 +383,7 @@ func (s *Store) entry(item Item) Entry {
 	return e
 }
 
+// Load is the text of document id.
 func (s *Store) Load(id string) (string, error) {
 	path, err := s.Path(id)
 	if err != nil {
@@ -350,14 +391,15 @@ func (s *Store) Load(id string) (string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err == nil && !utf8.Valid(data) {
-		err = errors.New("not valid UTF-8")
+		err = ErrNotUTF8
 	}
 	if err != nil {
-		return "", fmt.Errorf("Could not read %s: %w", id, err)
+		return "", fmt.Errorf("%w %s: %w", ErrCannotRead, id, err)
 	}
 	return string(data), nil
 }
 
+// Save writes text to id.
 func (s *Store) Save(id, text string) error {
 	// A second write can leave the time and size List compares unchanged.
 	delete(s.bodies, id)
@@ -392,12 +434,13 @@ func (s *Store) freeID(parent, stem, ext string) (string, error) {
 			return id, nil
 		}
 	}
-	return "", fmt.Errorf("Too many files named %s", stem)
+	return "", fmt.Errorf("%w %s", ErrTooManyNamed, stem)
 }
 
 // Create makes an empty document in parent, "" for the vault root.
 func (s *Store) Create(parent string) (string, error) { return s.CreateFrom(parent, Untitled, "") }
 
+// CreateFrom makes a document with text in parent, named for title.
 func (s *Store) CreateFrom(parent, title, text string) (string, error) {
 	id, err := s.freeID(parent, fileStem(title), Extension)
 	if err != nil {
@@ -406,6 +449,7 @@ func (s *Store) CreateFrom(parent, title, text string) (string, error) {
 	return id, s.Save(id, text)
 }
 
+// CreateFolder makes a folder in parent, named for title.
 func (s *Store) CreateFolder(parent, title string) (string, error) {
 	id, err := s.freeID(parent, fileStem(title), "")
 	if err != nil {
@@ -415,7 +459,10 @@ func (s *Store) CreateFolder(parent, title string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return id, os.Mkdir(path, 0o755)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		return id, fmt.Errorf("create folder: %w", err)
+	}
+	return id, nil
 }
 
 // layout is the vault as the compiler saw it before a move.
@@ -439,29 +486,29 @@ func (s *Store) layout() layout {
 	return l
 }
 
-// relocate moves old to new, carrying app state, including for a folder's
+// relocate moves old to dest, carrying app state, including for a folder's
 // files, and updates the paths in vault documents.
-func (s *Store) relocate(old, new string) (Moved, error) {
-	outcome := Moved{ID: new}
-	if old == new {
+func (s *Store) relocate(old, dest string) (Moved, error) {
+	outcome := Moved{ID: dest}
+	if old == dest {
 		return outcome, nil
 	}
 	from, err := s.Path(old)
 	if err != nil {
 		return outcome, err
 	}
-	target, err := s.Path(new)
+	target, err := s.Path(dest)
 	if err != nil {
 		return outcome, err
 	}
 	// A change of case alone names the same file on case-insensitive disks.
-	if strings.ToLower(old) != strings.ToLower(new) {
+	if !strings.EqualFold(old, dest) {
 		taken, err := exists(target)
 		if err != nil {
 			return outcome, err
 		}
 		if taken {
-			return outcome, fmt.Errorf("%s already exists", new)
+			return outcome, fmt.Errorf("%s %w", dest, ErrExists)
 		}
 	}
 	var before layout
@@ -469,14 +516,14 @@ func (s *Store) relocate(old, new string) (Moved, error) {
 		before = s.layout()
 	}
 	if err := os.Rename(from, target); err != nil {
-		return outcome, err
+		return outcome, fmt.Errorf("move %s: %w", old, err)
 	}
 	// A file's versions follow it. Losing them must not fail the move.
-	if err := VersionsOf(s.root, old).moveTo(VersionsOf(s.root, new)); err != nil {
+	if err := VersionsOf(s.root, old).moveTo(VersionsOf(s.root, dest)); err != nil {
 		outcome.Warnings = append(outcome.Warnings, fmt.Sprintf("Could not move the history of %s: %v", old, err))
 	}
 	for key, meta := range maps.Clone(s.index) {
-		if renamed, ok := MovedPath(key, old, new); ok {
+		if renamed, ok := MovedPath(key, old, dest); ok {
 			delete(s.index, key)
 			s.index[renamed] = meta
 		}
@@ -485,14 +532,14 @@ func (s *Store) relocate(old, new string) (Moved, error) {
 		return outcome, err
 	}
 	if s.rewriter != nil {
-		s.rewriteReferences(old, new, before, &outcome)
+		s.rewriteReferences(old, dest, before, &outcome)
 	}
 	return outcome, nil
 }
 
-// rewriteReferences fixes paths that the move from old to new broke. A file
+// rewriteReferences fixes paths that the move from old to dest broke. A file
 // that cannot be rewritten keeps its text and raises a warning.
-func (s *Store) rewriteReferences(old, new string, before layout, outcome *Moved) {
+func (s *Store) rewriteReferences(old, dest string, before layout, outcome *Moved) {
 	read := func(id string) (string, bool) { body, ok := before.bodies[id]; return body, ok }
 	for _, e := range s.List() {
 		if !e.Typst {
@@ -503,12 +550,12 @@ func (s *Store) rewriteReferences(old, new string, before layout, outcome *Moved
 			outcome.Warnings = append(outcome.Warnings, fmt.Sprintf("Could not update paths in %s: %v", e.ID, err))
 			continue
 		}
-		previous, ok := MovedPath(e.ID, new, old)
+		previous, ok := MovedPath(e.ID, dest, old)
 		if !ok {
 			previous = e.ID
 		}
 		main := s.rewriter.TopDocument(before.documents, read, previous)
-		updated, ok := s.rewriter.RewritePaths(text, previous, e.ID, main, before.files, old, new)
+		updated, ok := s.rewriter.RewritePaths(text, previous, e.ID, main, before.files, old, dest)
 		if !ok {
 			continue
 		}
@@ -531,10 +578,10 @@ func (s *Store) Attach(from, id string) error {
 		return err
 	}
 	if taken {
-		return fmt.Errorf("%s already exists", id)
+		return fmt.Errorf("%s %w", id, ErrExists)
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
+		return fmt.Errorf("attach %s: %w", id, err)
 	}
 	return copyFile(from, target)
 }
@@ -555,7 +602,7 @@ func (s *Store) AddImage(document string, image Incoming) (string, error) {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("add image: %w", err)
 	}
 	for n := range maxNumbered {
 		id := Join(folder, numberedName(stem, img.ext, n))
@@ -567,16 +614,16 @@ func (s *Store) AddImage(document string, image Incoming) (string, error) {
 		found, err := os.Lstat(path)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			if err := WriteAtomic(path, img.data); err != nil {
-				return "", err
+			if werr := WriteAtomic(path, img.data); werr != nil {
+				return "", werr
 			}
 			same = true
 		case err != nil:
-			return "", err
+			return "", fmt.Errorf("add image: %w", err)
 		case found.Mode().IsRegular() && found.Size() == int64(len(img.data)):
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return "", err
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return "", fmt.Errorf("add image: %w", rerr)
 			}
 			same = bytes.Equal(data, img.data)
 		}
@@ -584,7 +631,7 @@ func (s *Store) AddImage(document string, image Incoming) (string, error) {
 			return RelativeTo(DirParts(document), id), nil
 		}
 	}
-	return "", fmt.Errorf("Too many files named %s", stem)
+	return "", fmt.Errorf("%w %s", ErrTooManyNamed, stem)
 }
 
 // Rename gives id a new name from title, in the same folder.
@@ -602,7 +649,7 @@ func (s *Store) Rename(id, title string) (Moved, error) {
 // SetParent moves id into parent, "" for the vault root.
 func (s *Store) SetParent(id, parent string) (Moved, error) {
 	if parent != "" && IsWithin(parent, id) {
-		return Moved{}, errors.New("A folder cannot move into itself")
+		return Moved{}, ErrMoveIntoItself
 	}
 	return s.relocate(id, Join(parent, BaseName(id)))
 }
@@ -618,7 +665,10 @@ func (s *Store) Delete(id string) ([]string, error) {
 	for {
 		key := strconv.FormatInt(stamp, 10)
 		_, listed := s.trash[key]
-		taken, _ := exists(filepath.Join(s.root, trashDir, key))
+		taken, err := exists(filepath.Join(s.root, trashDir, key))
+		if err != nil {
+			return nil, err
+		}
 		if !listed && !taken {
 			break
 		}
@@ -627,7 +677,7 @@ func (s *Store) Delete(id string) ([]string, error) {
 	key := strconv.FormatInt(stamp, 10)
 	dir := filepath.Join(s.root, trashDir, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move to Trash: %w", err)
 	}
 	// Record it first: an interrupted move leaves an extra entry, never a lost file.
 	inner := map[string]Meta{}
@@ -642,8 +692,7 @@ func (s *Store) Delete(id string) ([]string, error) {
 	}
 	if err := os.Rename(from, filepath.Join(dir, BaseName(id))); err != nil {
 		delete(s.trash, key)
-		s.saveTrash()
-		return nil, err
+		return nil, errors.Join(fmt.Errorf("move to Trash: %w", err), s.saveTrash())
 	}
 	maps.DeleteFunc(s.index, func(k string, _ Meta) bool { return IsWithin(k, id) })
 	if err := s.saveIndex(); err != nil {
@@ -682,7 +731,7 @@ func (s *Store) ListTrash() []TrashEntry {
 func (s *Store) Restore(key string) (Restored, error) {
 	entry, ok := s.trash[key]
 	if !ok {
-		return Restored{}, errors.New("Not in Trash")
+		return Restored{}, ErrNotInTrash
 	}
 	original := entry.Original
 	parent, hasParent := ParentOf(original)
@@ -706,12 +755,12 @@ func (s *Store) Restore(key string) (Restored, error) {
 		}
 	}
 	if hasParent {
-		dir, err := s.Path(parent)
-		if err != nil {
-			return Restored{}, err
+		folder, perr := s.Path(parent)
+		if perr != nil {
+			return Restored{}, perr
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return Restored{}, err
+		if merr := os.MkdirAll(folder, 0o755); merr != nil {
+			return Restored{}, fmt.Errorf("restore: %w", merr)
 		}
 	}
 	dir := filepath.Join(s.root, trashDir, key)
@@ -720,9 +769,12 @@ func (s *Store) Restore(key string) (Restored, error) {
 		return Restored{}, err
 	}
 	if err := os.Rename(filepath.Join(dir, BaseName(original)), to); err != nil {
-		return Restored{}, err
+		return Restored{}, fmt.Errorf("restore: %w", err)
 	}
-	os.Remove(dir)
+	restored := Restored{Renamed: taken}
+	if err := os.Remove(dir); err != nil {
+		restored.Warnings = append(restored.Warnings, fmt.Sprintf("Restored, but its folder in the Trash could not be removed: %v", err))
+	}
 	for relative, meta := range entry.Inner {
 		s.index[target+"/"+relative] = meta
 	}
@@ -731,19 +783,19 @@ func (s *Store) Restore(key string) (Restored, error) {
 	if err := s.saveIndex(); err != nil {
 		return Restored{}, err
 	}
-	restored := Restored{Renamed: taken}
 	if err := s.saveTrash(); err != nil {
 		restored.Warnings = append(restored.Warnings, fmt.Sprintf("Restored, but the Trash index could not be cleaned up: %v", err))
 	}
 	return restored, nil
 }
 
+// Purge permanently deletes an item in the Trash.
 func (s *Store) Purge(key string) error {
 	if _, ok := s.trash[key]; !ok {
-		return errors.New("Not in Trash")
+		return ErrNotInTrash
 	}
 	if err := os.RemoveAll(filepath.Join(s.root, trashDir, key)); err != nil {
-		return err
+		return fmt.Errorf("empty Trash: %w", err)
 	}
 	delete(s.trash, key)
 	return s.saveTrash()
@@ -763,6 +815,7 @@ func (s *Store) Import(path string) (string, error) {
 	return id, copyFile(path, to)
 }
 
+// UpdateMeta changes id's app state with f and saves it.
 func (s *Store) UpdateMeta(id string, f func(*Meta)) error {
 	meta := s.index[id]
 	f(&meta)
@@ -770,6 +823,7 @@ func (s *Store) UpdateMeta(id string, f func(*Meta)) error {
 	return s.saveIndex()
 }
 
+// Settings is the window state on disk; one that cannot be read is the default.
 func (s *Store) Settings() Settings {
 	var warnings []string
 	return loadJSON[Settings](s.stateFile(settingsFile), "settings", &warnings)
@@ -788,6 +842,7 @@ func (s *Store) Touch(id string) error {
 	return s.UpdateMeta(id, func(m *Meta) { m.Opened = now })
 }
 
+// SetStarred stars or unstars id and returns the star time, 0 when off.
 func (s *Store) SetStarred(id string, on bool) (int64, error) {
 	var time int64
 	if on {
@@ -796,6 +851,7 @@ func (s *Store) SetStarred(id string, on bool) (int64, error) {
 	return time, s.UpdateMeta(id, func(m *Meta) { m.Starred = time })
 }
 
+// SetPageOffset sets the printed page numbers' offset of PDF id; 0 clears it.
 func (s *Store) SetPageOffset(id string, n int) error {
 	return s.UpdateMeta(id, func(m *Meta) {
 		m.PageOffset = nil
@@ -805,6 +861,7 @@ func (s *Store) SetPageOffset(id string, n int) error {
 	})
 }
 
+// SetPinned pins or unpins id.
 func (s *Store) SetPinned(id string, on bool) error {
 	return s.UpdateMeta(id, func(m *Meta) { m.Pinned = on })
 }

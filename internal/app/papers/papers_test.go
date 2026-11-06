@@ -81,42 +81,42 @@ func (f *fakeHost) Invalidate()                       {}
 func (f *fakeHost) Window() *mygo.Window              { return nil }
 func (f *fakeHost) ShowView(v host.View)              { f.view = v }
 func (f *fakeHost) CurrentView() host.View            { return f.view }
-func (f *fakeHost) Open(id string)                    {}
-func (f *fakeHost) GoToSource(path string, off int)   {}
-func (f *fakeHost) FollowLink(path string)            {}
+func (f *fakeHost) Open(_ string)                     {}
+func (f *fakeHost) GoToSource(_ string, _ int)        {}
+func (f *fakeHost) FollowLink(_ string)               {}
 func (f *fakeHost) Bar(c *ui.Context, content func()) { ui.Row(c).Children(content) }
 func (f *fakeHost) Current() string                   { return "" }
 func (f *fakeHost) TextOf(id string) (string, error)  { return f.store.Load(id) }
-func (f *fakeHost) WriteDocument(id, text string, generated bool) error {
+func (f *fakeHost) WriteDocument(id, text string, _ bool) error {
 	return f.store.Save(id, text)
 }
-func (f *fakeHost) MarkUnsaved()                                             {}
-func (f *fakeHost) SaveAll() bool                                            { return true }
-func (f *fakeHost) WhenSaved(then func())                                    { then() }
-func (f *fakeHost) PathChanged(old, new string, rewritten []vault.Rewritten) {}
-func (f *fakeHost) KeepVersion(id, text string, now bool)                    {}
-func (f *fakeHost) TopDocument(id string) string                             { return id }
-func (f *fakeHost) Documents() *project.Documents                            { return nil }
-func (f *fakeHost) HasPaper(key string) bool                                 { return false }
-func (f *fakeHost) OpenPaper(id string)                                      {}
-func (f *fakeHost) FetchPapers(keys []string)                                {}
-func (f *fakeHost) AttachPaper(path, id string)                              {}
-func (f *fakeHost) OpenSourceNotes(key string)                               {}
-func (f *fakeHost) PickSource(opts host.PickSourceOptions)                   {}
-func (f *fakeHost) InsertQuote(markup string, block bool)                    { f.quotes = append(f.quotes, markup) }
-func (f *fakeHost) QuoteTarget() string                                      { return f.target }
-func (f *fakeHost) InsertCitation(key string)                                {}
-func (f *fakeHost) CitationAdded(id string)                                  {}
-func (f *fakeHost) SyncBibliographies()                                      {}
-func (f *fakeHost) RenameCitations(old, new string)                          {}
-func (f *fakeHost) PickFiles(ext string, multiple bool) ([]string, error)    { return nil, nil }
-func (f *fakeHost) PickSavePath(dir, name string) (string, error)            { return "", nil }
-func (f *fakeHost) Confirm(title, body, action string, danger bool, then func()) {
+func (f *fakeHost) MarkUnsaved()                                 {}
+func (f *fakeHost) SaveAll() bool                                { return true }
+func (f *fakeHost) WhenSaved(then func())                        { then() }
+func (f *fakeHost) PathChanged(_, _ string, _ []vault.Rewritten) {}
+func (f *fakeHost) KeepVersion(_, _ string, _ bool)              {}
+func (f *fakeHost) TopDocument(id string) string                 { return id }
+func (f *fakeHost) Documents() *project.Documents                { return nil }
+func (f *fakeHost) HasPaper(_ string) bool                       { return false }
+func (f *fakeHost) OpenPaper(_ string)                           {}
+func (f *fakeHost) FetchPapers(_ []string)                       {}
+func (f *fakeHost) AttachPaper(_, _ string)                      {}
+func (f *fakeHost) OpenSourceNotes(_ string)                     {}
+func (f *fakeHost) PickSource(_ host.PickSourceOptions)          {}
+func (f *fakeHost) InsertQuote(markup string, _ bool)            { f.quotes = append(f.quotes, markup) }
+func (f *fakeHost) QuoteTarget() string                          { return f.target }
+func (f *fakeHost) InsertCitation(_ string)                      {}
+func (f *fakeHost) CitationAdded(_ string)                       {}
+func (f *fakeHost) SyncBibliographies()                          {}
+func (f *fakeHost) RenameCitations(_, _ string)                  {}
+func (f *fakeHost) PickFiles(_ string, _ bool) ([]string, error) { return nil, nil }
+func (f *fakeHost) PickSavePath(_, _ string) (string, error)     { return "", nil }
+func (f *fakeHost) Confirm(_, _, _ string, _ bool, then func()) {
 	then()
 }
-func (f *fakeHost) Reveal(path string)         {}
-func (f *fakeHost) OpenExternally(path string) {}
-func (f *fakeHost) CopyText(text string)       {}
+func (f *fakeHost) Reveal(_ string)         {}
+func (f *fakeHost) OpenExternally(_ string) {}
+func (f *fakeHost) CopyText(_ string)       {}
 
 // settle runs the work goroutines handed to Update, waiting for the first.
 func (f *fakeHost) settle() {

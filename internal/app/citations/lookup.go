@@ -1,6 +1,7 @@
 package citations
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/cheetahbyte/thesio/internal/app/theme"
@@ -44,7 +45,7 @@ func (s *State) runLookup() {
 				results[i].problem = fmt.Sprintf("%s: not a DOI, arXiv ID, PMID, or ISBN", token.Text)
 				continue
 			}
-			entry, err := library.Fetch(token.ID)
+			entry, err := library.Fetch(context.Background(), token.ID)
 			results[i] = fetched{id: token.ID, entry: entry}
 			if err != nil {
 				results[i].problem = fmt.Sprintf("%s: %v", token.ID, err)

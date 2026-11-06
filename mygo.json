@@ -4,8 +4,31 @@
   "version": "0.1.0",
   "out": "build",
   "fileAssociations": [
-    { "ext": ["typ"], "name": "Typst Document", "mimeType": "text/x-typst" }
+    {
+      "ext": [
+        "typ"
+      ],
+      "name": "Typst Document",
+      "mimeType": "text/x-typst"
+    }
   ],
-  "macos": { "minimumSystemVersion": "13.0" },
-  "linux": { "webview": true }
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "signingIdentity": "Developer ID Application: Leonhard Breuer (ZMF32TXKBT)",
+    "notarize": {
+      "keychainProfile": "notary"
+    }
+  },
+  "linux": {
+    "webview": true,
+    "maintainer": "cheetahbyte",
+    "comment": "A local-first workspace for academic research and writing",
+    "categories": [
+      "Office"
+    ]
+  },
+  "updates": {
+    "publicKey": "gcclgEM+lxUFSLj/7+xek2cQRDeBzVv76UbiEjMnz54=",
+    "github": "cheetahbyte/Thesio"
+  }
 }

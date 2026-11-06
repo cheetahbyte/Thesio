@@ -90,14 +90,14 @@ func TestLaunchTargetIsTheNewestDocumentWithinItsTopFile(t *testing.T) {
 		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		at := time.Now().Add(-age * time.Second)
+		at := time.Now().Add(-age)
 		if err := os.Chtimes(full, at, at); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("old.typ", "old", 500)
-	write("Thesis/thesis.typ", `#include "chapters/one.typ"`, 300)
-	write("Thesis/chapters/one.typ", "newest", 100)
+	write("old.typ", "old", 500*time.Second)
+	write("Thesis/thesis.typ", `#include "chapters/one.typ"`, 300*time.Second)
+	write("Thesis/chapters/one.typ", "newest", 100*time.Second)
 	write(".trash/hidden.typ", "hidden", 0)
 	got, ok := Launch(root)
 	if want := (LaunchTarget{Document: "Thesis/chapters/one.typ", Main: "Thesis/thesis.typ", Text: "newest"}); !ok || got != want {
@@ -195,15 +195,15 @@ func TestTheRewriterGivesEachMovedFileItsTopDocument(t *testing.T) {
 	}
 	store.SetRewriter(NewRewriter())
 	mains := map[string]string{}
-	RewritePaths = func(text, oldFile, newFile, main string, files []string, from, to string) (string, bool) {
+	RewritePaths = func(text, oldFile, _, main string, _ []string, from, to string) (string, bool) {
 		mains[oldFile] = main
 		updated := strings.ReplaceAll(text, vault.Quoted(from), vault.Quoted(to))
 		return updated, updated != text
 	}
 	t.Cleanup(func() { RewritePaths = nil })
 	for _, f := range [][2]string{{"main", `#include "a.typ"`}, {"a", "= A"}, {"other", ""}} {
-		if _, err := store.CreateFrom("", f[0], f[1]); err != nil {
-			t.Fatal(err)
+		if _, cerr := store.CreateFrom("", f[0], f[1]); cerr != nil {
+			t.Fatal(cerr)
 		}
 	}
 	moved, err := store.Rename("a.typ", "c")

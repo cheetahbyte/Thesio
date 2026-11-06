@@ -1,0 +1,121 @@
+# Strict linting: warnings are build failures. A curated set rather than
+# every linter, since the full set conflicts with itself.
+version: "2"
+
+run:
+  timeout: 10m
+  build-tags: []
+
+linters:
+  default: none
+  enable:
+    # Core correctness
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    # Errors
+    - errcheck
+    - errorlint
+    - err113
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - wrapcheck
+    # Nil, resources and context
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - contextcheck
+    - noctx
+    - containedctx
+    - fatcontext
+    # Exhaustiveness and type safety
+    - exhaustive
+    - forcetypeassert
+    - gochecksumtype
+    # Security
+    - gosec
+    - bidichk
+    # Maintainability
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+    - reassign
+    - durationcheck
+    - makezero
+    - nolintlint
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      check: [switch, mapliteral]
+      default-signifies-exhaustive: false
+    govet:
+      enable-all: true
+      disable:
+        # Field alignment is a size concern, not a correctness one, in this app.
+        - fieldalignment
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Join(
+        - errors.Unwrap(
+        - .Wrap(
+        - .Wrapf(
+      # Errors crossing a package boundary are wrapped; those from this module's
+      # own packages carry their context already.
+      ignore-package-globs:
+        - github.com/cheetahbyte/thesio/*
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    gosec:
+      excludes:
+        # File paths come from the vault, which Store.Path confines; the
+        # permissions are the user's own files.
+        - G304
+        - G306
+        - G301
+  exclusions:
+    rules:
+      # Tests may use the shortcuts the code may not.
+      - path: _test\.go
+        linters: [err113, wrapcheck, forcetypeassert, gosec, errcheck, unparam]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt

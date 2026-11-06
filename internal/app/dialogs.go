@@ -1,10 +1,10 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/cheetahbyte/thesio/internal/app/host"
 	"github.com/cheetahbyte/thesio/internal/app/theme"
 	"github.com/cheetahbyte/thesio/internal/vault"
 	"github.com/egoist/mygo/ui"
@@ -230,14 +230,20 @@ func (ws *Workspace) openVersions(id string, library bool) {
 		ws.ToastError(err.Error())
 		return
 	}
-	ws.history.versions = versions.List()
+	list, err := versions.List()
+	if err != nil {
+		ws.history.open = false
+		ws.ToastError(err.Error())
+		return
+	}
+	ws.history.versions = list
 	ws.showVersion(0)
 }
 
 func (ws *Workspace) historyVersions() (*vault.Versions, error) {
 	if ws.history.library {
 		if ws.lib == nil {
-			return nil, errors.New("The library could not be read")
+			return nil, host.ErrNoLibrary
 		}
 		return ws.lib.Versions(), nil
 	}
@@ -248,9 +254,9 @@ func (ws *Workspace) historyVersions() (*vault.Versions, error) {
 func (ws *Workspace) historyText() (string, error) {
 	if ws.history.library {
 		if ws.lib == nil {
-			return "", errors.New("The library could not be read")
+			return "", host.ErrNoLibrary
 		}
-		return ws.lib.Text(), nil
+		return ws.lib.Text()
 	}
 	return ws.TextOf(ws.history.id)
 }

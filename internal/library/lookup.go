@@ -2,6 +2,7 @@ package library
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,38 +32,59 @@ const (
 	paperLimit   = 200 * 1024 * 1024
 )
 
-// ErrNotFound: the service has no such record.
+// ErrNotFound is a record the service does not have.
 var ErrNotFound = errors.New("not found")
 
-func request(url, accept string, wait time.Duration) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+// Errors of lookups and downloads, matched with errors.Is. Details follow their text.
+var (
+	ErrStatus                  = errors.New("the service answered with status")
+	ErrUnpaywallNoRecord error = message("Unpaywall returned no record")
+	ErrNotWebLink              = errors.New("not a web link")
+	ErrPaperTooLarge           = errors.New("the paper is larger than 200 MB")
+	ErrNotPDF                  = errors.New("the link did not lead to a PDF")
+	ErrUnknownIdentifier       = errors.New("unknown kind of identifier")
+)
+
+// closeBody closes a response body, adding its error to *err.
+func closeBody(body io.Closer, err *error) {
+	if cerr := body.Close(); cerr != nil {
+		*err = errors.Join(*err, fmt.Errorf("lookup: %w", cerr))
+	}
+}
+
+func request(ctx context.Context, url, accept string, wait time.Duration) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup: %w", err)
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", userAgent)
 	response, err := (&http.Client{Timeout: wait}).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup: %w", err)
 	}
 	if response.StatusCode >= 400 {
-		response.Body.Close()
+		err = fmt.Errorf("%w %d", ErrStatus, response.StatusCode)
 		if response.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
+			err = ErrNotFound
 		}
-		return nil, fmt.Errorf("the service answered with status %d", response.StatusCode)
+		closeBody(response.Body, &err)
+		return nil, err
 	}
 	return response, nil
 }
 
-func fetchText(url, accept string) (string, error) {
-	response, err := request(url, accept, timeout)
+func fetchText(ctx context.Context, url, accept string) (text string, err error) {
+	response, err := request(ctx, url, accept, timeout)
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer closeBody(response.Body, &err)
 	body, err := io.ReadAll(response.Body)
-	return string(body), err
+	if err != nil {
+		return "", fmt.Errorf("lookup: %w", err)
+	}
+	return string(body), nil
 }
 
 // encode escapes what a path segment of a DOI cannot carry as it is.
@@ -79,8 +101,8 @@ func encodePath(id string) string {
 	return out.String()
 }
 
-func fetchDOI(doi string) (*yaml.Node, error) {
-	body, err := fetchText("https://doi.org/"+encodePath(doi), "application/x-bibtex")
+func fetchDOI(ctx context.Context, doi string) (*yaml.Node, error) {
+	body, err := fetchText(ctx, "https://doi.org/"+encodePath(doi), "application/x-bibtex")
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +118,8 @@ func fetchDOI(doi string) (*yaml.Node, error) {
 	return entry, nil
 }
 
-func fetchArxiv(id string) (*yaml.Node, error) {
-	entry, err := fetchDOI(ArxivDOI(id))
+func fetchArxiv(ctx context.Context, id string) (*yaml.Node, error) {
+	entry, err := fetchDOI(ctx, ArxivDOI(id))
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +147,8 @@ type cslItem struct {
 	}
 }
 
-func fetchPMID(id string) (*yaml.Node, error) {
-	body, err := fetchText("https://pmc.ncbi.nlm.nih.gov/api/ctxp/v1/pubmed/?format=csl&id="+id, "*/*")
+func fetchPMID(ctx context.Context, id string) (*yaml.Node, error) {
+	body, err := fetchText(ctx, "https://pmc.ncbi.nlm.nih.gov/api/ctxp/v1/pubmed/?format=csl&id="+id, "*/*")
 	if err != nil {
 		return nil, err
 	}
@@ -205,9 +227,9 @@ type openLibraryBook struct {
 	Publishers      []struct{ Name jsonText }
 }
 
-func fetchISBN(id string) (*yaml.Node, error) {
+func fetchISBN(ctx context.Context, id string) (*yaml.Node, error) {
 	key := "ISBN:" + id
-	body, err := fetchText("https://openlibrary.org/api/books?bibkeys="+key+"&format=json&jscmd=data", "application/json")
+	body, err := fetchText(ctx, "https://openlibrary.org/api/books?bibkeys="+key+"&format=json&jscmd=data", "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +268,10 @@ func fetchISBN(id string) (*yaml.Node, error) {
 // firstYear is the first run of four digits in date.
 func firstYear(date string) (string, bool) {
 	for i := 0; i+4 <= len(date); i++ {
-		if allDigits(date[i : i+4]) {
-			n, _ := strconv.Atoi(date[i : i+4])
+		if !allDigits(date[i : i+4]) {
+			continue
+		}
+		if n, err := strconv.Atoi(date[i : i+4]); err == nil {
 			return strconv.Itoa(n), true
 		}
 	}
@@ -259,8 +283,8 @@ type oaLocation struct {
 }
 
 // unpaywallLinks are Unpaywall's PDF links for doi, best first. Empty when it has no record.
-func unpaywallLinks(doi, email string) ([]string, error) {
-	body, err := fetchText("https://api.unpaywall.org/v2/"+encodePath(doi)+"?email="+encodePath(email), "application/json")
+func unpaywallLinks(ctx context.Context, doi, email string) ([]string, error) {
+	body, err := fetchText(ctx, "https://api.unpaywall.org/v2/"+encodePath(doi)+"?email="+encodePath(email), "application/json")
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
@@ -272,7 +296,7 @@ func unpaywallLinks(doi, email string) ([]string, error) {
 		Others []oaLocation `json:"oa_locations"`
 	}
 	if json.Unmarshal([]byte(body), &record) != nil {
-		return nil, errors.New("Unpaywall returned no record")
+		return nil, ErrUnpaywallNoRecord
 	}
 	locations := record.Others
 	if record.Best != nil {
@@ -288,42 +312,42 @@ func unpaywallLinks(doi, email string) ([]string, error) {
 }
 
 // download saves the PDF at url to dest, whole or not at all.
-func download(url, dest string) error {
+func download(ctx context.Context, url, dest string) (err error) {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
-		return errors.New("not a web link")
+		return ErrNotWebLink
 	}
-	response, err := request(url, "application/pdf", paperTimeout)
+	response, err := request(ctx, url, "application/pdf", paperTimeout)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer closeBody(response.Body, &err)
 	data, err := io.ReadAll(io.LimitReader(response.Body, paperLimit+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	if len(data) > paperLimit {
-		return errors.New("the paper is larger than 200 MB")
+		return ErrPaperTooLarge
 	}
 	// Publishers often answer a PDF link with a login page.
 	if !bytes.HasPrefix(data, []byte(vault.PDFHeader)) {
-		return errors.New("the link did not lead to a PDF")
+		return ErrNotPDF
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	return vault.WriteAtomic(dest, data)
 }
 
 // FetchPaper downloads an open-access copy to dest: arXiv first, then Unpaywall
 // when there is an email to ask with. False when neither knows a copy.
-func FetchPaper(ids PaperIDs, email, dest string) (bool, error) {
+func FetchPaper(ctx context.Context, ids PaperIDs, email, dest string) (bool, error) {
 	var links []string
 	if id := ids.ArxivID(); id != "" {
 		links = append(links, "https://arxiv.org/pdf/"+encodePath(id))
 	}
 	var problem error
 	if ids.DOI != "" && email != "" {
-		found, err := unpaywallLinks(ids.DOI, email)
+		found, err := unpaywallLinks(ctx, ids.DOI, email)
 		if err != nil {
 			problem = err
 		} else {
@@ -331,7 +355,7 @@ func FetchPaper(ids PaperIDs, email, dest string) (bool, error) {
 		}
 	}
 	for _, link := range links {
-		err := download(link, dest)
+		err := download(ctx, link, dest)
 		if err == nil {
 			return true, nil
 		}
@@ -341,8 +365,8 @@ func FetchPaper(ids PaperIDs, email, dest string) (bool, error) {
 }
 
 // Fetch looks up one identifier as a Hayagriva entry, without its key.
-func Fetch(id Identifier) (Entry, error) {
-	var fetch func(string) (*yaml.Node, error)
+func Fetch(ctx context.Context, id Identifier) (Entry, error) {
+	var fetch func(context.Context, string) (*yaml.Node, error)
 	switch id.Kind {
 	case IDDOI:
 		fetch = fetchDOI
@@ -350,10 +374,13 @@ func Fetch(id Identifier) (Entry, error) {
 		fetch = fetchArxiv
 	case IDPMID:
 		fetch = fetchPMID
-	default:
+	case IDISBN:
 		fetch = fetchISBN
 	}
-	node, err := fetch(id.Value)
+	if fetch == nil {
+		return Entry{}, fmt.Errorf("%w %d", ErrUnknownIdentifier, id.Kind)
+	}
+	node, err := fetch(ctx, id.Value)
 	if err != nil {
 		return Entry{}, err
 	}

@@ -323,19 +323,17 @@ func (ws *Workspace) finishRename(commit bool) {
 	ws.Invalidate()
 }
 
-// toggleCheck checks or unchecks a row of Files, entering selection mode; false when the limit blocks it.
-func (ws *Workspace) toggleCheck(id string) bool {
+// toggleCheck checks or unchecks a row of Files, entering selection mode; the limit may block checking.
+func (ws *Workspace) toggleCheck(id string) {
 	ws.sidebar.folded[secFiles] = false
 	ws.sidebar.selecting = true
 	if i := slices.Index(ws.sidebar.batch, id); i >= 0 {
 		ws.sidebar.batch = slices.Delete(ws.sidebar.batch, i, i+1)
-		return true
+		return
 	}
-	if len(ws.sidebar.batch) >= batchLimit {
-		return false
+	if len(ws.sidebar.batch) < batchLimit {
+		ws.sidebar.batch = append(ws.sidebar.batch, id)
 	}
-	ws.sidebar.batch = append(ws.sidebar.batch, id)
-	return true
 }
 
 // checked are the checked rows, in list order.
@@ -624,15 +622,11 @@ func (ws *Workspace) docRow(c *ui.Context, e vault.Entry, depth int, files bool)
 func (ws *Workspace) renameField(c *ui.Context) {
 	input := ui.TextInput(c.Key("rename"), &ws.sidebar.renameText).Placeholder(vault.Untitled).AutoFocus().Grow(1).FontSize(13)
 	input.OnTextKey(func(k ui.TextKey) bool {
-		switch k.Key {
-		case ui.KeyEscape:
-			ws.finishRename(false)
-			return true
-		case ui.KeyEnter:
-			ws.finishRename(true)
-			return true
+		if k.Key != ui.KeyEscape && k.Key != ui.KeyEnter {
+			return false
 		}
-		return false
+		ws.finishRename(k.Key == ui.KeyEnter)
+		return true
 	})
 	if ws.sidebar.renameFresh {
 		input.SetTextSelection(0, utf8.RuneCountInString(ws.sidebar.renameText))

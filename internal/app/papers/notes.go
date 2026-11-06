@@ -2,6 +2,7 @@ package papers
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/cheetahbyte/thesio/internal/library"
 	"github.com/cheetahbyte/thesio/internal/typst"
 )
+
+// ErrNotesUnwritten is notes the editor could not write.
+var ErrNotesUnwritten = errors.New("the file could not be written")
 
 // notes are the open paper's notes: id follows the file, which appears once
 // something is written.
@@ -38,10 +42,10 @@ func (s *State) loadNotes(paper string) {
 	exists := err == nil
 	text := s.notesStart(paper)
 	if exists {
-		loaded, err := s.h.TextOf(id)
-		if err != nil {
+		loaded, readErr := s.h.TextOf(id)
+		if readErr != nil {
 			// No editor: the next keystroke would replace a file nobody could read.
-			s.h.ToastError("Could not read the notes: " + err.Error())
+			s.h.ToastError("Could not read the notes: " + readErr.Error())
 			return
 		}
 		text = loaded
@@ -94,7 +98,10 @@ func (s *State) notesDir() error {
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create the notes folder: %w", err)
+	}
+	return nil
 }
 
 // NotesEditor is the panel's notes when they are id, else nil.
@@ -117,7 +124,7 @@ func (s *State) FlushNotes() bool {
 		return false
 	}
 	if !n.doc.Flush() {
-		s.notesFailed(n, errors.New("the file could not be written"))
+		s.notesFailed(n, ErrNotesUnwritten)
 		return false
 	}
 	if !n.exists {

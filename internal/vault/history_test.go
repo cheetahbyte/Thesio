@@ -39,8 +39,8 @@ func TestAnUnchangedDocumentAddsNoVersion(t *testing.T) {
 	if must(versions.Keep("one")) {
 		t.Fatal("kept")
 	}
-	if !slices.Equal(versions.List(), []int64{100}) {
-		t.Fatal(versions.List())
+	if !slices.Equal(must(versions.List()), []int64{100}) {
+		t.Fatal(must(versions.List()))
 	}
 }
 
@@ -49,7 +49,7 @@ func TestAChangedDocumentAddsOneAndTheOldStaysReadable(t *testing.T) {
 	if !must(versions.Keep("two")) {
 		t.Fatal("not kept")
 	}
-	times := versions.List()
+	times := must(versions.List())
 	if len(times) != 2 {
 		t.Fatal(times)
 	}
@@ -64,7 +64,7 @@ func TestOldVersionsThinToOneADay(t *testing.T) {
 	a, b := today-10*Day, today-9*Day
 	versions := seeded(t, kept{a, "1"}, kept{a + 60, "2"}, kept{b, "3"}, kept{b + 60, "4"})
 	must(versions.Keep("latest"))
-	if times := versions.List(); !slices.Equal(times[1:], []int64{b + 60, a + 60}) {
+	if times := must(versions.List()); !slices.Equal(times[1:], []int64{b + 60, a + 60}) {
 		t.Fatal(times)
 	}
 }
@@ -72,8 +72,8 @@ func TestOldVersionsThinToOneADay(t *testing.T) {
 func TestVersionsPastTheDailyLimitGo(t *testing.T) {
 	versions := seeded(t, kept{Now() - (dailyDays+1)*Day, "old"})
 	must(versions.Keep("latest"))
-	if len(versions.List()) != 1 {
-		t.Fatal(versions.List())
+	if len(must(versions.List())) != 1 {
+		t.Fatal(must(versions.List()))
 	}
 }
 
@@ -81,8 +81,8 @@ func TestVersionsOfTheLastDayAllStay(t *testing.T) {
 	now := Now()
 	versions := seeded(t, kept{now - 200, "1"}, kept{now - 100, "2"})
 	must(versions.Keep("latest"))
-	if len(versions.List()) != 3 {
-		t.Fatal(versions.List())
+	if len(must(versions.List())) != 3 {
+		t.Fatal(must(versions.List()))
 	}
 }
 
@@ -113,7 +113,7 @@ func TestVersionsSurviveARenameThatChangesTheExtension(t *testing.T) {
 	if err := old.moveTo(renamed); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(renamed.List(), []int64{100}) || must(renamed.Read(100)) != "text" {
-		t.Fatal(renamed.List())
+	if !slices.Equal(must(renamed.List()), []int64{100}) || must(renamed.Read(100)) != "text" {
+		t.Fatal(must(renamed.List()))
 	}
 }

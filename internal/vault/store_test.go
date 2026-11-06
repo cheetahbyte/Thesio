@@ -224,7 +224,7 @@ func TestAMoveWithoutARewriterStillCarriesState(t *testing.T) {
 	if len(moved.Rewritten) != 0 || must(store.Load("b.typ")) != "#include \"a.typ\"" {
 		t.Fatal(moved)
 	}
-	if !store.index["c.typ"].Pinned || len(must(store.Versions("c.typ")).List()) != 1 {
+	if !store.index["c.typ"].Pinned || len(must(must(store.Versions("c.typ")).List())) != 1 {
 		t.Fatal("state left behind")
 	}
 }

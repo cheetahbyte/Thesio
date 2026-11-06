@@ -4,7 +4,6 @@
 package citations
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -235,11 +234,11 @@ func (s *State) importBib() {
 func (s *State) importFile(path string) (added, skipped int, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("read the file: %w", err)
 	}
 	lib := s.library()
 	if lib == nil {
-		return 0, 0, errors.New("The library could not be read")
+		return 0, 0, host.ErrNoLibrary
 	}
 	return lib.ImportBiblatex(string(data))
 }
@@ -293,8 +292,8 @@ func (s *State) attachPaper(key string) {
 }
 
 // renamePaper follows a key change to the paper and its notes, which are named after it.
-func (s *State) renamePaper(old, new string) {
-	from, to := library.PaperFile(old), library.PaperFile(new)
+func (s *State) renamePaper(old, renamed string) {
+	from, to := library.PaperFile(old), library.PaperFile(renamed)
 	s.followKey(from, to)
 	s.followKey(library.NoteFile(from), library.NoteFile(to))
 }

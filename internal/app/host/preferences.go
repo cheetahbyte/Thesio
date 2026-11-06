@@ -26,9 +26,13 @@ type Preferences struct {
 
 	path string
 	// problem is why the file could not be read; nothing writes to it meanwhile.
-	problem string
+	problem error
 }
 
+// ErrPreferencesUnreadable is Save refusing to overwrite a file it could not read.
+var ErrPreferencesUnreadable = errors.New("preferences.json could not be read and was left alone")
+
+// DefaultPreferences are the preferences of a vault without the file.
 func DefaultPreferences() Preferences {
 	return Preferences{HideLibraryFiles: true, LibraryColumns: map[string]float32{}}
 }
@@ -42,10 +46,10 @@ func LoadPreferences(root string) *Preferences {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		p.problem = err.Error()
+		p.problem = err
 	default:
 		if err := json.Unmarshal(data, &p); err != nil {
-			p.problem = err.Error()
+			p.problem = err
 		}
 	}
 	if p.LibraryColumns == nil {
@@ -56,15 +60,15 @@ func LoadPreferences(root string) *Preferences {
 
 // Save writes the preferences.
 func (p *Preferences) Save() error {
-	if p.problem != "" {
-		return fmt.Errorf("preferences.json could not be read and was left alone: %s", p.problem)
+	if p.problem != nil {
+		return fmt.Errorf("%w: %w", ErrPreferencesUnreadable, p.problem)
 	}
 	if err := os.MkdirAll(filepath.Dir(p.path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("create the preferences folder: %w", err)
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode the preferences: %w", err)
 	}
 	return vault.WriteAtomic(p.path, data)
 }

@@ -11,6 +11,9 @@ import (
 	"github.com/egoist/mygo"
 )
 
+// ErrQuoteNotInPaper is copied text that the paper does not contain.
+var ErrQuoteNotInPaper = errors.New("the copied text is not in this paper")
+
 // clipboardText reads what the user copied; tests replace it.
 var clipboardText = mygo.Clipboard.ReadText
 
@@ -143,7 +146,7 @@ func addHighlight(path, text string) (int, error) {
 			return i, doc.AddHighlight(i, text, "")
 		}
 	}
-	return 0, errors.New("the copied text is not in this paper")
+	return 0, ErrQuoteNotInPaper
 }
 
 // normalized matches as pdfkit's search does: any whitespace, any case.

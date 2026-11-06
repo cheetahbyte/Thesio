@@ -5,6 +5,8 @@
 package vault
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 
 // StateDir holds app state beside the files.
 const StateDir = ".thesio"
+
+// Extension is a Typst document's, without the dot.
 const Extension = "typ"
 
 // LibraryFile is the citation library, at the vault root.
@@ -28,20 +32,21 @@ func WriteAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	file, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return fmt.Errorf("write: %w", err)
 	}
 	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
+		return errors.Join(fmt.Errorf("write: %w", err), file.Close())
 	}
 	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
+		return errors.Join(fmt.Errorf("write: %w", err), file.Close())
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return fmt.Errorf("write: %w", err)
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
 }
 
 // NaturalCompare orders names as people read them: ignoring case, with runs of
@@ -72,8 +77,8 @@ func NaturalCompare(a, b string) int {
 			}
 			continue
 		}
-		if p, q := unicode.ToLower(p), unicode.ToLower(q); p != q {
-			if p < q {
+		if lp, lq := unicode.ToLower(p), unicode.ToLower(q); lp != lq {
+			if lp < lq {
 				return -1
 			}
 			return 1
@@ -97,6 +102,7 @@ func digits(s []rune, i *int) string {
 	return strings.TrimLeft(string(s[start:*i]), "0")
 }
 
+// IsPDF reports whether name is a PDF's.
 func IsPDF(name string) bool { return strings.HasSuffix(name, ".pdf") }
 
 // ParentOf is the folder holding path, false at the vault root.
@@ -108,6 +114,7 @@ func ParentOf(path string) (string, bool) {
 	return path[:i], true
 }
 
+// BaseName is the last segment of path.
 func BaseName(path string) string { return path[strings.LastIndexByte(path, '/')+1:] }
 
 // Join puts name in parent; parent "" is the vault root.
@@ -153,6 +160,7 @@ func documentStem(name string) (string, bool) {
 	return name[:i], true
 }
 
+// IsDocument reports whether name is a Typst document's.
 func IsDocument(name string) bool { _, ok := documentStem(name); return ok }
 
 // DocumentTitle is a file's title: its name, without the extension if it is a document.
@@ -163,6 +171,7 @@ func DocumentTitle(name string) string {
 	return name
 }
 
+// DocumentName is the file name of a document titled stem.
 func DocumentName(stem string) string { return stem + "." + Extension }
 
 // splitName splits a file name as a path's stem and extension, a leading dot
@@ -184,6 +193,7 @@ type Item struct {
 	Info      fs.FileInfo
 }
 
+// IsDocument reports whether it is a Typst document.
 func (i Item) IsDocument() bool { return !i.Info.IsDir() && IsDocument(i.Name) }
 
 // Modified is the file's time in Unix seconds, 0 when unknown.
@@ -194,7 +204,11 @@ func (i Item) Modified() int64 { return max(i.Info.ModTime().Unix(), 0) }
 func Walk(root string, visit func(item Item)) { walk(root, "", false, visit) }
 
 func walk(dir, parent string, has bool, visit func(Item)) {
-	items, _ := os.ReadDir(dir)
+	// A folder that cannot be read is left out, as one that is hidden.
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
 	for _, item := range items {
 		name := item.Name()
 		info, err := item.Info()

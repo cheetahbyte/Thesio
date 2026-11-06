@@ -25,6 +25,13 @@ type Compiler struct {
 	cleanup runtime.Cleanup
 }
 
+// ErrCompilerClosed is a compile on a closed compiler, or one whose root is not UTF-8.
+var ErrCompilerClosed = errors.New("typst: compiler is closed or its root is not UTF-8")
+
+// ErrNoPage is a page the compilation does not have.
+var ErrNoPage = errors.New("typst: no page")
+
+// NewCompiler is a compiler for the vault at root.
 func NewCompiler(root string) *Compiler {
 	var a arena
 	defer a.free()
@@ -35,6 +42,7 @@ func NewCompiler(root string) *Compiler {
 	return c
 }
 
+// Close frees the compiler; it is idempotent.
 func (c *Compiler) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -46,18 +54,21 @@ func (c *Compiler) Close() {
 	c.ptr = nil
 }
 
-// SetBuffer makes unsaved text shadow the file at vault path.
-func (c *Compiler) SetBuffer(path, text string) {
+// SetBuffer makes unsaved text shadow the file at vault path. It fails for an
+// invalid path, and does nothing once closed.
+func (c *Compiler) SetBuffer(path, text string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ptr == nil {
-		return
+		return nil
 	}
 	var a arena
 	defer a.free()
-	_, _ = result(C.thesio_compiler_set_buffer(c.ptr, a.str(path), a.str(text)))
+	_, err := result(C.thesio_compiler_set_buffer(c.ptr, a.str(path), a.str(text)))
+	return err
 }
 
+// ClearBuffer drops the unsaved text of path, so the file on disk counts again.
 func (c *Compiler) ClearBuffer(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,15 +86,15 @@ func (c *Compiler) Compile(main string) (*Compilation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ptr == nil {
-		return nil, errors.New("typst: compiler is closed or its root is not UTF-8")
+		return nil, ErrCompilerClosed
 	}
 	var a arena
 	defer a.free()
-	var cerr *C.char
-	ptr := C.thesio_compiler_compile(c.ptr, a.str(main), &cerr)
+	cerr := new(*C.char)
+	ptr := C.thesio_compiler_compile(c.ptr, a.str(main), cerr)
 	if ptr == nil {
-		message, _ := take(cerr)
-		return nil, errors.New(message)
+		message, _ := take(*cerr)
+		return nil, &Error{Message: message}
 	}
 	k := &Compilation{ptr: ptr}
 	k.cleanup = runtime.AddCleanup(k, func(p *C.ThesioCompilation) { C.thesio_compilation_free(p) }, ptr)
@@ -98,6 +109,7 @@ func (c *Compiler) Compile(main string) (*Compilation, error) {
 	return k, nil
 }
 
+// Diagnostic is an error or warning of a compile.
 type Diagnostic struct {
 	Error   bool     `json:"error"` // false for warnings and "Downloading @preview/x…" statuses
 	Message string   `json:"message"`
@@ -116,6 +128,7 @@ type Label struct {
 	Page  int    `json:"page"`
 }
 
+// FileWords is how many words a compile drew from a file.
 type FileWords struct {
 	Path  string `json:"path"`
 	Words int    `json:"words"`
@@ -179,18 +192,18 @@ func (k *Compilation) Fetch(spec string) {
 // Render rasterizes a zero-based page; scale is pixels per point.
 func (k *Compilation) Render(page int, scale float32) (*image.RGBA, error) {
 	if page < 0 {
-		return nil, fmt.Errorf("typst: no page %d", page)
+		return nil, fmt.Errorf("%w %d", ErrNoPage, page)
 	}
 	var out *image.RGBA
 	var err error
 	ok := k.use(func(p *C.ThesioCompilation) {
 		var width, height C.uint32_t
 		var n C.size_t
-		var cerr *C.char
-		data := C.thesio_compilation_render(p, C.size_t(page), C.float(scale), &width, &height, &n, &cerr)
+		cerr := new(*C.char)
+		data := C.thesio_compilation_render(p, C.size_t(page), C.float(scale), &width, &height, &n, cerr)
 		if data == nil {
-			message, _ := take(cerr)
-			err = errors.New(message)
+			message, _ := take(*cerr)
+			err = &Error{Message: message}
 			return
 		}
 		defer C.thesio_bytes_free(data, n)
@@ -204,16 +217,17 @@ func (k *Compilation) Render(page int, scale float32) (*image.RGBA, error) {
 	return out, err
 }
 
+// PDF exports the document as PDF.
 func (k *Compilation) PDF() ([]byte, error) {
 	var out []byte
 	var err error
 	ok := k.use(func(p *C.ThesioCompilation) {
 		var n C.size_t
-		var cerr *C.char
-		data := C.thesio_compilation_pdf(p, &n, &cerr)
+		cerr := new(*C.char)
+		data := C.thesio_compilation_pdf(p, &n, cerr)
 		if data == nil {
-			message, _ := take(cerr)
-			err = errors.New(message)
+			message, _ := take(*cerr)
+			err = &Error{Message: message}
 			return
 		}
 		defer C.thesio_bytes_free(data, n)
@@ -225,6 +239,7 @@ func (k *Compilation) PDF() ([]byte, error) {
 	return out, err
 }
 
+// Suggestion is a completion of the text before the caret.
 type Suggestion struct {
 	Title  string   `json:"title"`
 	Kind   string   `json:"kind"`
@@ -235,6 +250,7 @@ type Suggestion struct {
 	Fields [][2]int `json:"fields"` // placeholder ranges in Insert, in fill order; empty = caret at end
 }
 
+// Hover is what to show for the code under the pointer; Code says it is code.
 type Hover struct {
 	Text string `json:"text"`
 	Code bool   `json:"code"`
@@ -254,21 +270,18 @@ func (k *Compilation) Complete(path, text string, caret int, explicit bool) []Su
 	defer a.free()
 	var found []Suggestion
 	k.use(func(p *C.ThesioCompilation) {
-		if raw, err := result(C.thesio_compilation_complete(p, a.str(path), a.str(text), size(caret), C.bool(explicit))); err == nil {
-			_ = json.Unmarshal(raw, &found)
-		}
+		found = decode[[]Suggestion](C.thesio_compilation_complete(p, a.str(path), a.str(text), size(caret), C.bool(explicit)))
 	})
 	return found
 }
 
+// Hover is what to show for byte offset of text, the unsaved version of path.
 func (k *Compilation) Hover(path, text string, offset int) (Hover, bool) {
 	var a arena
 	defer a.free()
 	var hover *Hover
 	k.use(func(p *C.ThesioCompilation) {
-		if raw, err := result(C.thesio_compilation_hover(p, a.str(path), a.str(text), size(offset))); err == nil {
-			_ = json.Unmarshal(raw, &hover)
-		}
+		hover = decode[*Hover](C.thesio_compilation_hover(p, a.str(path), a.str(text), size(offset)))
 	})
 	if hover == nil {
 		return Hover{}, false
@@ -297,9 +310,7 @@ func (k *Compilation) TargetAt(page int, x, y float32) (Target, bool) {
 	}
 	var target *Target
 	k.use(func(p *C.ThesioCompilation) {
-		if raw, err := result(C.thesio_compilation_target_at(p, C.size_t(page), C.float(x), C.float(y))); err == nil {
-			_ = json.Unmarshal(raw, &target)
-		}
+		target = decode[*Target](C.thesio_compilation_target_at(p, C.size_t(page), C.float(x), C.float(y)))
 	})
 	if target == nil {
 		return Target{}, false
@@ -313,9 +324,7 @@ func (k *Compilation) PagesFrom(path string) []bool {
 	defer a.free()
 	var pages []bool
 	k.use(func(p *C.ThesioCompilation) {
-		if raw, err := result(C.thesio_compilation_pages_from(p, a.str(path))); err == nil {
-			_ = json.Unmarshal(raw, &pages)
-		}
+		pages = decode[[]bool](C.thesio_compilation_pages_from(p, a.str(path)))
 	})
 	return pages
 }
@@ -326,9 +335,7 @@ func (k *Compilation) Placed(path, text string) []Diagnostic {
 	defer a.free()
 	var placed []Diagnostic
 	k.use(func(p *C.ThesioCompilation) {
-		if raw, err := result(C.thesio_compilation_placed(p, a.str(path), a.str(text))); err == nil {
-			_ = json.Unmarshal(raw, &placed)
-		}
+		placed = decode[[]Diagnostic](C.thesio_compilation_placed(p, a.str(path), a.str(text)))
 	})
 	return placed
 }

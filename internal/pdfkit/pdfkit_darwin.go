@@ -5,6 +5,7 @@ package pdfkit
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -88,7 +89,7 @@ func load() {
 		if err != nil {
 			return
 		}
-		subtypeHighlight = **(**objc.ID)(unsafe.Pointer(&p))
+		subtypeHighlight = **(**objc.ID)(unsafe.Pointer(&p)) //nolint:gosec // p is the address of a PDFKit constant, read once
 		cls := func(name string) objc.ID { return objc.ID(objc.GetClass(name)) }
 		clsDocument, clsAnnotation, clsString, clsURL = cls("PDFDocument"), cls("PDFAnnotation"), cls("NSString"), cls("NSURL")
 		clsArray, clsValue, clsColor = cls("NSMutableArray"), cls("NSValue"), cls("NSColor")
@@ -117,6 +118,9 @@ func load() {
 	})
 }
 
+// ErrUnavailable is every Open when PDFKit could not be loaded.
+var ErrUnavailable = errors.New("pdfkit: PDFKit is not available")
+
 // Available reports whether PDFKit could be loaded.
 func Available() bool {
 	load()
@@ -135,7 +139,7 @@ func withPool(fn func()) {
 
 func nsString(s string) objc.ID {
 	b := append([]byte(strings.ReplaceAll(s, "\x00", "")), 0)
-	str := objc.ID(clsString).Send(selWithUTF8, unsafe.Pointer(&b[0]))
+	str := clsString.Send(selWithUTF8, unsafe.Pointer(&b[0])) //nolint:gosec // NUL-terminated copy kept alive for the call
 	runtime.KeepAlive(b)
 	return str
 }
@@ -148,7 +152,7 @@ func goString(str objc.ID) string {
 	if p == nil {
 		return ""
 	}
-	return string(unsafe.Slice(p, objc.Send[int](str, selLength, nsUTF8Encoding)))
+	return string(unsafe.Slice(p, objc.Send[int](str, selLength, nsUTF8Encoding))) //nolint:gosec // UTF8String's buffer, with the byte length NSString reports
 }
 
 // Document is an open PDFDocument. Its methods may be called from any
@@ -162,11 +166,11 @@ type Document struct {
 // Open reads the PDF at path.
 func Open(path string) (*Document, error) {
 	if !Available() {
-		return nil, errors.New("pdfkit: PDFKit is not available")
+		return nil, ErrUnavailable
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pdfkit: %w", err)
 	}
 	var doc objc.ID
 	withPool(func() {
@@ -174,11 +178,12 @@ func Open(path string) (*Document, error) {
 		doc = clsDocument.Send(selAlloc).Send(selInitWithURL, url)
 	})
 	if doc == 0 {
-		return nil, fmt.Errorf("pdfkit: cannot read %s", path)
+		return nil, fmt.Errorf("%w %s", ErrCannotRead, path)
 	}
 	return &Document{doc: doc, path: abs}, nil
 }
 
+// Close releases the document; it is idempotent.
 func (d *Document) Close() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -206,6 +211,7 @@ func (d *Document) page(i int) objc.ID {
 	return d.doc.Send(selPageAtIndex, uint(i))
 }
 
+// PageCount is the number of pages, 0 once closed.
 func (d *Document) PageCount() int {
 	n := 0
 	d.run(func() { n = d.count() })
@@ -223,6 +229,7 @@ func (d *Document) PageLabel(i int) string {
 	return s
 }
 
+// PageText is the text of page i, "" when there is none.
 func (d *Document) PageText(i int) string {
 	s := ""
 	d.run(func() {
@@ -296,25 +303,25 @@ func pattern(text string) string {
 // AddHighlight highlights the first occurrence of text on page, with comment,
 // and saves the document.
 func (d *Document) AddHighlight(page int, text, comment string) error {
-	err := errors.New("pdfkit: document is closed")
+	err := ErrClosed
 	d.run(func() {
 		p := d.page(page)
 		if p == 0 {
-			err = fmt.Errorf("pdfkit: no page %d", page)
+			err = fmt.Errorf("%w %d", ErrNoPage, page)
 			return
 		}
 		if strings.TrimSpace(text) == "" {
-			err = errors.New("pdfkit: nothing to highlight")
+			err = ErrNothingToHighlight
 			return
 		}
 		r := objc.Send[nsRange](p.Send(selString), selRangeOfString, nsString(pattern(text)), uint(caseInsensitive|regexSearch))
 		if r.Location == nsNotFound || r.Length == 0 {
-			err = fmt.Errorf("pdfkit: %q not found on page %d", text, page+1)
+			err = fmt.Errorf("pdfkit: %q %w on page %d", text, ErrTextNotFound, page+1)
 			return
 		}
 		sel := p.Send(selSelectionForRange, r)
 		if sel == 0 {
-			err = fmt.Errorf("pdfkit: %q not found on page %d", text, page+1)
+			err = fmt.Errorf("pdfkit: %q %w on page %d", text, ErrTextNotFound, page+1)
 			return
 		}
 		var rects []rect
@@ -325,7 +332,7 @@ func (d *Document) AddHighlight(page int, text, comment string) error {
 			}
 		}
 		if len(rects) == 0 {
-			err = fmt.Errorf("pdfkit: %q has no area on page %d", text, page+1)
+			err = fmt.Errorf("pdfkit: %q %w on page %d", text, ErrTextHasNoArea, page+1)
 			return
 		}
 		addHighlight(p, rects, comment)
@@ -372,12 +379,13 @@ func (d *Document) annotation(h Highlight) (page, a objc.ID) {
 	return page, a
 }
 
+// SetComment replaces the comment on h and saves the document.
 func (d *Document) SetComment(h Highlight, comment string) error {
-	err := errors.New("pdfkit: document is closed")
+	err := ErrClosed
 	d.run(func() {
 		_, a := d.annotation(h)
 		if a == 0 {
-			err = errors.New("pdfkit: highlight not found")
+			err = ErrHighlightNotFound
 			return
 		}
 		a.Send(selSetContents, nsString(comment))
@@ -386,12 +394,13 @@ func (d *Document) SetComment(h Highlight, comment string) error {
 	return err
 }
 
+// RemoveHighlight deletes h and saves the document.
 func (d *Document) RemoveHighlight(h Highlight) error {
-	err := errors.New("pdfkit: document is closed")
+	err := ErrClosed
 	d.run(func() {
 		page, a := d.annotation(h)
 		if a == 0 {
-			err = errors.New("pdfkit: highlight not found")
+			err = ErrHighlightNotFound
 			return
 		}
 		page.Send(selRemoveAnnotation, a)
@@ -405,8 +414,14 @@ func (d *Document) RemoveHighlight(h Highlight) error {
 func (d *Document) save() error {
 	part := filepath.Join(filepath.Dir(d.path), "."+filepath.Base(d.path)+".part")
 	if !objc.Send[bool](d.doc, selWriteToFile, nsString(part)) {
-		os.Remove(part)
-		return fmt.Errorf("pdfkit: cannot write %s", d.path)
+		failed := fmt.Errorf("%w %s", ErrCannotWrite, d.path)
+		if err := os.Remove(part); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return errors.Join(failed, fmt.Errorf("pdfkit: %w", err))
+		}
+		return failed
 	}
-	return os.Rename(part, d.path)
+	if err := os.Rename(part, d.path); err != nil {
+		return fmt.Errorf("pdfkit: %w", err)
+	}
+	return nil
 }

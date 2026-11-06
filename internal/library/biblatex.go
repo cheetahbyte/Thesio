@@ -21,7 +21,7 @@ type keyed struct {
 // parseBiblatex is the Hayagriva entries in BibLaTeX text, in file order.
 func parseBiblatex(text string) ([]keyed, BiblatexImport, error) {
 	if Hayagriva == nil {
-		return nil, BiblatexImport{}, errors.New("library: Hayagriva is not set")
+		return nil, BiblatexImport{}, ErrNoHayagriva
 	}
 	imported, err := Hayagriva.ImportBiblatex(text)
 	if err != nil {

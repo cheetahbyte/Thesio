@@ -84,7 +84,7 @@ func TestAVaultCompilesRendersAndExports(t *testing.T) {
 	if px := img.RGBAAt(0, 0); px.R != 255 || px.A != 255 {
 		t.Fatalf("corner %+v, want white", px)
 	}
-	if _, err := k.Render(99, 1); err == nil {
+	if _, rerr := k.Render(99, 1); rerr == nil {
 		t.Fatal("rendered a page that does not exist")
 	}
 	pdf, err := k.PDF()
@@ -152,7 +152,9 @@ func TestADiagnosticMovesOntoNewerText(t *testing.T) {
 func TestUnsavedTextShadowsTheFile(t *testing.T) {
 	compiler := NewCompiler(vault(t, map[string]string{"main.typ": "Saved.\n"}))
 	defer compiler.Close()
-	compiler.SetBuffer("main.typ", "#nope\n")
+	if err := compiler.SetBuffer("main.typ", "#nope\n"); err != nil {
+		t.Fatal(err)
+	}
 	k, err := compiler.Compile("main.typ")
 	if err != nil || k.OK {
 		t.Fatalf("buffer not read: %v %v", err, k.OK)
@@ -316,7 +318,7 @@ func TestBibliography(t *testing.T) {
 	if style, _ := BibliographyStyle(synced); !ok || style != "apa" || !strings.Contains(synced, "b:\n") {
 		t.Fatalf("synced %q", synced)
 	}
-	if _, ok := SyncBibliographyBlock(synced, "b:\n  type: Book\n"); ok {
+	if _, again := SyncBibliographyBlock(synced, "b:\n  type: Book\n"); again {
 		t.Fatal("synced an unchanged block")
 	}
 	start, end, ok := BibliographyBlockRange(synced)

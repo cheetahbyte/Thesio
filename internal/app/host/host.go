@@ -6,6 +6,8 @@
 package host
 
 import (
+	"errors"
+
 	"github.com/cheetahbyte/thesio/internal/library"
 	"github.com/cheetahbyte/thesio/internal/project"
 	"github.com/cheetahbyte/thesio/internal/vault"
@@ -13,9 +15,14 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// ErrNoLibrary is an action that needs the library while library.yaml cannot be read.
+var ErrNoLibrary = errors.New("The library could not be read") //nolint:staticcheck // ST1005: the history dialog toasts it alone, as a sentence
+
 // View is what the main pane shows.
 type View int
 
+// The views: the open document, Home, the Library table, its sources, a
+// paper, Trash and Settings.
 const (
 	ViewDoc View = iota
 	ViewHome
@@ -96,7 +103,7 @@ type Host interface {
 	// WhenSaved runs then once everything is saved, or from the Save failed dialog.
 	WhenSaved(then func())
 	// PathChanged follows a rename or move through everything open.
-	PathChanged(old, new string, rewritten []vault.Rewritten)
+	PathChanged(old, renamed string, rewritten []vault.Rewritten)
 	KeepVersion(id, text string, now bool)
 
 	// Documents and includes, read from the open editor and the entries.
@@ -122,7 +129,7 @@ type Host interface {
 	InsertCitation(key string)
 	CitationAdded(id string)
 	SyncBibliographies()
-	RenameCitations(old, new string)
+	RenameCitations(old, renamed string)
 
 	// Dialogs, safe from any goroutine; they block until answered.
 	// PickFiles returns nil when canceled; ext "" accepts any file.

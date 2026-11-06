@@ -14,6 +14,7 @@ import (
 // SlotKind says where a field's value lives in an entry.
 type SlotKind int
 
+// The places a field's value can live.
 const (
 	SlotType       SlotKind = iota
 	SlotParentType          // the Hayagriva type of the work this one was published in
@@ -80,6 +81,7 @@ var workIDKinds = []string{"doi", "arxiv", "pmid", "isbn"}
 // A bare serial-number counts as this kind of number.
 const plainSerial = "serial"
 
+// The fields of the entry editor; those other code reads by name are exported.
 var (
 	Title     = wrapped("Title", own("title"), "title")
 	Authors   = wrapped("Authors", Slot{SlotPersons, "author"}, "author")
@@ -159,6 +161,7 @@ func kind(label, entry, parent string, fields ...Field) *SourceType {
 
 const preprintGenre = "Preprint"
 
+// Source types other code names.
 var (
 	JournalArticle = kind("Journal Article", typeArticle, typePeriodical, Title, Authors, container("Publication"), Date, volume, issue, Pages, DOI, issn, URL, Accessed, Language, abstract, note)
 	Preprint       = &SourceType{Label: "Preprint", entry: typeArticle, genre: preprintGenre, Fields: []Field{Title, Authors, unexported("Repository", "arXiv", archiveSlot), Date, Arxiv, DOI, URL, Accessed, Language, abstract, note}}
@@ -325,7 +328,7 @@ func sourceTypeOf(entry *yaml.Node) *SourceType {
 	return Other
 }
 
-// DropsParent: whether changing e to this type would lose what its parent holds.
+// DropsParent reports whether changing e to this type would lose what its parent holds.
 func (t *SourceType) DropsParent(e Entry) bool { return t.dropsParent(e.node) }
 
 func (t *SourceType) dropsParent(entry *yaml.Node) bool {
@@ -548,9 +551,9 @@ func read(entry *yaml.Node, slot Slot) string {
 	return ""
 }
 
-func valueOf(new string) *yaml.Node {
-	if new = strings.TrimSpace(new); new != "" {
-		return newStr(new)
+func valueOf(text string) *yaml.Node {
+	if text = strings.TrimSpace(text); text != "" {
+		return newStr(text)
 	}
 	return nil
 }
@@ -569,21 +572,21 @@ func setURL(entry *yaml.Node, url, accessed string) {
 }
 
 // write writes one field. Validation is left to the commit, which runs Hayagriva.
-func write(entry *yaml.Node, slot Slot, new string) {
+func write(entry *yaml.Node, slot Slot, raw string) {
 	switch slot.Kind {
 	case SlotType:
-		set(entry, "type", valueOf(new))
+		set(entry, "type", valueOf(raw))
 	case SlotParentType:
-		set(ensureParent(entry), "type", valueOf(new))
+		set(ensureParent(entry), "type", valueOf(raw))
 	case SlotOwn:
-		set(entry, slot.Name, valueOf(new))
+		set(entry, slot.Name, valueOf(raw))
 	case SlotParent:
-		set(ensureParent(entry), slot.Name, valueOf(new))
+		set(ensureParent(entry), slot.Name, valueOf(raw))
 	case SlotEither:
 		if parent := parentOf(entry); parent != nil && has(parent, slot.Name) {
-			set(parent, slot.Name, valueOf(new))
+			set(parent, slot.Name, valueOf(raw))
 		} else {
-			set(entry, slot.Name, valueOf(new))
+			set(entry, slot.Name, valueOf(raw))
 		}
 	case SlotSerial:
 		var serial *yaml.Node
@@ -596,14 +599,14 @@ func write(entry *yaml.Node, slot Slot, new string) {
 		default:
 			serial = newMap()
 		}
-		set(serial, slot.Name, valueOf(new))
+		set(serial, slot.Name, valueOf(raw))
 		if len(serial.Content) == 0 {
 			serial = nil
 		}
 		set(entry, "serial-number", serial)
 	case SlotPersons:
 		var items []*yaml.Node
-		for _, name := range strings.Split(new, ";") {
+		for _, name := range strings.Split(raw, ";") {
 			if v := valueOf(name); v != nil {
 				items = append(items, v)
 			}
@@ -615,7 +618,7 @@ func write(entry *yaml.Node, slot Slot, new string) {
 		}
 	case SlotDate:
 		// A bare year is a number in Hayagriva files.
-		value := valueOf(new)
+		value := valueOf(raw)
 		if value != nil {
 			if year, err := strconv.ParseInt(value.Value, 10, 64); err == nil {
 				value.Tag, value.Value = "!!int", strconv.FormatInt(year, 10)
@@ -624,32 +627,32 @@ func write(entry *yaml.Node, slot Slot, new string) {
 		set(entry, "date", value)
 	case SlotPublisher, SlotPlace:
 		if parent := parentOf(entry); !has(entry, "publisher") && parent != nil && has(parent, "publisher") {
-			write(parent, slot, new)
+			write(parent, slot, raw)
 			return
 		}
 		publisher := get(entry, "publisher")
 		if slot.Kind == SlotPublisher {
-			if publisher != nil && publisher.Kind == yaml.MappingNode && valueOf(new) != nil {
-				set(publisher, "name", valueOf(new))
+			if publisher != nil && publisher.Kind == yaml.MappingNode && valueOf(raw) != nil {
+				set(publisher, "name", valueOf(raw))
 			} else {
-				set(entry, "publisher", valueOf(new))
+				set(entry, "publisher", valueOf(raw))
 			}
 			return
 		}
 		switch {
 		case publisher != nil && publisher.Kind == yaml.MappingNode:
-			set(publisher, "location", valueOf(new))
-		case publisher != nil && valueOf(new) != nil:
+			set(publisher, "location", valueOf(raw))
+		case publisher != nil && valueOf(raw) != nil:
 			m := newMap()
 			set(m, "name", clone(publisher))
-			set(m, "location", valueOf(new))
+			set(m, "location", valueOf(raw))
 			set(entry, "publisher", m)
 		default:
-			set(entry, "location", valueOf(new))
+			set(entry, "location", valueOf(raw))
 		}
 	case SlotURL:
-		setURL(entry, new, read(entry, Slot{Kind: SlotAccessed}))
+		setURL(entry, raw, read(entry, Slot{Kind: SlotAccessed}))
 	case SlotAccessed:
-		setURL(entry, read(entry, URL.Slot), new)
+		setURL(entry, read(entry, URL.Slot), raw)
 	}
 }

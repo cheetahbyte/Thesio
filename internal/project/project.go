@@ -142,8 +142,10 @@ func (p *Project) file(path string) *file {
 	return nil
 }
 
+// Contains reports whether path is one of its files.
 func (p *Project) Contains(path string) bool { return p.file(path) != nil }
 
+// Files is its files with their text.
 func (p *Project) Files() []FileText {
 	out := make([]FileText, len(p.files))
 	for i, f := range p.files {
@@ -194,6 +196,7 @@ type document struct {
 // Documents is which documents include which.
 type Documents struct{ projects []document }
 
+// LoadDocuments reads the documents ids and what each includes.
 func LoadDocuments(ids []string, read Read) *Documents {
 	type result struct {
 		text string
@@ -256,16 +259,18 @@ func (d *Documents) HasLabel(id, key string) bool {
 // Newest is the document to open when nothing asks for another: the newest of
 // ids by modified, the first of those modified together.
 func Newest(ids []string, modified []int64) (string, bool) {
-	best := -1
-	for i := range ids {
-		if best < 0 || modified[i] > modified[best] {
-			best = i
+	var newest string
+	var at int64
+	found := false
+	for i, time := range modified {
+		if i >= len(ids) {
+			break
+		}
+		if !found || time > at {
+			newest, at, found = ids[i], time, true
 		}
 	}
-	if best < 0 {
-		return "", false
-	}
-	return ids[best], true
+	return newest, found
 }
 
 // LaunchTarget is what launch will most likely open: Document, within Main,

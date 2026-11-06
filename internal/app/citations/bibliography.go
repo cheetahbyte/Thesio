@@ -101,6 +101,8 @@ func (s *State) SetBibliography(mode typst.BibMode) {
 		text = typst.EmbedBibliography(text, "")
 	case typst.BibLinked:
 		text = typst.LinkBibliography(text, id)
+	case typst.BibNone, typst.BibCustom:
+		// Removed is all None asks for; a custom bibliography is the user's to write.
 	}
 	if err := s.h.WriteDocument(id, text, false); err != nil {
 		s.h.ToastError(fmt.Sprintf("Could not save %s: %v", id, err))
@@ -156,7 +158,7 @@ func (s *State) EnsureBibliography(id string) {
 	}
 	documents := s.h.Documents()
 	for _, doc := range documents.Includers(id) {
-		if text, ok := s.read(doc); ok && typst.BibliographyMode(text, doc) != typst.BibNone {
+		if included, found := s.read(doc); found && typst.BibliographyMode(included, doc) != typst.BibNone {
 			return
 		}
 	}
@@ -170,7 +172,7 @@ func (s *State) EnsureBibliography(id string) {
 }
 
 // RenameCitations follows a key change through every document that cites it.
-func (s *State) RenameCitations(old, new string) {
+func (s *State) RenameCitations(old, renamed string) {
 	documents := s.h.Documents()
 	changed := 0
 	for _, e := range s.h.Entries() {
@@ -181,7 +183,7 @@ func (s *State) RenameCitations(old, new string) {
 		if !ok {
 			continue
 		}
-		updated, ok := typst.RenameCitation(text, old, new, documents.HasLabel(e.ID, old))
+		updated, ok := typst.RenameCitation(text, old, renamed, documents.HasLabel(e.ID, old))
 		if !ok {
 			continue
 		}

@@ -12,6 +12,7 @@ import (
 // Command is an action of the menu bar.
 type Command int
 
+// The menu bar's commands, as their items read.
 const (
 	CmdNewDocument Command = iota
 	CmdNewFolder

@@ -2,7 +2,7 @@ package app
 
 import (
 	"cmp"
-	"hash/fnv"
+	"hash/maphash"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,15 +37,18 @@ type homeState struct {
 	overview *overview
 }
 
+// stampSeed suffices for stamps: they are compared within one run only.
+var stampSeed = maphash.MakeSeed()
+
 func (ws *Workspace) overviewStamp(rows []library.Row) uint64 {
-	h := fnv.New64a()
+	var b []byte
 	for _, e := range ws.entries {
-		h.Write([]byte(e.ID + "\x00" + strconv.FormatInt(e.Modified, 10) + "\x00" + strconv.Itoa(len(e.Body)) + "\x00"))
+		b = append(b, e.ID+"\x00"+strconv.FormatInt(e.Modified, 10)+"\x00"+strconv.Itoa(len(e.Body))+"\x00"...)
 	}
 	for _, r := range rows {
-		h.Write([]byte(r.Key + "\x00" + r.Title + "\x00"))
+		b = append(b, r.Key+"\x00"+r.Title+"\x00"...)
 	}
-	return h.Sum64()
+	return maphash.Bytes(stampSeed, b)
 }
 
 func (ws *Workspace) computeOverview(rows []library.Row) *overview {

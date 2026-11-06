@@ -2,9 +2,15 @@ package typst
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../typst/include
-#cgo LDFLAGS: -L${SRCDIR}/../../typst/target/release -lthesio_typst
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../typst/target/aarch64-apple-darwin/release
+#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../typst/target/x86_64-apple-darwin/release
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../typst/target/x86_64-unknown-linux-gnu/release
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../typst/target/aarch64-unknown-linux-gnu/release
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../typst/target/x86_64-pc-windows-gnu/release
+#cgo LDFLAGS: -lthesio_typst
 #cgo darwin LDFLAGS: -liconv
-#cgo linux LDFLAGS: -lm -ldl -lpthread
+#cgo linux LDFLAGS: -lgcc_s -lutil -lrt -lpthread -lm -ldl -lc
+#cgo windows LDFLAGS: -lbcrypt -ladvapi32 -lkernel32 -lntdll -luserenv -lws2_32 -ldbghelp -lgcc_eh -l:libpthread.a
 #include <stdlib.h>
 #include "thesio_typst.h"
 */
@@ -13,8 +19,17 @@ import "C"
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"unsafe"
 )
+
+// Error is a failure the crate reported, in its words.
+type Error struct{ Message string }
+
+func (e *Error) Error() string { return e.Message }
+
+// ErrNoReply is a call the crate answered with nothing.
+var ErrNoReply = errors.New("typst: no reply")
 
 // arena holds C strings for one call.
 type arena []unsafe.Pointer
@@ -49,16 +64,28 @@ type reply struct {
 func result(p *C.char) (json.RawMessage, error) {
 	text, ok := take(p)
 	if !ok {
-		return nil, errors.New("typst: no reply")
+		return nil, ErrNoReply
 	}
 	var r reply
 	if err := json.Unmarshal([]byte(text), &r); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("typst: reading a reply: %w", err)
 	}
 	if r.Error != nil {
-		return nil, errors.New(*r.Error)
+		return nil, &Error{Message: *r.Error}
 	}
 	return r.OK, nil
+}
+
+// decode reads a reply's "ok" value as T, the zero T when the call failed or
+// the value is not a T.
+func decode[T any](p *C.char) T {
+	var v T
+	raw, err := result(p)
+	if err != nil || json.Unmarshal(raw, &v) != nil {
+		var zero T
+		return zero
+	}
+	return v
 }
 
 // optionalText reads a reply of a string or null.

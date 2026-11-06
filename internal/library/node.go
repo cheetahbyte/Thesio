@@ -2,6 +2,7 @@ package library
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -120,11 +121,21 @@ func isNumber(n *yaml.Node) bool {
 	return n != nil && n.Kind == yaml.ScalarNode && (n.ShortTag() == "!!int" || n.ShortTag() == "!!float")
 }
 
+// ErrNotMapping is YAML that holds something other than a mapping of entries.
+var ErrNotMapping = errors.New("expected a mapping of entries")
+
+// syntaxError is YAML's own error. Its text is kept as it is, since it is shown
+// beside the field that caused it (InvalidLibrary.Reason).
+type syntaxError struct{ err error }
+
+func (e *syntaxError) Error() string { return e.err.Error() }
+func (e *syntaxError) Unwrap() error { return e.err }
+
 // parseMapping reads text that must be a mapping or nothing at all.
 func parseMapping(text string) (*yaml.Node, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
-		return nil, err
+		return nil, &syntaxError{err}
 	}
 	if doc.Kind == 0 {
 		return newMap(), nil
@@ -136,7 +147,7 @@ func parseMapping(text string) (*yaml.Node, error) {
 	case root.Kind == yaml.ScalarNode && root.ShortTag() == "!!null":
 		return newMap(), nil
 	}
-	return nil, fmt.Errorf("line %d: expected a mapping of entries", root.Line)
+	return nil, fmt.Errorf("line %d: %w", root.Line, ErrNotMapping)
 }
 
 // encode writes a mapping as YAML, empty for an empty one.
@@ -148,10 +159,10 @@ func encode(m *yaml.Node) (string, error) {
 	enc := yaml.NewEncoder(&out)
 	enc.SetIndent(2)
 	if err := enc.Encode(m); err != nil {
-		return "", err
+		return "", fmt.Errorf("encode YAML: %w", err)
 	}
 	if err := enc.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("encode YAML: %w", err)
 	}
 	return out.String(), nil
 }

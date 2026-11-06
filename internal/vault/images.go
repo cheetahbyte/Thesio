@@ -2,23 +2,22 @@ package vault
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
+	_ "image/gif"  // decoders for pasted bitmaps, which readPasted makes PNG
+	_ "image/jpeg" // decoders for pasted bitmaps, which readPasted makes PNG
 	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/tiff"
-	_ "golang.org/x/image/webp"
+	_ "golang.org/x/image/bmp"  // decoders for pasted bitmaps, which readPasted makes PNG
+	_ "golang.org/x/image/tiff" // decoders for pasted bitmaps, which readPasted makes PNG
+	_ "golang.org/x/image/webp" // decoders for pasted bitmaps, which readPasted makes PNG
 )
 
-// Images taken into the vault go in `images/` beside their document (Store.AddImage).
+// ImagesDir is where images taken into the vault go, beside their document (Store.AddImage).
 const ImagesDir = "images"
 
 // pastedStem is what a pasted image is called, having no name of its own.
@@ -47,11 +46,15 @@ type copied struct {
 
 // detect is what Typst would read data as. Typst calls anything gzipped an SVG,
 // and the extension is what tells it apart, which a dropped archive would get wrong.
-func detect(data []byte) (string, bool) {
+func detect(data []byte) string {
 	if DetectImage == nil || bytes.HasPrefix(data, gzipHeader) {
-		return "", false
+		return ""
 	}
-	return DetectImage(data)
+	format, ok := DetectImage(data)
+	if !ok {
+		return ""
+	}
+	return format
 }
 
 // extensionsOf are the extensions of a detected format, the usual one first.
@@ -76,12 +79,11 @@ func readImageFile(path string) (copied, error) {
 	name := filepath.Base(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return copied{}, fmt.Errorf("Could not read %s: %w", name, err)
+		return copied{}, fmt.Errorf("%w %s: %w", ErrCannotRead, name, err)
 	}
-	format, _ := detect(data)
-	known := extensionsOf(format)
+	known := extensionsOf(detect(data))
 	if len(known) == 0 {
-		return copied{}, fmt.Errorf("%s is not an image Typst can show: use PNG, JPEG, GIF, WebP, SVG, or PDF", name)
+		return copied{}, fmt.Errorf("%s %w", name, ErrNotImage)
 	}
 	// Typst goes by the extension, so a misnamed file would not compile under its own.
 	stem, given, ok := splitName(name)
@@ -93,17 +95,17 @@ func readImageFile(path string) (copied, error) {
 
 // readPasted makes bitmaps PNG whatever the clipboard held them as. SVG is not a bitmap and stays.
 func readPasted(data []byte) (copied, error) {
-	switch format, _ := detect(data); format {
+	switch format := detect(data); format {
 	case "png", "svg":
 		return copied{stem: pastedStem, ext: format, data: data}, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return copied{}, fmt.Errorf("Could not read the pasted image: %w", err)
+		return copied{}, fmt.Errorf("%w the pasted image: %w", ErrCannotRead, err)
 	}
 	var out bytes.Buffer
 	if err := png.Encode(&out, img); err != nil {
-		return copied{}, fmt.Errorf("Could not save the pasted image as PNG: %w", err)
+		return copied{}, fmt.Errorf("%w: %w", ErrPastedAsPNG, err)
 	}
 	return copied{stem: pastedStem, ext: "png", data: out.Bytes()}, nil
 }
@@ -115,7 +117,7 @@ func (in Incoming) read() (copied, error) {
 	if in.Pasted != nil {
 		return readPasted(in.Pasted)
 	}
-	return copied{}, errors.New("No image given")
+	return copied{}, ErrNoImage
 }
 
 // Figures is a figure for each path, as text of its own paragraphs to replace

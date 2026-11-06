@@ -92,8 +92,11 @@ func (d *Open) compile(wait bool) {
 			return
 		}
 		started := time.Now()
-		s.compiler.SetBuffer(path, text)
-		k, err := s.compiler.Compile(main)
+		var k *typst.Compilation
+		err := s.compiler.SetBuffer(path, text)
+		if err == nil {
+			k, err = s.compiler.Compile(main)
+		}
 		var pages []page
 		if err == nil && s.render && k.OK {
 			pages = renderPages(k, path, known)
@@ -209,6 +212,22 @@ func (d *Open) placeDiagnostics() {
 	d.ed.SetDiagnostics(version, out)
 }
 
+// ErrNotCompiled is a document that did not compile; ErrPackagesUnfetched one
+// whose packages could not be fetched.
+var (
+	ErrNotCompiled       = errors.New("the document did not compile")
+	ErrPackagesUnfetched = errors.New("the packages the document needs could not be fetched")
+)
+
+// CompileError is a document's first error, in Typst's words. It is an ErrNotCompiled.
+type CompileError struct{ Message string }
+
+// Error is the message.
+func (e *CompileError) Error() string { return e.Message }
+
+// Unwrap makes a CompileError an ErrNotCompiled.
+func (e *CompileError) Unwrap() error { return ErrNotCompiled }
+
 // fetchAttempts bounds how often ExportPDF fetches packages and compiles again.
 const fetchAttempts = 8
 
@@ -217,7 +236,9 @@ const fetchAttempts = 8
 func ExportPDF(root, id, text string) ([]byte, error) {
 	c := typst.NewCompiler(root)
 	defer c.Close()
-	c.SetBuffer(id, text)
+	if err := c.SetBuffer(id, text); err != nil {
+		return nil, err
+	}
 	tried := map[string]bool{}
 	for range fetchAttempts {
 		k, err := c.Compile(id)
@@ -239,13 +260,13 @@ func ExportPDF(root, id, text string) ([]byte, error) {
 		defer k.Close()
 		for _, diag := range k.Diagnostics {
 			if diag.Error {
-				return nil, errors.New(diag.Message)
+				return nil, &CompileError{Message: diag.Message}
 			}
 		}
 		if !k.OK {
-			return nil, errors.New("the document did not compile")
+			return nil, ErrNotCompiled
 		}
 		return k.PDF()
 	}
-	return nil, errors.New("the packages the document needs could not be fetched")
+	return nil, ErrPackagesUnfetched
 }

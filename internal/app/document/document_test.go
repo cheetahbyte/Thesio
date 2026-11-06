@@ -172,7 +172,7 @@ func TestHighlighterTokens(t *testing.T) {
 		t.Errorf("heading %+v", heading)
 	}
 	code, _ := h.Tokens(1, "#let x = 1", nil)
-	kinds := map[editor.TokenKind]int{}
+	kinds := make(map[editor.TokenKind]int)
 	for _, tok := range code {
 		kinds[tok.Kind] = tok.End
 	}

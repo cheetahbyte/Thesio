@@ -49,7 +49,7 @@ func (s *State) show(page int) {
 		s.shown, s.version = path, 0
 	}
 	if page >= 0 {
-		s.web.Page().LoadURL(pageURL(path, page, s.version))
+		s.loadURL(pageURL(path, page, s.version))
 	}
 }
 
@@ -64,7 +64,13 @@ func (s *State) reload(page int) {
 	}
 	// A new query makes WebKit read the file again; a new fragment alone would not.
 	s.version++
-	s.web.Page().LoadURL(pageURL(s.shown, max(page, 0), s.version))
+	s.loadURL(pageURL(s.shown, max(page, 0), s.version))
+}
+
+func (s *State) loadURL(u string) {
+	if err := s.web.Page().LoadURL(u); err != nil {
+		s.h.ToastError("Could not show the paper: " + err.Error())
+	}
 }
 
 // pageURL is the file at a zero-based page, as WebKit's PDF viewer reads `#page=`.

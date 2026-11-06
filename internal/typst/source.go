@@ -8,6 +8,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"fmt"
 	"unsafe"
 )
 
@@ -26,11 +27,7 @@ type Span struct {
 func Highlight(text string) []Span {
 	var a arena
 	defer a.free()
-	var spans []Span
-	if raw, err := result(C.thesio_highlight(a.str(text))); err == nil {
-		_ = json.Unmarshal(raw, &spans)
-	}
-	return spans
+	return decode[[]Span](C.thesio_highlight(a.str(text)))
 }
 
 // ProseWords counts the words text writes as prose, as a compile would draw them.
@@ -40,6 +37,7 @@ func ProseWords(text string) int {
 	return int(C.thesio_prose_words(a.str(text)))
 }
 
+// Heading is a heading of a document, at byte Offset.
 type Heading struct {
 	Offset int    `json:"offset"`
 	Level  int    `json:"level"` // 1 for `=`
@@ -52,19 +50,17 @@ type Include struct {
 	Literal string `json:"literal"`
 }
 
+// Parsed is what ParseDocument finds.
 type Parsed struct {
 	Headings []Heading `json:"headings"`
 	Includes []Include `json:"includes"`
 }
 
+// ParseDocument reads text's headings and includes.
 func ParseDocument(text string) Parsed {
 	var a arena
 	defer a.free()
-	var parsed Parsed
-	if raw, err := result(C.thesio_parse_document(a.str(text))); err == nil {
-		_ = json.Unmarshal(raw, &parsed)
-	}
-	return parsed
+	return decode[Parsed](C.thesio_parse_document(a.str(text)))
 }
 
 // NoteLink is a `#link` to a vault document: as written, the vault path it
@@ -80,11 +76,7 @@ type NoteLink struct {
 func NoteLinks(text, file string) []NoteLink {
 	var a arena
 	defer a.free()
-	var links []NoteLink
-	if raw, err := result(C.thesio_note_links(a.str(text), a.str(file))); err == nil {
-		_ = json.Unmarshal(raw, &links)
-	}
-	return links
+	return decode[[]NoteLink](C.thesio_note_links(a.str(text), a.str(file)))
 }
 
 // NoteLinkAt finds the `[[query` being written at caret, brackets included.
@@ -113,30 +105,22 @@ func CitationAt(text string, caret int) (start, end int, ok bool) {
 func CitedKeys(text string) []string {
 	var a arena
 	defer a.free()
-	var keys []string
-	if raw, err := result(C.thesio_cited_keys(a.str(text))); err == nil {
-		_ = json.Unmarshal(raw, &keys)
-	}
-	return keys
+	return decode[[]string](C.thesio_cited_keys(a.str(text)))
 }
 
 // CitationsOf lists where key is cited: the byte after each `@` or `<`.
 func CitationsOf(text, key string) []int {
 	var a arena
 	defer a.free()
-	var starts []int
-	if raw, err := result(C.thesio_citations_of(a.str(text), a.str(key))); err == nil {
-		_ = json.Unmarshal(raw, &starts)
-	}
-	return starts
+	return decode[[]int](C.thesio_citations_of(a.str(text), a.str(key)))
 }
 
-// RenameCitation changes every citation of old to new. With labelled, `@old`
+// RenameCitation changes every citation of old to next. With labelled, `@old`
 // means a label and only `#cite(<old>)` changes. False when nothing changed.
-func RenameCitation(text, old, new string, labelled bool) (string, bool) {
+func RenameCitation(text, old, next string, labelled bool) (string, bool) {
 	var a arena
 	defer a.free()
-	return optionalText(C.thesio_rename_citation(a.str(text), a.str(old), a.str(new), C.bool(labelled)))
+	return optionalText(C.thesio_rename_citation(a.str(text), a.str(old), a.str(next), C.bool(labelled)))
 }
 
 // DefinesLabel says whether text puts the label key on something.
@@ -166,6 +150,7 @@ func RewritePaths(text, oldFile, newFile, main string, files []string, from, to 
 // BibMode is how a document gets its bibliography.
 type BibMode int
 
+// The ways a document gets its bibliography.
 const (
 	BibNone     BibMode = iota // no `#bibliography`
 	BibEmbedded                // the generated block
@@ -173,12 +158,14 @@ const (
 	BibCustom                  // a `#bibliography` the user wrote
 )
 
+// BibliographyMode is how text, the document at vault path file, gets its bibliography.
 func BibliographyMode(text, file string) BibMode {
 	var a arena
 	defer a.free()
 	return BibMode(C.thesio_bibliography_mode(a.str(text), a.str(file)))
 }
 
+// BibliographyStyle is the style of the first `#bibliography`; false without one.
 func BibliographyStyle(text string) (string, bool) {
 	var a arena
 	defer a.free()
@@ -211,6 +198,7 @@ func plain(p *C.char, fallback string) string {
 	return fallback
 }
 
+// WithoutBibliographyBlock is text without the generated block.
 func WithoutBibliographyBlock(text string) string {
 	var a arena
 	defer a.free()
@@ -224,6 +212,7 @@ func SyncBibliographyBlock(text, yaml string) (string, bool) {
 	return optionalText(C.thesio_sync_bibliography_block(a.str(text), a.str(yaml)))
 }
 
+// EmbedBibliography appends a generated block holding yaml.
 func EmbedBibliography(text, yaml string) string {
 	var a arena
 	defer a.free()
@@ -287,6 +276,7 @@ type ParsedEntry struct {
 	ParentTitle string   `json:"parent_title"`
 }
 
+// LibraryEntries is the entries of yaml as Typst reads them, or why it cannot.
 func LibraryEntries(yaml string) ([]ParsedEntry, error) {
 	var a arena
 	defer a.free()
@@ -295,8 +285,10 @@ func LibraryEntries(yaml string) ([]ParsedEntry, error) {
 		return nil, err
 	}
 	var entries []ParsedEntry
-	err = json.Unmarshal(raw, &entries)
-	return entries, err
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("typst: reading the entries: %w", err)
+	}
+	return entries, nil
 }
 
 // BiblatexImport is BibLaTeX read by Hayagriva as a whole library, and per key
@@ -306,6 +298,7 @@ type BiblatexImport struct {
 	Verbatim map[string]map[string]string `json:"verbatim"`
 }
 
+// ImportBiblatex reads BibLaTeX as Hayagriva YAML.
 func ImportBiblatex(bibtex string) (BiblatexImport, error) {
 	var a arena
 	defer a.free()
@@ -315,7 +308,7 @@ func ImportBiblatex(bibtex string) (BiblatexImport, error) {
 	}
 	var imported BiblatexImport
 	if err := json.Unmarshal(raw, &imported); err != nil {
-		return BiblatexImport{}, err
+		return BiblatexImport{}, fmt.Errorf("typst: reading the import: %w", err)
 	}
 	return imported, nil
 }

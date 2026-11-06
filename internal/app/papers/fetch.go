@@ -1,6 +1,7 @@
 package papers
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -52,7 +53,7 @@ func (s *State) FetchPapers(keys []string) {
 	go func() {
 		found, problem := 0, ""
 		for _, job := range jobs {
-			downloaded, err := library.FetchPaper(job.ids, email, job.dest)
+			downloaded, err := library.FetchPaper(context.Background(), job.ids, email, job.dest)
 			if downloaded {
 				found++
 			}

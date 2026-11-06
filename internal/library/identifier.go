@@ -11,8 +11,10 @@ import (
 // The DOI prefix arXiv gives its papers, as lowercase text.
 const arxivDOIPrefix = "10.48550/arxiv."
 
+// IDKind is the kind of an Identifier.
 type IDKind int
 
+// The identifiers Identify recognises.
 const (
 	IDDOI IDKind = iota
 	IDArxiv
@@ -20,6 +22,7 @@ const (
 	IDISBN
 )
 
+// Identifier is a DOI, arXiv ID, PMID, or ISBN in its plain form.
 type Identifier struct {
 	Kind  IDKind
 	Value string
@@ -174,6 +177,7 @@ func (p PaperIDs) ArxivID() string {
 // ArxivDOI is the DOI arXiv gives paper id, which doi.org resolves like any other.
 func ArxivDOI(id string) string { return "10.48550/arXiv." + id }
 
+// ArxivOfLink is the arXiv ID a link points at, "" when it is not an arXiv link.
 func ArxivOfLink(url string) string {
 	if id, ok := Identify(url); ok && id.Kind == IDArxiv {
 		return id.Value

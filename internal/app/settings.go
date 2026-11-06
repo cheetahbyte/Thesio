@@ -193,7 +193,10 @@ func (ws *Workspace) documentsPage(c *ui.Context) {
 func (ws *Workspace) aboutPage(c *ui.Context) {
 	t := c.Theme()
 	if ws.icon == nil && len(AppIcon) > 0 {
-		ws.icon, _ = ui.DecodeImage(AppIcon)
+		// A broken icon only leaves the About page without it.
+		if icon, err := ui.DecodeImage(AppIcon); err == nil {
+			ws.icon = icon
+		}
 	}
 	version := mygo.App.Version()
 	if version == "" {

@@ -4,26 +4,38 @@ package pdfkit
 
 import "errors"
 
-var errUnsupported = errors.New("pdfkit: PDFKit is only available on macOS")
+// ErrUnavailable is every call off macOS.
+var ErrUnavailable = errors.New("pdfkit: PDFKit is only available on macOS")
 
+// Document stands in for PDFKit's, which only macOS has.
 type Document struct{}
 
+// Available reports false: there is no PDFKit here.
 func Available() bool { return false }
 
-func Open(path string) (*Document, error) { return nil, errUnsupported }
+// Open fails with ErrUnavailable.
+func Open(string) (*Document, error) { return nil, ErrUnavailable }
 
+// Close does nothing.
 func (d *Document) Close() {}
 
+// PageCount is 0.
 func (d *Document) PageCount() int { return 0 }
 
-func (d *Document) PageLabel(i int) string { return "" }
+// PageLabel is "".
+func (d *Document) PageLabel(int) string { return "" }
 
-func (d *Document) PageText(i int) string { return "" }
+// PageText is "".
+func (d *Document) PageText(int) string { return "" }
 
+// Highlights is none.
 func (d *Document) Highlights() []Highlight { return nil }
 
-func (d *Document) AddHighlight(page int, text, comment string) error { return errUnsupported }
+// AddHighlight fails with ErrUnavailable.
+func (d *Document) AddHighlight(int, string, string) error { return ErrUnavailable }
 
-func (d *Document) SetComment(h Highlight, comment string) error { return errUnsupported }
+// SetComment fails with ErrUnavailable.
+func (d *Document) SetComment(Highlight, string) error { return ErrUnavailable }
 
-func (d *Document) RemoveHighlight(h Highlight) error { return errUnsupported }
+// RemoveHighlight fails with ErrUnavailable.
+func (d *Document) RemoveHighlight(Highlight) error { return ErrUnavailable }

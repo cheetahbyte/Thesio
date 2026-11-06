@@ -145,9 +145,11 @@ func isPDF(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
 	head := make([]byte, len(vault.PDFHeader))
 	_, err = io.ReadFull(f, head)
+	if closeErr := f.Close(); closeErr != nil {
+		return false
+	}
 	return err == nil && string(head) == vault.PDFHeader
 }
 
@@ -159,8 +161,8 @@ func (s *State) LinkPaper(id, key string) {
 }
 
 // RenamePaper keeps a paper and its notes following their entry when its key changes.
-func (s *State) RenamePaper(old, new string) {
-	from, to := library.PaperFile(old), library.PaperFile(new)
+func (s *State) RenamePaper(old, renamed string) {
+	from, to := library.PaperFile(old), library.PaperFile(renamed)
 	s.followKey(from, to)
 	s.followKey(library.NoteFile(from), library.NoteFile(to))
 }
@@ -184,25 +186,25 @@ func (s *State) followKey(from, to string) {
 
 // PathChanged follows a rename or move of old to new through the paper, its
 // notes and the highlights read so far.
-func (s *State) PathChanged(old, new string) {
-	if p, ok := vault.MovedPath(s.current, old, new); ok && s.current != "" {
+func (s *State) PathChanged(old, renamed string) {
+	if p, ok := vault.MovedPath(s.current, old, renamed); ok && s.current != "" {
 		s.current = p
 		s.shown = ""
 		s.show(-1)
 	}
 	if s.notes != nil {
-		if p, ok := vault.MovedPath(s.notes.id, old, new); ok {
+		if p, ok := vault.MovedPath(s.notes.id, old, renamed); ok {
 			s.notes.id = p
 			s.notes.doc.SetPath(p, p)
 		}
 	}
 	if s.quote != nil {
-		if p, ok := vault.MovedPath(s.quote.paper, old, new); ok {
+		if p, ok := vault.MovedPath(s.quote.paper, old, renamed); ok {
 			s.quote.paper = p
 		}
 	}
 	for id, e := range s.cache {
-		if p, ok := vault.MovedPath(id, old, new); ok {
+		if p, ok := vault.MovedPath(id, old, renamed); ok {
 			delete(s.cache, id)
 			s.cache[p] = e
 		}

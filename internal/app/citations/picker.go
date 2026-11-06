@@ -64,15 +64,15 @@ func (s *State) pickerView(c *ui.Context) {
 			n := len(rows)
 			field := ui.TextInput(c.Key("picker-search"), &s.picker.query).Placeholder("Search library").Label("Search library").AutoFocus()
 			field.OnTextKey(func(k ui.TextKey) bool {
-				switch k.Key {
-				case ui.KeyUp:
+				if k.Key == ui.KeyUp {
 					s.picker.selected = max(s.picker.selected-1, 0)
-				case ui.KeyDown:
-					s.picker.selected = max(min(s.picker.selected+1, n-1), 0)
-				default:
-					return false
+					return true
 				}
-				return true
+				if k.Key == ui.KeyDown {
+					s.picker.selected = max(min(s.picker.selected+1, n-1), 0)
+					return true
+				}
+				return false
 			})
 			if field.Changed() {
 				s.picker.selected = 0

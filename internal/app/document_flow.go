@@ -272,12 +272,12 @@ func (ws *Workspace) KeepVersion(id, text string, now bool) {
 }
 
 // PathChanged follows a rename or move through everything open.
-func (ws *Workspace) PathChanged(old, new string, rewritten []vault.Rewritten) {
-	ws.papers.PathChanged(old, new)
+func (ws *Workspace) PathChanged(old, renamed string, rewritten []vault.Rewritten) {
+	ws.papers.PathChanged(old, renamed)
 	ws.RefreshEntries()
 	if ws.doc != nil {
 		id := ws.doc.ID()
-		if moved, ok := vault.MovedPath(id, old, new); ok {
+		if moved, ok := vault.MovedPath(id, old, renamed); ok {
 			id = moved
 		}
 		main := id
@@ -287,12 +287,12 @@ func (ws *Workspace) PathChanged(old, new string, rewritten []vault.Rewritten) {
 		ws.doc.SetPath(id, main)
 	}
 	for i, id := range ws.sidebar.batch {
-		if moved, ok := vault.MovedPath(id, old, new); ok {
+		if moved, ok := vault.MovedPath(id, old, renamed); ok {
 			ws.sidebar.batch[i] = moved
 		}
 	}
 	for id := range ws.sidebar.expanded {
-		if moved, ok := vault.MovedPath(id, old, new); ok {
+		if moved, ok := vault.MovedPath(id, old, renamed); ok {
 			delete(ws.sidebar.expanded, id)
 			ws.sidebar.expanded[moved] = true
 		}

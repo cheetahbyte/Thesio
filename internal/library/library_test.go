@@ -228,6 +228,13 @@ func must(t *testing.T, err error) {
 	}
 }
 
+func fileText(t *testing.T, l *Library) string {
+	t.Helper()
+	text, err := l.Text()
+	must(t, err)
+	return text
+}
+
 func importing(t *testing.T, l *Library, text string) (int, int) {
 	t.Helper()
 	added, skipped, err := l.ImportBiblatex(text)
@@ -343,8 +350,8 @@ func TestADeletedTagLeavesNoEmptyListBehind(t *testing.T) {
 	l := library(t)
 	importing(t, l, "@book{a, title = {A}, keywords = {only}}")
 	must(t, l.DeleteTag("only"))
-	if len(l.Tags()) != 0 || strings.Contains(l.Text(), "tags") {
-		t.Fatal(l.Text())
+	if len(l.Tags()) != 0 || strings.Contains(fileText(t, l), "tags") {
+		t.Fatal(fileText(t, l))
 	}
 }
 
@@ -359,19 +366,20 @@ func TestChoosingPreprintSticksAndChoosingAgainLeavesNoTrace(t *testing.T) {
 	if kind, _ := l.SourceType("a"); kind.Label != "Journal Article" {
 		t.Fatal(kind.Label)
 	}
-	if strings.Contains(l.Text(), "genre") {
-		t.Fatal(l.Text())
+	if strings.Contains(fileText(t, l), "genre") {
+		t.Fatal(fileText(t, l))
 	}
 }
 
 func TestADeletedEntryCanComeBackFromAVersion(t *testing.T) {
 	l := zotero(t)
-	before := l.Text()
+	before := fileText(t, l)
 	must(t, l.DeleteEntries([]string{"knuth1984"}))
 	if l.Contains("knuth1984") {
 		t.Fatal("still there")
 	}
-	versions := l.Versions().List()
+	versions, err := l.Versions().List()
+	must(t, err)
 	if kept, err := l.Versions().Read(versions[0]); err != nil || kept != before {
 		t.Fatal(kept, err)
 	}
@@ -383,12 +391,12 @@ func TestADeletedEntryCanComeBackFromAVersion(t *testing.T) {
 
 func TestAVersionThatDoesNotParseChangesNothing(t *testing.T) {
 	l := zotero(t)
-	before := l.Text()
+	before := fileText(t, l)
 	if l.Restore("not: [valid") == nil {
 		t.Fatal("restored")
 	}
-	if l.Text() != before {
-		t.Fatal(l.Text())
+	if fileText(t, l) != before {
+		t.Fatal(fileText(t, l))
 	}
 }
 
@@ -486,7 +494,7 @@ func TestEditingAnEntryKeepsKeyOrderAndUnknownFields(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatal(changed, err)
 	}
-	if want := "b:\n  type: Book\n  title: New\n  custom: kept # a note\na:\n  type: Book\n  title: A\n"; l.Text() != want {
-		t.Fatalf("%q", l.Text())
+	if want := "b:\n  type: Book\n  title: New\n  custom: kept # a note\na:\n  type: Book\n  title: A\n"; fileText(t, l) != want {
+		t.Fatalf("%q", fileText(t, l))
 	}
 }

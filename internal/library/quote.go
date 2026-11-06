@@ -26,7 +26,7 @@ func BlockGlue(before string) string {
 	return "\n\n"
 }
 
-var ligatures = strings.NewReplacer("­", "", "ﬀ", "ff", "ﬁ", "fi", "ﬂ", "fl", "ﬃ", "ffi", "ﬄ", "ffl", "ﬅ", "st", "ﬆ", "st")
+var ligatures = strings.NewReplacer("\u00ad", "", "ﬀ", "ff", "ﬁ", "fi", "ﬂ", "fl", "ﬃ", "ffi", "ﬄ", "ffl", "ﬅ", "st", "ﬆ", "st")
 
 // CleanQuote is raw as read from a PDF: line-end hyphens joined, ligatures
 // spelled out, whitespace collapsed. PDFKit turns line breaks into spaces, so

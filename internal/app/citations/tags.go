@@ -76,17 +76,17 @@ func (s *State) deleteTag(tag string) {
 }
 
 func (s *State) finishTagRename() {
-	old, new := s.tagRename.tag, strings.TrimSpace(s.tagRename.text)
+	old, renamed := s.tagRename.tag, strings.TrimSpace(s.tagRename.text)
 	s.tagRename.open = false
 	lib := s.library()
 	if lib == nil {
 		return
 	}
-	if new != old {
-		if err := lib.RenameTag(old, new); err != nil {
+	if renamed != old {
+		if err := lib.RenameTag(old, renamed); err != nil {
 			s.h.ToastError(fmt.Sprintf("Could not rename the tag: %v", err))
 		} else if s.tagFilter == old {
-			s.tagFilter, _ = lib.TagLike(new)
+			s.tagFilter, _ = lib.TagLike(renamed)
 		}
 	}
 	s.TableChanged()

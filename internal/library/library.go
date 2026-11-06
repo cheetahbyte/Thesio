@@ -7,6 +7,7 @@ package library
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +45,23 @@ type Engine interface {
 
 // Hayagriva is set by the app before Load.
 var Hayagriva Engine
+
+// message is an error written as a sentence for the user, so its text is shown
+// as it is; being comparable, it serves as a sentinel.
+type message string
+
+func (m message) Error() string { return string(m) }
+
+// Errors the library returns, matched with errors.Is. Details go before or after their text.
+var (
+	ErrNoTag       error = message("Enter a tag")
+	ErrTagComma    error = message("Tags cannot contain commas")
+	ErrNoKey       error = message("Enter a citation key")
+	ErrKeySpace    error = message("Citation keys cannot contain spaces")
+	ErrKeyTaken          = errors.New("is already in the library")
+	ErrNoHayagriva       = errors.New("library: Hayagriva is not set")
+	ErrNotUTF8           = errors.New("stream did not contain valid UTF-8")
+)
 
 // PapersDir is the vault folder that holds downloaded papers.
 const PapersDir = "sources"
@@ -112,6 +130,7 @@ func (r Row) Matches(query string) bool {
 	return false
 }
 
+// RowOfPaper is the row whose paper is at vault path id.
 func RowOfPaper(rows []Row, id string) (Row, bool) {
 	for _, row := range rows {
 		if PaperFile(row.Key) == id {
@@ -149,6 +168,7 @@ func (e *InvalidLibrary) Error() string { return e.Path + " is not a valid libra
 // Entry is one raw Hayagriva entry, without its key.
 type Entry struct{ node *yaml.Node }
 
+// NewEntry is an entry with no fields.
 func NewEntry() Entry { return Entry{newMap()} }
 
 // ParseEntry reads one entry's YAML mapping.
@@ -160,15 +180,19 @@ func ParseEntry(text string) (Entry, error) {
 	return Entry{node}, nil
 }
 
-func (e Entry) Node() *yaml.Node             { return e.node }
-func (e Entry) Read(slot Slot) string        { return read(e.node, slot) }
+// Node is the entry's YAML mapping.
+func (e Entry) Node() *yaml.Node { return e.node }
+
+// Read is the text of the field at slot.
+func (e Entry) Read(slot Slot) string { return read(e.node, slot) }
+
+// Write sets the field at slot to text; blank removes it.
 func (e Entry) Write(slot Slot, text string) { write(e.node, slot, text) }
 
-func (e Entry) YAML() string {
-	text, _ := encode(e.node)
-	return text
-}
+// YAML is the entry as YAML.
+func (e Entry) YAML() (string, error) { return encode(e.node) }
 
+// Library is the vault's library.yaml, as last read or written.
 type Library struct {
 	root, path string
 	entries    *yaml.Node
@@ -193,7 +217,7 @@ func readText(path string) (string, error) {
 		return "", nil
 	}
 	if err == nil && !utf8.Valid(data) {
-		err = errors.New("stream did not contain valid UTF-8")
+		err = ErrNotUTF8
 	}
 	if err != nil {
 		return "", fmt.Errorf("could not read %s: %w", path, err)
@@ -210,10 +234,10 @@ func parse(root, path, text string) (*Library, error) {
 	var parsed []ParsedEntry
 	if len(entries.Content) > 0 {
 		if Hayagriva == nil {
-			return nil, errors.New("library: Hayagriva is not set")
+			return nil, ErrNoHayagriva
 		}
-		if err := Hayagriva.Check(text); err != nil {
-			return nil, invalid(err)
+		if cerr := Hayagriva.Check(text); cerr != nil {
+			return nil, invalid(cerr)
 		}
 		if parsed, err = Hayagriva.Entries(text); err != nil {
 			return nil, invalid(err)
@@ -222,12 +246,16 @@ func parse(root, path, text string) (*Library, error) {
 	return &Library{root: root, path: path, entries: entries, parsed: parsed}, nil
 }
 
+// Versions is the file's earlier versions.
 func (l *Library) Versions() *vault.Versions { return vault.VersionsOf(l.root, vault.LibraryFile) }
 
-// Text is the file as it stands.
-func (l *Library) Text() string {
-	data, _ := os.ReadFile(l.path)
-	return string(data)
+// Text is the file as it stands, "" when there is none.
+func (l *Library) Text() (string, error) {
+	data, err := os.ReadFile(l.path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("could not read %s: %w", l.path, err)
+	}
+	return string(data), nil
 }
 
 // keepVersion keeps the file as it stands before a change. A run of quick
@@ -275,8 +303,10 @@ func (l *Library) replace(text string, now bool) error {
 	return nil
 }
 
+// Len is the number of entries.
 func (l *Library) Len() int { return len(l.parsed) }
 
+// Contains reports whether an entry has key.
 func (l *Library) Contains(key string) bool {
 	for _, entry := range l.parsed {
 		if entry.Key == key {
@@ -288,6 +318,7 @@ func (l *Library) Contains(key string) bool {
 
 func (l *Library) entry(key string) *yaml.Node { return asMap(get(l.entries, key)) }
 
+// PaperIDs is what finds a copy of key's paper.
 func (l *Library) PaperIDs(key string) PaperIDs {
 	entry := l.entry(key)
 	if entry == nil {
@@ -296,6 +327,7 @@ func (l *Library) PaperIDs(key string) PaperIDs {
 	return PaperIDs{DOI: read(entry, DOI.Slot), Arxiv: arxivID(entry)}
 }
 
+// Rows is the table of entries, in library order.
 func (l *Library) Rows() []Row {
 	rows := make([]Row, 0, len(l.parsed))
 	for _, parsed := range l.parsed {
@@ -365,10 +397,10 @@ func (l *Library) TagLike(name string) (string, bool) {
 func (l *Library) tagName(tag string, old *string) (string, error) {
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
-		return "", errors.New("Enter a tag")
+		return "", ErrNoTag
 	}
 	if strings.Contains(tag, ",") {
-		return "", errors.New("Tags cannot contain commas")
+		return "", ErrTagComma
 	}
 	for _, known := range l.Tags() {
 		if (old == nil || known.Name != *old) && same(known.Name, tag) {
@@ -404,6 +436,7 @@ func (l *Library) SetTag(keys []string, tag string, on bool) error {
 	return l.commit(entries)
 }
 
+// SourceType is key's kind of source; false when there is no such entry.
 func (l *Library) SourceType(key string) (*SourceType, bool) {
 	entry := l.entry(key)
 	if entry == nil {
@@ -434,7 +467,7 @@ func (l *Library) AddBlank(kind *SourceType) (string, error) {
 	return key, nil
 }
 
-// TypeChangeDropsParent: whether changing key to kind would lose the work it was published in.
+// TypeChangeDropsParent reports whether changing key to kind would lose the work it was published in.
 func (l *Library) TypeChangeDropsParent(key string, kind *SourceType) bool {
 	entry := l.entry(key)
 	return entry != nil && kind.dropsParent(entry)
@@ -457,13 +490,13 @@ func (l *Library) SetSourceType(key string, kind *SourceType) error {
 func (l *Library) SaveFields(key, newKey string, fields []FieldValue) (bool, error) {
 	newKey = strings.TrimSpace(newKey)
 	if newKey == "" {
-		return false, errors.New("Enter a citation key")
+		return false, ErrNoKey
 	}
 	if strings.ContainsFunc(newKey, unicode.IsSpace) {
-		return false, errors.New("Citation keys cannot contain spaces")
+		return false, ErrKeySpace
 	}
 	if key != newKey && l.Contains(newKey) {
-		return false, fmt.Errorf("%s is already in the library", newKey)
+		return false, fmt.Errorf("%s %w", newKey, ErrKeyTaken)
 	}
 	original := l.entry(key)
 	if original == nil {
@@ -495,17 +528,19 @@ func (l *Library) SaveFields(key, newKey string, fields []FieldValue) (bool, err
 }
 
 // RenameTag renames a tag on every entry. Renaming to a tag in use merges the two.
-func (l *Library) RenameTag(old, new string) error {
-	new, err := l.tagName(new, &old)
+func (l *Library) RenameTag(old, name string) error {
+	name, err := l.tagName(name, &old)
 	if err != nil {
 		return err
 	}
-	return l.changeTag(old, &new)
+	return l.changeTag(old, &name)
 }
 
+// DeleteTag removes a tag from every entry.
 func (l *Library) DeleteTag(tag string) error { return l.changeTag(tag, nil) }
 
-func (l *Library) changeTag(old string, new *string) error {
+// changeTag renames old to *renamed on every entry, or removes it when nil.
+func (l *Library) changeTag(old string, renamed *string) error {
 	entries := clone(l.entries)
 	for i := 1; i < len(entries.Content); i += 2 {
 		entry := asMap(entries.Content[i])
@@ -515,10 +550,10 @@ func (l *Library) changeTag(old string, new *string) error {
 		var next []string
 		for _, tag := range tags(entry) {
 			if tag == old {
-				if new == nil {
+				if renamed == nil {
 					continue
 				}
-				tag = *new
+				tag = *renamed
 			}
 			if !contains(next, tag) {
 				next = append(next, tag)
@@ -529,6 +564,7 @@ func (l *Library) changeTag(old string, new *string) error {
 	return l.commit(entries)
 }
 
+// DeleteEntries removes the entries in keys.
 func (l *Library) DeleteEntries(keys []string) error {
 	entries := clone(l.entries)
 	for _, key := range keys {
@@ -618,6 +654,7 @@ func (l *Library) freshKey(entry *yaml.Node) string {
 	}
 }
 
+// ExportBiblatex is the library as BibLaTeX.
 func (l *Library) ExportBiblatex() string { return export(l.parsed, l.entries) }
 
 // Subset is YAML for the entries in keys, in library order. Tags stay out: this
