@@ -5,6 +5,7 @@ use crate::actions::{FocusSearch, NewDoc};
 use crate::app::{View, Workspace};
 use crate::chrome::page_title_x;
 use thesio_core::library::{NOTES_DIR, paper_file};
+use thesio_core::prose_words;
 use thesio_core::references::cited_keys;
 use thesio_core::store::display_title;
 use thesio_core::store::Entry;
@@ -39,12 +40,6 @@ pub struct Home { overview: Option<(u64, Overview)> }
 
 fn visited(e: &Entry) -> u64 {
     if e.meta.opened > 0 { e.meta.opened } else { e.modified }
-}
-
-/// The words of a document's prose, roughly: Typst set-up and comments stay out.
-fn words(body: &str) -> usize {
-    let lines = body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"));
-    lines.map(|l| l.trim_start_matches('=').split_whitespace().count()).sum()
 }
 
 fn section(title: &'static str, count: Option<usize>) -> Div {
@@ -85,7 +80,7 @@ impl Workspace {
             (row.key.clone(), row.label().to_string())
         }).collect();
         uncited.sort_by(|a, b| a.1.cmp(&b.1));
-        Overview { documents: writing.len(), words: writing.iter().map(|e| words(&without_block(&e.body))).sum(), sources, papers, uncited }
+        Overview { documents: writing.len(), words: writing.iter().map(|e| prose_words(&without_block(&e.body))).sum(), sources, papers, uncited }
     }
 
     fn document_rows(&self, entries: Vec<&Entry>, key: &'static str, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {

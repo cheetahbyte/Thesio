@@ -25,7 +25,7 @@ impl Workspace {
         t.parent
             .as_ref()
             .and_then(|p| self.entries.iter().find(|e| &e.id == p))
-            .map_or_else(|| "My documents".to_string(), |e| display_title(&e.title))
+            .map_or_else(|| "Files".to_string(), |e| display_title(&e.title))
     }
 
     pub(crate) fn render_trash(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -139,7 +139,7 @@ impl Workspace {
         match result {
             Ok(restored) => {
                 warnings = restored.warnings;
-                self.show_toast(if restored.renamed { "Restored. Some documents were moved to My documents because their original location no longer exists." } else { "Restored successfully" }, cx);
+                self.show_toast(if restored.renamed { "Restored. Some documents were moved to Files because their original location no longer exists." } else { "Restored successfully" }, cx);
             }
             Err(e) => {
                 let detail = e.chain().map(ToString::to_string).collect::<Vec<_>>().join(": ");
@@ -147,6 +147,8 @@ impl Workspace {
             }
         }
         self.refresh_entries(cx);
+        self.follow_top_document(cx);
+        self.refresh_outline(cx);
         self.refresh_trash(cx);
         self.show_warnings(&warnings, cx);
     }

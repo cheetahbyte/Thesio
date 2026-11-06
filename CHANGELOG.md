@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Keep working when a click lands right after a large deletion, before the editor has redrawn. It used to crash.
+- Keep a real multi-line string as it is when accepting a path inside it, and replace the rest of a path after the caret, so `"fig|.png` gives `"figures/plot.png"`.
+- Offer only labels `@` can reference. Unnumbered headings and equations and labels on plain text are gone from the list, since Typst rejects them.
+- Open the right file when clicking a diagnostic from another file in the list under the preview.
+- Compile a chapter through its main file again as soon as that file is restored from the Trash.
+- Count Home's words from the parsed document, so code, comments, and math stay out. The preview still counts what it draws, the bibliography too.
+- Keep shortcuts working on Home, the Library, and other pages after leaving a document, without a click first.
+- After a move, give editors the updated paths directly. A failed read could leave the old paths to be saved back.
+- Call the top of the vault Files in Trash and the Move dialog, drop "Owner: me" from search results, and describe permanent deletion without "child pages".
+
 - Keep working when undo or redo changes text before an open completion popup. Text with multi-byte characters crashed the app and lost unsaved edits.
 - Replace a typed `:` or `.` when accepting a label, so `@fig:` gives `@fig:plot` and not `@fig:plot:`.
 - Show an underline's message right after typing a typo. A popup with nothing to offer used to block it until the caret moved.

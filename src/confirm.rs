@@ -43,7 +43,7 @@ impl Workspace {
                 true,
             ),
             Confirm::Restore(_) => ("Restore this document?".to_string(), "The document will be restored to its original location.".to_string(), "Restore", false),
-            Confirm::Purge(_) => ("Delete permanently?".to_string(), "This page and its child pages cannot be recovered after permanent deletion.".to_string(), "Delete", true),
+            Confirm::Purge(_) => ("Delete permanently?".to_string(), "This item cannot be recovered after permanent deletion.".to_string(), "Delete", true),
             Confirm::DeleteEntries(keys) => {
                 let citing = self.entries.iter().filter(|e| e.typst && { let cited = cited_keys(&e.body); keys.iter().any(|key| cited.contains(key)) }).count();
                 let (it, title) = match keys.as_slice() {

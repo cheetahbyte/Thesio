@@ -502,7 +502,8 @@ impl SourceEditor {
         self.settled = Some(open.range.start);
         let at = item.from.unwrap_or(open.range.start);
         let sel = item.selection.map_or(at + item.insert.len()..at + item.insert.len(), |sel| at + sel.start..at + sel.end);
-        let change = self.buffer.replace_selecting(at..open.range.end, &item.insert, sel, EditKind::Other);
+        let end = self.buffer.snapped(open.range.end + item.tail);
+        let change = self.buffer.replace_selecting(at..end, &item.insert, sel, EditKind::Other);
         self.changed(change, Trigger::Moved, cx);
         self.stops = item.stops.iter().map(|stop| at + stop.start..at + stop.end).collect();
         cx.emit(SourceEvent::Completed(kind));
@@ -753,7 +754,7 @@ impl SourceEditor {
         }
         let target_range = self.buffer.line_range(target);
         let offset = match painted.lines.get(&target) {
-            Some(row) => target_range.start + row.index_at(point(x, if down { px(0.) } else { row.height() - height })),
+            Some(row) => self.place_in_text(target, row.index_at(point(x, if down { px(0.) } else { row.height() - height }))),
             None => target_range.end.min(target_range.start + (caret - range.start)),
         };
         drop(painted);
@@ -771,7 +772,13 @@ impl SourceEditor {
             if position.y < top { top - position.y } else if position.y >= bottom { position.y - bottom + px(1.) } else { px(0.) }
         });
         let Some((line, row)) = row else { return self.buffer.text().len() };
-        self.buffer.line_range(*line).start + row.index_for(position)
+        self.place_in_text(*line, row.index_for(position))
+    }
+
+    /// Painted rows can be a frame behind an edit, so what they say may no longer exist.
+    fn place_in_text(&self, line: usize, index: usize) -> usize {
+        let range = self.buffer.line_range(line.min(self.buffer.line_count() - 1));
+        self.buffer.snapped((range.start + index).min(range.end))
     }
 
     fn on_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -873,6 +880,9 @@ impl SourceEditor {
             painted: self.painted.clone(),
         }.into_any_element()
     }
+
+    /// An edit outside the input method can leave the composition past the text.
+    fn marked_range(&self) -> Option<Range<usize>> { self.marked.clone().filter(|marked| marked.end <= self.buffer.text().len()) }
 
     fn range8(&self, range: &Range<usize>) -> Range<usize> { range_from_utf16(self.buffer.text(), range) }
     fn range16(&self, range: &Range<usize>) -> Range<usize> { range_to_utf16(self.buffer.text(), range) }
@@ -1005,14 +1015,14 @@ impl EntityInputHandler for SourceEditor {
     fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) { self.marked = None; }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
-        let range = range.map(|r| self.range8(&r)).or(self.marked.take()).unwrap_or(self.buffer.sel.clone());
+        let range = range.map(|r| self.range8(&r)).or(self.marked_range()).unwrap_or(self.buffer.sel.clone());
         self.marked = None;
         let change = self.buffer.replace(range, text, EditKind::Typing);
         self.changed(change, Trigger::Typed, cx);
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, new_sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
-        let range = range.map(|r| self.range8(&r)).or(self.marked.clone()).unwrap_or(self.buffer.sel.clone());
+        let range = range.map(|r| self.range8(&r)).or(self.marked_range()).unwrap_or(self.buffer.sel.clone());
         let base = range.start;
         let sel = new_sel.map_or(base + text.len()..base + text.len(), |sel| base + from_utf16(text, sel.start)..base + from_utf16(text, sel.end));
         let change = self.buffer.replace_selecting(range, text, sel, EditKind::Typing);

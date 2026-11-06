@@ -225,7 +225,7 @@ impl Workspace {
             .w(px(828.))
             .flex()
             .flex_col()
-            .child(div().pt(px(24.)).pr(px(56.)).pl(px(24.)).text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child("Move from My documents to"))
+            .child(div().pt(px(24.)).pr(px(56.)).pl(px(24.)).text_size(px(15.)).line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child("Move from Files to"))
             .child(close_button("move-close").absolute().top(px(27.)).right(px(25.)).on_click(cx.listener(|w, _, window, cx| w.close_overlay(window, cx))))
             .child(
                 div().px(px(24.)).mt(px(16.)).mb(px(24.)).child(

@@ -123,8 +123,8 @@ struct Layout {
 #[derive(Debug)]
 pub struct Moved {
     pub id: String,
-    /// The documents whose paths were updated.
-    pub rewritten: Vec<String>,
+    /// The documents whose paths were updated, with their new text.
+    pub rewritten: Vec<(String, String)>,
     /// What went wrong without stopping it.
     pub warnings: Vec<String>,
 }
@@ -356,7 +356,7 @@ impl Store {
             let main = before.documents.top_document(&previous);
             let Some(updated) = rewrite_paths(&text, &previous, &entry.id, &main, |path| before.files.contains(path), |path| paths::moved(path, old, new)) else { continue };
             match self.save(&entry.id, &updated) {
-                Ok(()) => outcome.rewritten.push(entry.id),
+                Ok(()) => outcome.rewritten.push((entry.id, updated)),
                 Err(e) => outcome.warnings.push(format!("Could not update paths in {}: {e}", entry.id)),
             }
         }
@@ -570,7 +570,7 @@ mod tests {
     fn a_rooted_path_follows_the_file_the_compiler_finds() {
         let mut store = project_vault("rooted-found");
         let moved = store.set_parent("paper/lib/shared.typ", Some("paper/tools")).unwrap();
-        assert_eq!(moved.rewritten, ["paper/chapter.typ"]);
+        assert_eq!(moved.rewritten.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["paper/chapter.typ"]);
         assert_eq!(store.load("paper/chapter.typ").unwrap(), "#import \"/tools/shared.typ\"\n");
     }
 
@@ -612,7 +612,7 @@ mod tests {
         let id = store.create_from(None, "a", "x").unwrap();
         store.create_from(None, "b", "#include \"a.typ\"").unwrap();
         let moved = store.rename(&id, "c").unwrap();
-        assert_eq!((moved.id.as_str(), moved.rewritten.as_slice()), ("c.typ", ["b.typ".to_string()].as_slice()));
+        assert_eq!((moved.id.as_str(), moved.rewritten.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>()), ("c.typ", vec!["b.typ"]));
         assert_eq!(store.load("b.typ").unwrap(), "#include \"c.typ\"");
     }
 

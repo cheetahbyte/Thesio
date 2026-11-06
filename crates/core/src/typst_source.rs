@@ -16,6 +16,25 @@ pub(crate) fn walk<'a>(node: &LinkedNode<'a>, visit: &mut impl FnMut(&LinkedNode
     descend(node, (), &mut |node, ()| visit(node));
 }
 
+/// The words `text` writes as prose: what a compile would draw from this file,
+/// before numbering, generated text, and anything a script makes.
+pub fn prose_words(text: &str) -> usize {
+    let source = Source::detached(text);
+    let mut prose = String::new();
+    descend(&LinkedNode::new(source.root()), false, &mut |node, hidden| {
+        let hidden = hidden || matches!(node.kind(), SyntaxKind::LetBinding | SyntaxKind::Equation | SyntaxKind::LineComment | SyntaxKind::BlockComment);
+        if !hidden {
+            match node.kind() {
+                SyntaxKind::Text | SyntaxKind::SmartQuote | SyntaxKind::Escape | SyntaxKind::Shorthand => prose.push_str(node.leaf_text()),
+                SyntaxKind::Space | SyntaxKind::Parbreak => prose.push(' '),
+                _ => {}
+            }
+        }
+        hidden
+    });
+    prose.split_whitespace().count()
+}
+
 /// The name a call or set rule calls.
 pub(crate) fn callee(call: &LinkedNode) -> Option<String> {
     let target = call.children().find(|child| child.kind() == SyntaxKind::Ident)?;

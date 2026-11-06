@@ -183,7 +183,7 @@ impl Workspace {
         let Some(file) = self.current() else { return vec![] };
         let mut notes: Vec<&Entry> = self.entries.iter().filter(|e| e.typst && e.id != file && (e.title.to_lowercase().contains(query) || e.id.to_lowercase().contains(query))).collect();
         notes.sort_by_key(|e| !e.title.to_lowercase().starts_with(query));
-        notes.into_iter().map(|e| Item { kind: CompletionKind::NoteLink, title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None, stops: vec![], from: None }).collect()
+        notes.into_iter().map(|e| Item { kind: CompletionKind::NoteLink, title: e.title.clone(), detail: e.id.clone(), info: None, insert: note_link(file, &e.id, &e.title), selection: None, stops: vec![], from: None, tail: 0 }).collect()
     }
 
     /// What `id` holds now: the open editor's copy, or the file.

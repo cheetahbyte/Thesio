@@ -292,10 +292,12 @@ fn document_labels(document: &PagedDocument) -> Vec<DocumentLabel> {
     labels.into_iter().take(bibliography_keys).filter_map(|(label, title)| {
         let element = elements.get(&label)?;
         let key = label.resolve().to_string();
-        if !reachable_by_at(&key) { return None; }
+        // Typst rejects `@` on anything else, a bibliography entry aside.
+        let numbered = element.with::<dyn Refable>().is_some_and(|refable| refable.numbering().is_some());
+        if !numbered || !reachable_by_at(&key) { return None; }
         let title = title.map_or(String::new(), |title| title.split_whitespace().collect::<Vec<_>>().join(" "));
         let supplement = element.to_packed::<FigureElem>().map(|figure| figure.supplement().plain_text().to_string()).filter(|name| !name.is_empty());
-        let kind = supplement.unwrap_or_else(|| if element.can::<dyn Refable>() { element.elem().title() } else { "Label" }.to_string());
+        let kind = supplement.unwrap_or_else(|| element.elem().title().to_string());
         let page = element.location().and_then(|location| introspector.page(location)).map(NonZeroUsize::get);
         Some(DocumentLabel { title: if title.is_empty() { key.clone() } else { title }, key, kind, page })
     }).collect()
@@ -738,6 +740,20 @@ mod tests {
         let compilation = std::thread::Builder::new().stack_size(512 * 1024).spawn(compile).unwrap().join().unwrap();
         assert_eq!(errors(&compilation), Vec::<String>::new());
         assert_eq!(compilation.words, [("main.typ".to_string(), 1)]);
+    }
+
+    #[test]
+    fn labels_are_what_at_can_reference() {
+        let text = "= Plain <plain>\n#set heading(numbering: \"1.\")\n= Numbered <numbered>\nText <text>\n$ x $ <equation>\n#figure(rect(), caption: [A]) <figure>\n";
+        let labels = Compiler::new(vault("reachable-labels", &[("main.typ", text)])).compile("main.typ").unwrap().labels;
+        assert_eq!(labels.iter().map(|label| label.key.as_str()).collect::<Vec<_>>(), ["numbered", "figure"]);
+    }
+
+    #[test]
+    fn prose_words_agree_with_the_compile_on_prose() {
+        let text = "#set page(numbering: none)\n#let hidden = [nor this]\n= A title\nDon't count // this\n*two* words, well-known.\n\n#text(red)[Inside too]\n";
+        let compiled = Compiler::new(vault("prose", &[("main.typ", text)])).compile("main.typ").unwrap().words;
+        assert_eq!(compiled, [("main.typ".to_string(), crate::prose_words(text))]);
     }
 
     #[test]

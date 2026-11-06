@@ -45,8 +45,10 @@ pub struct Suggestion {
     pub title: String,
     pub kind: String,
     pub detail: Option<String>,
-    /// Where the text it replaces starts. It ends at the caret.
+    /// Where the text it replaces starts.
     pub from: usize,
+    /// Bytes after the caret it also replaces: the rest of a path in a string.
+    pub tail: usize,
     pub insert: Snippet,
 }
 
@@ -81,21 +83,32 @@ fn kind_rank(kind: &CompletionKind) -> u8 {
     }
 }
 
+fn error_count(source: &Source) -> usize {
+    let mut errors = 0;
+    crate::typst_source::walk(&LinkedNode::new(source.root()), &mut |node| errors += usize::from(node.kind().is_error()));
+    errors
+}
+
 /// What has to follow `caret` for the parser to read an unfinished call or
 /// string. It takes a `(` nobody closed for an error, and `typst_ide` finds no
 /// call there to offer parameters for, while the editor closes nothing itself.
-/// A string nobody closed runs to the next quote or the end of the file, so
-/// one that leaves the caret's line counts as ending at the caret.
+/// A string nobody closed runs to the next quote or the end of the file. One
+/// that leaves the caret's line ends at the caret if that removes errors;
+/// otherwise it is a real multi-line string.
 fn closing_at(text: &str, caret: usize) -> &'static str {
     let source = Source::detached(text);
     let root = LinkedNode::new(source.root());
-    let string = root.leaf_at(caret, Side::Before).is_some_and(|leaf| {
-        let range = leaf.range();
-        leaf.leaf_text().starts_with('"') && range.start < caret && caret <= range.end && (leaf.kind().is_error() || text[caret..range.end].contains('\n'))
-    });
     let mut call = false;
     crate::typst_source::walk(&root, &mut |node| {
         call = call || node.kind().is_error() && node.offset() < caret && node.leaf_text() == "(";
+    });
+    let string = root.leaf_at(caret, Side::Before).is_some_and(|leaf| {
+        let range = leaf.range();
+        let ended = || {
+            let closed = format!("{}\"{}{}", &text[..caret], if call { ")" } else { "" }, &text[caret..]);
+            error_count(&Source::detached(closed)) < error_count(&source)
+        };
+        leaf.leaf_text().starts_with('"') && range.start < caret && caret <= range.end && (leaf.kind().is_error() || text[caret..range.end].contains('\n') && ended())
     });
     match (string, call) {
         (true, true) => "\")",
@@ -127,6 +140,7 @@ impl Compilation {
             Some(inside) => (true, inside),
             None => (false, typed.as_str()),
         };
+        let tail = if in_string { text[caret..].find(|c: char| c.is_whitespace() || matches!(c, '"' | ')' | ',')).unwrap_or(text.len() - caret) } else { 0 };
         let indent = format!("\n{}", indent_at(text, caret));
         let mut matching: Vec<_> = found.into_iter().filter_map(|completion| {
             let title = completion.label.trim_matches('"').to_string();
@@ -136,7 +150,7 @@ impl Compilation {
             // It left off the closing quote it saw, which is not really there.
             if closing.starts_with('"') && apply.starts_with('"') && !apply.ends_with('"') { apply.push('"'); }
             let rank = (!lower.starts_with(typed), kind_rank(&completion.kind));
-            let suggestion = Suggestion { kind: kind_name(&completion.kind), detail: completion.detail.map(Into::into), from, insert: snippet(&apply), title };
+            let suggestion = Suggestion { kind: kind_name(&completion.kind), detail: completion.detail.map(Into::into), from, tail, insert: snippet(&apply), title };
             Some((rank, suggestion))
         }).collect();
         matching.sort_by_key(|(rank, _)| *rank);
@@ -365,6 +379,9 @@ mod tests {
         assert_eq!(closing_at("#image(\"fig\")\nMore \"quoted\"\n", 10), "");
         assert_eq!(closing_at("#image(\"fig\")\nMore\n", 12), "");
         assert_eq!(closing_at("#image(\"fig\n\nMore\n", 10), "\")");
+        assert_eq!(closing_at("#image(\"fig\nMore \"quoted\"\n", 10), "\")");
+        assert_eq!(closing_at("#let x = \"a\nb\"\n", 11), "", "a real multi-line string");
+        assert_eq!(closing_at("#f(\"a\nb\") #g(\n", 5), "", "with an error elsewhere");
     }
 
     #[test]
@@ -397,7 +414,7 @@ mod tests {
     #[test]
     fn labels_cover_every_included_file_with_their_kind_and_page() {
         let compilation = compiled("document-labels", &[
-            ("main.typ", "= Intro <intro>\n#include \"chapters/one.typ\"\n"),
+            ("main.typ", "#set heading(numbering: \"1.\")\n#set math.equation(numbering: \"1\")\n= Intro <intro>\n#include \"chapters/one.typ\"\n"),
             ("chapters/one.typ", concat!(
                 "#pagebreak()\n",
                 "#figure(rect(), caption: [A\n  plot]) <fig:plot>\n",
@@ -415,18 +432,27 @@ mod tests {
         assert_eq!((find("bare").title.as_str(), find("bare").kind.as_str()), ("bare", "Figure"));
         assert_eq!(find("plate").kind, "Plate");
         assert_eq!(find("eq").kind, "Equation");
-        assert_eq!(find("plain").kind, "Label");
-        assert_eq!((find("meta").title.as_str(), find("meta").kind.as_str()), ("meta", "Label"));
+        assert!(compilation.labels.iter().all(|label| label.key != "plain" && label.key != "meta"));
     }
 
     #[test]
     fn sources_and_labels_that_at_cannot_write_stay_out_of_the_labels() {
         let compilation = compiled("label-limits", &[
-            ("main.typ", "#set page(numbering: none)\n= One <first>\n= Two <first>\n#figure(rect()) #label(\"has space\")\n#metadata(1) <end.>\n@key\n#bibliography(\"refs.yaml\")\n"),
+            ("main.typ", "#set page(numbering: none)\n#set heading(numbering: \"1.\")\n= One <first>\n= Two <first>\n#figure(rect()) #label(\"has space\")\n#metadata(1) <end.>\n@key\n#bibliography(\"refs.yaml\")\n"),
             ("refs.yaml", "key:\n  type: book\n  title: A Book\n"),
         ]);
         let keys: Vec<(&str, &str)> = compilation.labels.iter().map(|label| (label.key.as_str(), label.title.as_str())).collect();
         assert_eq!(keys, [("first", "One")]);
+    }
+
+    #[test]
+    fn a_path_replaces_the_rest_of_the_path_after_the_caret() {
+        let compilation = compiled("tail", &[("main.typ", "Text.\n"), ("figures/plot.png", "")]);
+        for (text, caret, tail) in [("#image(\"fig.png\")\n", 11, 4), ("#image(\"fig.png\n\nMore\n", 11, 4), ("#image(\"fig\")\n", 11, 0)] {
+            let found = compilation.complete("main.typ", text, caret, true);
+            let path = found.iter().find(|suggestion| suggestion.title == "figures/plot.png").unwrap_or_else(|| panic!("{text}: {found:?}"));
+            assert_eq!(path.tail, tail, "{text}");
+        }
     }
 
     #[test]

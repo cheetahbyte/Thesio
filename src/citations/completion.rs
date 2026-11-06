@@ -48,6 +48,7 @@ fn label_item(label: &DocumentLabel) -> Item {
         selection: None,
         stops: vec![],
         from: None,
+        tail: 0,
     }
 }
 
@@ -80,6 +81,7 @@ impl Workspace {
             selection: None,
             stops: vec![],
             from: None,
+            tail: 0,
         })).collect()
     }
 }
@@ -91,7 +93,7 @@ mod tests {
     fn label(key: &str, title: &str) -> DocumentLabel { DocumentLabel { key: key.into(), title: title.into(), kind: "Figure".into(), page: Some(3) } }
 
     fn source(key: &str, by_key: bool) -> (bool, Item) {
-        (by_key, Item { kind: CompletionKind::Citation, title: key.into(), detail: String::new(), info: None, insert: format!("@{key}"), selection: None, stops: vec![], from: None })
+        (by_key, Item { kind: CompletionKind::Citation, title: key.into(), detail: String::new(), info: None, insert: format!("@{key}"), selection: None, stops: vec![], from: None, tail: 0 })
     }
 
     fn inserted(items: &[Item]) -> Vec<&str> { items.iter().map(|item| item.insert.as_str()).collect() }

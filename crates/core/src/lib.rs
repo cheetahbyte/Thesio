@@ -22,3 +22,4 @@ pub mod store;
 pub mod syntax;
 pub mod time;
 mod typst_source;
+pub use typst_source::prose_words;

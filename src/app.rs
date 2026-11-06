@@ -162,7 +162,7 @@ impl Workspace {
     /// Follows a rename or move through the open document and its compiles, the
     /// open paper and its notes, the search index, the selected rows, the open
     /// folders, and the editors of rewritten files. The editor and undo history stay.
-    pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[String], cx: &mut Context<Self>) {
+    pub(crate) fn path_changed(&mut self, old: &str, new: &str, rewritten: &[(String, String)], cx: &mut Context<Self>) {
         if let Some(path) = self.papers.current.as_deref().and_then(|paper| paths::moved(paper, old, new)) { self.papers.current = Some(path); }
         self.refresh_entries(cx);
         let moved = self.current().and_then(|c| paths::moved(c, old, new));
@@ -182,14 +182,7 @@ impl Workspace {
         }
         self.save_expanded(cx);
         // Their paths changed on disk: open editors take them in.
-        for id in rewritten {
-            let text = self.store.borrow().load(id);
-            match text {
-                Ok(text) => self.show_text(id, &text, Edit::Undoable, cx),
-                // The editor keeps the old paths, and its next save writes them back.
-                Err(e) => self.show_toast_kind(ToastKind::Error, &format!("Could not reload {id} after its paths changed: {e:#}"), cx),
-            }
-        }
+        for (id, text) in rewritten { self.show_text(id, text, Edit::Undoable, cx); }
         self.refresh_outline(cx);
     }
 
@@ -390,6 +383,11 @@ impl Workspace {
             self.citations.close_inspector();
         }
         self.set_view(view, cx);
+        // A hidden editor would keep focus, and the keys of the window's actions with it.
+        match self.editor().filter(|_| view == View::Doc) {
+            Some(editor) => editor.read(cx).focus(window),
+            None => window.focus(&self.focus),
+        }
         self.table_changed(window, cx);
     }
 

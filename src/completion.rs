@@ -32,6 +32,8 @@ pub struct Item {
     pub stops: Vec<Range<usize>>,
     /// Where the replaced text starts, when an answer knows better than `find`.
     pub from: Option<usize>,
+    /// Bytes after the caret it also replaces.
+    pub tail: usize,
 }
 
 /// What a provider can complete at the caret.

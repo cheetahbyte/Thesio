@@ -195,9 +195,9 @@ fn extra_segment(glyph: Option<Icon>, text: String) -> Div {
         .child(ui_text(text))
 }
 
-/// A result's extra line: Owner and the opened / modified times.
+/// A result's extra line: the opened / modified times.
 pub(crate) fn extra_line(e: &Entry) -> Div {
-    let mut extra = vec![extra_segment(None, "Owner: me".into())];
+    let mut extra = vec![];
     if e.meta.opened > 0 {
         extra.push(extra_segment(Some(Icon::Show), format!("Opened {}", format_visit(e.meta.opened))));
     }

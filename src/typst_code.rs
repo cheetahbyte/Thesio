@@ -26,6 +26,7 @@ fn item(suggestion: Suggestion) -> Item {
         selection: fields.next(),
         stops: fields.collect(),
         from: Some(suggestion.from),
+        tail: suggestion.tail,
     }
 }
 

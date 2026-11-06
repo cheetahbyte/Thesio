@@ -41,7 +41,7 @@ fn layout(pages: &[Page], pane: f32) -> Vec<Placed> {
 pub enum PreviewEvent {
     /// A diagnostic was clicked: jump to this byte offset of the open file.
     Jump(usize),
-    /// A page was clicked: go to this file and byte offset.
+    /// A page or a diagnostic in another file was clicked: go to this file and byte offset.
     Source(String, usize),
     /// A note link was clicked: open this file.
     Note(String),
@@ -207,15 +207,20 @@ impl Render for Preview {
         let width = self.width.clone();
         let entity = cx.entity();
         let problems = diagnostics.iter().enumerate().map(|(i, d)| {
-            let target = d.range.as_ref().filter(|_| d.path.as_deref() == Some(open_path.as_str())).map(|r| r.start);
+            let target = d.path.clone().zip(d.range.as_ref().map(|r| r.start));
+            let here = d.path.as_deref() == Some(open_path.as_str());
             let location = d.path.as_ref().map(|p| match d.line { Some(line) => format!("{p}:{}  ", line + 1), None => format!("{p}  ") }).unwrap_or_default();
             div().id(("diagnostic", i)).px(px(12.)).py(px(4.)).text_size(px(12.))
                 .text_color(if d.error { Theme::danger() } else { Theme::text_caption() })
                 .when(target.is_some(), |row| row.cursor_pointer())
                 .child(format!("{location}{}", d.message))
-                .on_click(cx.listener(move |this, _, _, cx| if let Some(offset) = target {
-                    let offset = this.session.read(cx).moved(offset);
-                    cx.emit(PreviewEvent::Jump(offset));
+                .on_click(cx.listener(move |this, _, _, cx| match target.clone() {
+                    Some((_, offset)) if here => {
+                        let offset = this.session.read(cx).moved(offset);
+                        cx.emit(PreviewEvent::Jump(offset));
+                    }
+                    Some((path, offset)) => cx.emit(PreviewEvent::Source(path, offset)),
+                    None => {}
                 }))
         }).collect::<Vec<_>>();
         div().relative().size_full().flex().flex_col().bg(Theme::sidebar_hover())
