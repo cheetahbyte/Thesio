@@ -27,9 +27,9 @@ func iconButton(c *ui.Context, glyph theme.Icon, label string) ui.Element {
 	return theme.IconButton(c, glyph, label)
 }
 
-// sidebarRow is a row of the sidebar: 28 DIP, rounded, tinted when chosen or hovered.
+// sidebarRow is a row of the sidebar: 32 DIP as Finder's, rounded, tinted when chosen or hovered.
 func sidebarRow(row ui.Element, t *ui.Theme, on bool) ui.Element {
-	row.Height(28).Radius(6).AlignItems(ui.Center)
+	row.Height(32).Radius(8).AlignItems(ui.Center)
 	switch {
 	case on:
 		row.Background(theme.Selected(t))
@@ -39,13 +39,17 @@ func sidebarRow(row ui.Element, t *ui.Theme, on bool) ui.Element {
 	return row
 }
 
-// navRow is a row of the sidebar's nav or footer: an accent glyph, as Finder's, and a label.
+// navRow is a row of the sidebar's nav or footer, as Finder's favorites: an accent glyph
+// and a label, bold when the row is the current page.
 func navRow(c *ui.Context, glyph theme.Icon, label string, on bool) ui.Element {
 	t := c.Theme()
-	row := sidebarRow(ui.ButtonBase(c).Label(label).Padding(0, 8, 0, 6).Gap(6).Justify(ui.Start), t, on)
+	row := sidebarRow(ui.ButtonBase(c).Label(label).Padding(0, 8, 0, 6).Gap(8).Justify(ui.Start), t, on)
 	row.Children(func() {
-		ui.Box(c).Size(20, 20).Center().Children(func() { theme.Glyph(c, glyph, 16, t.Accent) })
-		ui.Text(c, label).FontSize(13).SingleLine()
+		ui.Box(c).Size(24, 24).Center().Children(func() { theme.SidebarGlyph(c, glyph, t.Accent) })
+		text := ui.Text(c, label).FontSize(13).SingleLine()
+		if on {
+			text.FontWeight(700)
+		}
 	})
 	return row
 }

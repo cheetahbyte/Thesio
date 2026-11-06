@@ -13,6 +13,7 @@
     }
   ],
   "macos": {
+    "icon": "AppIcon.icon",
     "minimumSystemVersion": "13.0",
     "signingIdentity": "Developer ID Application: Leonhard Breuer (ZMF32TXKBT)",
     "notarize": {

@@ -1,0 +1,18 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.00000,0.02745,0.25490,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "heron.png",
+          "name" : "heron"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

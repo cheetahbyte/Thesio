@@ -37,6 +37,9 @@ tar = "0.4"
 
 [profile.release]
 panic = "unwind"
+# No debug info and no symbols: the library only ships inside the app.
+debug = false
+strip = true
 
 # Unoptimized rendering libraries take seconds per compile, against milliseconds in release.
 [profile.dev.package."*"]

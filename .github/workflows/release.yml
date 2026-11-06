@@ -35,8 +35,11 @@ jobs:
         # and the Rust library is built for each target's triple.
         include:
           - { name: macOS, os: macos-latest, platform: darwin/universal, triples: "aarch64-apple-darwin x86_64-apple-darwin" }
-          - { name: Linux x64, os: ubuntu-latest, platform: linux/amd64, triples: x86_64-unknown-linux-gnu }
-          - { name: Linux arm64, os: ubuntu-24.04-arm, platform: linux/arm64, triples: aarch64-unknown-linux-gnu }
+          # Linux on 22.04: its glibc 2.35 and plain x86-64 baseline are the oldest the app
+          # runs on. 26.04 links glibc 2.43 and marks the binary x86-64-v3, which the loader
+          # refuses on CPUs and VMs without AVX2 ("CPU ISA level is lower than required").
+          - { name: Linux x64, os: ubuntu-22.04, platform: linux/amd64, triples: x86_64-unknown-linux-gnu }
+          - { name: Linux arm64, os: ubuntu-22.04-arm, platform: linux/arm64, triples: aarch64-unknown-linux-gnu }
           - { name: Windows, os: windows-latest, platform: windows/amd64, triples: x86_64-pc-windows-gnu }
     defaults:
       run:
@@ -110,15 +113,20 @@ jobs:
           echo '${{ steps.msys2.outputs.msys2-location }}\mingw64\bin' >> "$GITHUB_PATH"
 
       # The built library, keyed on the crate's sources: a change elsewhere compiles no Rust.
+      # The built libraries, keyed on the crate's sources: a change elsewhere compiles
+      # no Rust, and a macOS build starts from the arm64 library CI built for the merge.
       - name: Restore the Typst library
         id: typst-lib
         uses: actions/cache@v4
         with:
           path: typst/target/*/release/libthesio_typst.a
           key: typst-lib-${{ matrix.platform }}-${{ hashFiles('typst/**') }}
+          restore-keys: typst-lib-ci-aarch64-apple-darwin-${{ hashFiles('typst/**') }}
 
       - name: Build the Typst library
         if: steps.typst-lib.outputs.cache-hit != 'true'
+        env:
+          THESIO_SKIP_BUILT: "1"
         run: scripts/build-typst.sh ${{ matrix.triples }}
 
       # internal/typst/cgo.go lists these system libraries per OS; compare when a link fails.
@@ -149,9 +157,36 @@ jobs:
       #     echo "$WINDOWS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/code-signing.pfx"
       #     echo "WINDOWS_CERTIFICATE_FILE=$RUNNER_TEMP/code-signing.pfx" >> "$GITHUB_ENV"
 
-      - name: Build and upload
+      # Built here, uploaded by the publish job: platforms uploading at the same time
+      # overwrite each other's SHA256SUMS on the release.
+      - name: Build
         env:
           CGO_ENABLED: "1"
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-        run: go tool mygo build -platform "${{ matrix.platform }}" -upload
+        run: go tool mygo build -platform "${{ matrix.platform }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ strategy.job-index }}
+          path: build/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          path: builds
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One SHA256SUMS for every platform: the lines of each build's, by file name.
+          cat builds/*/SHA256SUMS | awk '!seen[$2]++' | sort -k2 > SHA256SUMS
+          files=$(find builds -mindepth 3 -type f ! -name SHA256SUMS)
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber $files SHA256SUMS
+          echo "Uploaded to the draft release $GITHUB_REF_NAME; publish it when it looks right:"
+          echo "  gh release edit $GITHUB_REF_NAME --repo $GITHUB_REPOSITORY --draft=false"

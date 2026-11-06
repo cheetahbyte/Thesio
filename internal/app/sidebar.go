@@ -542,7 +542,7 @@ func (ws *Workspace) docRow(c *ui.Context, e vault.Entry, depth int, files bool)
 	selected := ws.view == host.ViewDoc && ws.Current() == e.ID
 	checked := files && slices.Contains(ws.sidebar.batch, e.ID)
 	renaming := files && ws.sidebar.renaming == e.ID
-	row := sidebarRow(ui.Row(c), t, selected || checked).Gap(6).PaddingStart(6 + treeIndent*float32(depth)).PaddingEnd(6)
+	row := sidebarRow(ui.Row(c), t, selected || checked).Gap(8).PaddingStart(6 + treeIndent*float32(depth)).PaddingEnd(6)
 	row.Label(vault.DisplayTitle(e.Title))
 	if files && !renaming && !ws.sidebar.selecting {
 		// Dropping on a file means the folder it sits in.
@@ -593,7 +593,7 @@ func (ws *Workspace) docRow(c *ui.Context, e vault.Entry, depth int, files bool)
 			}
 		}
 		if e.Folder {
-			ui.Box(c).Size(20, 20).Shrink(0).Center().Children(func() { theme.Glyph(c, theme.Icons.Folder, 16, t.TextMuted) })
+			ui.Box(c).Size(24, 24).Shrink(0).Center().Children(func() { theme.SidebarGlyph(c, theme.Icons.Folder, t.TextMuted) })
 		}
 		if renaming {
 			ws.renameField(c)
@@ -601,8 +601,8 @@ func (ws *Workspace) docRow(c *ui.Context, e vault.Entry, depth int, files bool)
 		}
 		title := ui.Text(c, vault.DisplayTitle(e.Title)).FontSize(13).SingleLine().Ellipsis("…").Grow(1)
 		if !e.Folder {
-			// Where a folder's glyph starts, so a file lines up under its folder's title.
-			title.PaddingStart(2)
+			// A folder's glyph and gap less one indent, so a file lines up under its folder's title.
+			title.PaddingStart(24 + 8 - treeIndent)
 		}
 		if files && e.Folder {
 			chevron := theme.Icons.ChevronRight
