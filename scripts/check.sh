@@ -1,6 +1,9 @@
 #!/bin/sh
-# Before every commit: tests and clippy, zero warnings.
+# Before every commit: the Rust library's tests, then vet and tests of the Go module.
 set -e
 cd "$(dirname "$0")/.."
-cargo test --release --workspace --locked
-cargo clippy --release --workspace --locked --all-targets -- -D warnings
+(cd typst && cargo test --release)
+scripts/build-typst.sh
+export CGO_ENABLED=1
+go vet ./...
+go test ./...

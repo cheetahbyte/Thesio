@@ -1,0 +1,48 @@
+# Typst, typst-ide and Hayagriva behind a C ABI, linked by internal/typst.
+[package]
+name = "thesio-typst"
+version = "0.1.0"
+edition = "2024"
+description = "Typst for Thesio behind a C ABI"
+license = "MIT"
+publish = false
+
+# Standalone: the old Cargo workspace at the repo root must not claim this crate.
+[workspace]
+
+[lib]
+name = "thesio_typst"
+crate-type = ["staticlib"]
+
+[dependencies]
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+rustc-hash = "2.1"
+biblatex = "0.12"
+typst = "0.15.1"
+typst-layout = "0.15.1"
+typst-pdf = "0.15.1"
+typst-render = "0.15.1"
+comemo = "0.5.1"
+typst-ide = "0.15.1"
+typst-kit = { version = "0.15.1", features = ["embedded-fonts", "system-packages"] }
+hayagriva = { version = "0.10.1", default-features = false, features = ["biblatex"] }
+serde_yaml = "0.9"
+ureq = "3"
+
+[dev-dependencies]
+flate2 = "1"
+tar = "0.4"
+
+[profile.release]
+panic = "unwind"
+
+# Unoptimized rendering libraries take seconds per compile, against milliseconds in release.
+[profile.dev.package."*"]
+opt-level = 2
+
+[lints.clippy]
+type_complexity = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow"

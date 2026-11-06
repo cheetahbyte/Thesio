@@ -1,214 +1,457 @@
 # Architecture
 
-Thesio is a single-process GPUI application in Rust. It edits plain `.typ` files in a vault and shows a live preview compiled by Typst.
-
-The repository is a Cargo workspace with two crates:
-
-- **`crates/core` (`thesio_core`)** is the engine. It has no GPUI dependency and can be built and tested alone.
-- **The root crate (`thesio`)** is the GPUI application: window, views, and menus.
-
-Dependencies point only from the application to core. Inside the application, `ui.rs`, `theme.rs`, `completion.rs`, `source.rs`, and `preview.rs` do not know `Workspace`, so a view can be read without it. Workspace state lives in structs owned by the feature that uses it: `OpenDocument`, `Sidebar`, `Outline`, `Search`, `Citations`, `Papers`.
+Thesio is a Go desktop application built on [MyGo](https://mygo.egoist.dev) native UI,
+with Typst compiled as a Rust static library behind a C ABI. It edits plain `.typ`
+files in a vault and shows a live preview compiled by Typst.
 
 ```
-main.rs: window
-  app.rs: Workspace, the window's root view
-    actions.rs: every action's name, menu entry, default keys, and handler
-    system.rs: file dialogs, other apps, the clipboard; scripted runs stop here
-    store.rs: the vault on disk [core]
-    document.rs: OpenDocument, its saves, and every write to a document
-    overlay.rs: the one menu or dialog over the window
-    chrome.rs: the page header and header buttons the views share
-    sidebar, tree, home, search, trash, confirm, docmenu
-    citations/: the Library table, inspector, tags, picker, lookup, bibliographies
-    papers/: Sources, the viewer, notes, quotes
-    settings, preferences, appearance
-    source.rs: SourceEditor, the open file's text
-      text.rs: shaping and painting a line, shared with TextField
-      completion.rs: what a provider of the popup's items answers
-      typst_code.rs: the provider of Typst code
-      buffer.rs: text, selection, undo [core]
-      syntax.rs: highlighting from Typst's parser [core]
-    preview.rs: Preview, the view of the pages and diagnostics
-    session.rs: DocumentSession, one document's compiles and its newest result
-      compiler.rs: the Typst World, PDF export, page images [core]
-      ide.rs: completion and hover from typst-ide [core]
+main.go                       the app: window, menus, launch
+mygo.json                     app name, identifier, bundle settings
+typst/                        Rust crate `thesio-typst`: Typst, typst-ide, Hayagriva, behind a C ABI
+  include/thesio_typst.h      the ABI, the one place its functions are declared
+internal/typst                Go bindings (cgo) over that ABI: Compiler, Compilation, parser helpers
+internal/vault                the vault on disk: files, folders, Trash, app state, versions, images
+internal/project              a document and the files it includes: outline, includers, launch target
+internal/library              citations: library.yaml, source types, BibLaTeX, identifiers, lookup, quotes
+internal/pdfkit               macOS PDFKit through purego: page labels, text, highlight annotations
+internal/app                  the workspace: views, sidebar, home, search, trash, settings, theme, icons
+internal/app/document         the open document: editor, preview, compile session, completion, images
+internal/app/citations        the Library table, inspector, tags, picker, lookup, bibliographies
+internal/app/papers           Sources, the paper viewer, notes, quotes
+scripts/check.sh              cargo test (typst/) + go vet + go test
 ```
 
-## Core modules
+Dependencies point downward: `internal/app/*` depends on the engine packages, the engine
+packages depend on `internal/typst` and the standard library only, and `internal/typst`
+depends on the Rust crate. Nothing under `internal/` except `internal/app` imports MyGo.
 
-| Module | Responsibility |
-|---|---|
-| `store.rs` | Lists, reads, and writes vault files; renames, moves, Trash, and app state. Operations return their warnings. See [FORMAT.md](FORMAT.md). |
-| `compiler.rs` | Compiles a vault file with the vault as the Typst project root. Unsaved text shadows the disk through buffers. `compile` runs on a large stack and returns a `Compilation`: the document, diagnostics, word counts, labels, and the files it read, so it answers `typst-ide`'s questions about moving between pages and source, on any thread, without the compiler. It never reaches the network: a package not on disk is listed in `Compilation::missing`. |
-| `ide.rs` | Asks `typst-ide` what can follow the caret and what is under the pointer. See [Completion](#completion). |
-| `packages.rs` | Finds Typst packages on disk and fetches missing ones. See [Packages](#packages). |
-| `buffer.rs` | Source text, selection, a line index, and undo as a list of edits. Consecutive typing within 700 ms merges into one step. |
-| `syntax.rs` | Highlight spans from `typst-syntax`. |
-| `library.rs` | The citation library. |
-| `biblatex.rs` | BibLaTeX import and export. Hayagriva parses, and export takes every name from the field table. |
-| `bibliography.rs` | A document's bibliography, read from its text: the generated block, the `#bibliography` call, its style and its mode. |
-| `source_type.rs` | The entry schema: source types, their fields, where each field lives in an entry, and its BibLaTeX name. Nothing else names an entry key. |
-| `images.rs` | Images coming into the vault: what Typst can show, the name a copy takes, and the figure text. See [Images](#images). |
-| `identifier.rs` | Recognises DOIs, arXiv IDs, PMIDs, and ISBNs in text. |
-| `lookup.rs` | Fetches entries by identifier and downloads open-access papers and Typst packages. The only code that reaches the network. |
-| `typst_source.rs` | The parser helpers everything else shares: the tree walker, path rules, and escaping. |
-| `references.rs` | Note links, citations, and rewriting path arguments after a move. |
-| `project.rs` | A document and the files it includes, found the way the compiler finds them: the outline, which documents include which, and what opens at launch. |
-| `history.rs` | `Versions`: a file's earlier versions and how often they are kept. |
-| `diff.rs` | What changed between two texts, by line. |
-| `quote.rs` | A PDF highlight as Typst: cleaned text, page numbers, and the quotation's markup. |
-| `paths.rs` | Vault path helpers, file naming, natural order, atomic writes. |
-| `time.rs` | Local dates without a time zone database, in UTC when the offset is unknown. |
+## Why a Rust library
 
-## Editing flow
+Typst is a Rust project. The crate in `typst/` is the smallest Rust surface that still
+owns everything that needs Typst's parser or compiler: compiling, rendering pages,
+exporting PDF, `typst-ide` completion and hover, syntax highlighting, and the source
+rewrites that must understand Typst syntax (paths after a move, citations, note links,
+the bibliography block). Hayagriva lives there too, for validating `library.yaml`,
+reading entries as Typst reads them, and parsing BibLaTeX. The crate is built once
+(`cargo build --release` in `typst/`) into `libthesio_typst.a`; Go links it with cgo,
+so Go rebuilds stay fast while the Rust side does not change.
 
-1. `SourceEditor` turns keys, mouse events, and input-method text into `Buffer` edits.
-2. It recomputes highlights and emits `SourceEvent::Changed`.
-3. `Workspace` passes the text to the `DocumentSession` and schedules a save 500 ms later.
-4. `DocumentSession` waits 120 ms for typing to stop, then compiles on a background thread. A newer edit supersedes a pending compile. At launch nothing waits: `session::prepare` compiles the likely document from `main`, before the UI exists, and the first frame holds up to 100 ms for the result so it paints finished. A wrong guess is dropped and compiled normally.
-5. Pages are hashed, and only changed pages are rendered again. When the open file is included by another, the whole document still compiles so numbering and references stay right. Spans show which pages draw from the open file or files it includes; the rest render small and blurred, and the preview opens at the file's longest run of pages. A failed compile keeps the last good pages on screen and lists diagnostics below them. Clicking a diagnostic in the open file moves the caret there.
-6. Each result is published on the session: pages, diagnostics, word counts, and the `Compilation` they came from. `Preview` draws them and answers clicks from that value, so the main thread never waits for the compiler. `SessionEvent::Compiled` announces a result, and `SessionEvent::Diagnostics` announces that its diagnostics differ from the last or stand for newer text, so an underline an edit ended comes back even when the new result says the same. The editor holds the same session, which answers completion and hover. An editor with no `Preview`, such as paper notes, gets a session from `DocumentSession::without_pages`, which compiles and renders no pages, with the note as its own main file.
+Rules of the ABI (`typst/include/thesio_typst.h`):
 
-A failed save keeps the changes pending, shows the error in the top bar, and asks before anything replaces the document. A paper's notes join this: their failure is a toast, and another paper, closing, or quitting waits on the same Save failed dialog.
+- Every `const char*` going in is NUL-terminated UTF-8. Every `char*` coming out is
+  owned by the caller and freed with `thesio_string_free`; byte buffers with
+  `thesio_bytes_free`.
+- Structured results are JSON. A function that can fail returns a JSON object with
+  either its result or `{"error": "..."}`. Offsets are bytes of UTF-8.
+- Handles (`ThesioCompiler*`, `ThesioCompilation*`) are opaque. A `Compilation` is
+  immutable and safe to use from any thread; the `Compiler` is used from one goroutine
+  at a time (the Go side serializes).
+- Nothing in the crate reaches the network except `thesio_compilation_fetch`
+  (package downloads) which the caller invokes deliberately.
 
-Text that does not come from typing goes through `Workspace::write_document`, which writes the file and updates its entry, the editors showing it, and the preview. `Workspace::text_of` reads a document, from the open editor if it is the open one. Errors other than a failed save appear as toasts.
+## Package contracts
 
-## Packages
+These are the APIs the packages expose to one another. Names here are binding; a
+package may add more.
 
-`#import "@preview/name:version"` works as it does in the typst CLI, and the two share their folders through `typst-kit`: `~/Library/Application Support/typst/packages` for local packages and `~/Library/Caches/typst/packages` for downloads on macOS, and each system's equivalents elsewhere. A package on disk compiles with no network at all.
+### internal/typst
 
-A download happens outside the compile, so a slow one holds up neither typing nor the compiler's lock. A compile that meets a missing `@preview` package stops there and lists it in `Compilation::missing`. Its diagnostic reads `Downloading @preview/name:version…`, not as an error. `DocumentSession` fetches the package on a background thread and compiles the newest text again when the fetch ends, which also reaches packages that a package imports, one at a time. PDF export has no session, so `Compiler::compile_fetching` does the same on its own thread. Only the `preview` namespace downloads.
+```go
+type Compiler struct{ /* opaque */ }
+func NewCompiler(root string) *Compiler
+func (c *Compiler) Close()
+func (c *Compiler) SetBuffer(path, text string)   // unsaved text shadows the file at vault path
+func (c *Compiler) ClearBuffer(path string)
+func (c *Compiler) Compile(main string) (*Compilation, error) // error only for an invalid path
 
-`typst-kit` unpacks into a temporary folder and moves it into place whole, so a failed download leaves nothing in the cache. The failure itself stays in memory for 30 seconds and shows as an error at the import. Compiles in that time report it without asking again, since a compile follows every pause in typing; the first compile after that tries again.
+type Diagnostic struct {
+    Error   bool     // false for warnings and "Downloading @preview/x…" statuses
+    Message string
+    Hints   []string
+    Path    string   // vault path, "" when none
+    Start, End int   // byte range in Path; Start == End == -1 when none
+    Line    int      // zero-based line of Start, -1 when none
+}
+type Label struct{ Key, Title, Kind string; Page int } // Page one-based, 0 when unknown
+type FileWords struct{ Path string; Words int }
+type PageInfo struct{ Width, Height float32; Hash string } // points; hash of content
 
-Importing a package is the only network use a document can trigger. It requests the package's archive from `packages.typst.org`, plus the package index if the archive is not found, and sends nothing from the document but the package's name and version.
+type Compilation struct {
+    Main        string
+    OK          bool          // a document was produced
+    Diagnostics []Diagnostic
+    Words       []FileWords
+    Labels      []Label       // what `@` can reference, document order
+    Missing     []string      // package specs to Fetch, then compile again
+    Pages       []PageInfo
+    // handle, private
+}
+func (k *Compilation) Close()                                // idempotent; a finalizer also frees
+func (k *Compilation) Fetch(spec string)                     // blocking download of one of Missing
+func (k *Compilation) Render(page int, scale float32) (*image.RGBA, error) // premultiplied RGBA, scale = pixels per point
+func (k *Compilation) PDF() ([]byte, error)
+func (k *Compilation) Complete(path, text string, caret int, explicit bool) []Suggestion
+func (k *Compilation) Hover(path, text string, offset int) (Hover, bool)
+func (k *Compilation) PositionOf(path string, offset int) (page int, y float32, ok bool) // page zero-based, y in points
+func (k *Compilation) TargetAt(page int, x, y float32) (Target, bool)
+func (k *Compilation) PagesFrom(path string) []bool
+func (k *Compilation) Placed(path, text string) []Diagnostic   // this compile's diagnostics in path, moved onto newer text
+func (k *Compilation) Moved(path string, offset int, text string) int
 
-## Images
+type Suggestion struct {
+    Title, Kind, Detail string
+    From, Tail int        // replaces text[From:caret] and Tail bytes after the caret
+    Insert string         // text to insert
+    Fields [][2]int       // placeholder ranges in Insert, in fill order; empty = caret at end
+}
+type Hover struct{ Text string; Code bool }
+type Target struct{ Path string; Offset int; Note string } // Note != "" for a note link, else Path/Offset
 
-Dropping a file on a Typst editor or pasting an image goes the same way. `SourceEditor` emits `SourceEvent::Images`, `Workspace::add_images` copies each one with `Store::add_image`, and `SourceEditor::insert_figures` writes the figures as one undoable edit. Undo removes the text and leaves the file. Paper notes work the same way. Another kind of text file takes no drops, and pastes only text.
+// Stateless helpers over Typst's parser.
+type Span struct{ Start, End int; Tag string } // Tag: comment, punctuation, escape, strong, emph, link, raw, label, ref, heading, list-marker, list-term, math-delimiter, math-operator, keyword, operator, number, string, function, interpolated, error
+func Highlight(text string) []Span
+func ProseWords(text string) int
+type Heading struct{ Offset, Level int; Title string }
+type Include struct{ Offset int; Literal string }
+type Parsed struct{ Headings []Heading; Includes []Include }
+func ParseDocument(text string) Parsed
+type NoteLink struct{ Literal, Target string; Start, End int }
+func NoteLinks(text, file string) []NoteLink
+func NoteLinkAt(text string, caret int) (start, end int, ok bool)
+func CitationAt(text string, caret int) (start, end int, ok bool)
+func CitedKeys(text string) []string
+func CitationsOf(text, key string) []int
+func RenameCitation(text, old, new string, labelled bool) (string, bool)
+func DefinesLabel(text, key string) bool
+// RewritePaths: the file moved from oldFile to newFile (equal when it stayed); main is its
+// top-level document before the move; files are every file's vault path before the move;
+// from→to is the move (a path inside from moves inside to).
+func RewritePaths(text, oldFile, newFile, main string, files []string, from, to string) (string, bool)
+type BibMode int
+const ( BibNone BibMode = iota; BibEmbedded; BibLinked; BibCustom )
+func BibliographyMode(text, file string) BibMode
+func BibliographyStyle(text string) (string, bool)
+func SetBibliographyStyle(text, style string) (string, bool)
+func BibliographyBlockRange(text string) (start, end int, ok bool)
+func WithoutBibliographyBlock(text string) string
+func SyncBibliographyBlock(text, yaml string) (string, bool)
+func EmbedBibliography(text, yaml string) string
+func LinkBibliography(text, file string) string
+func RemoveBibliography(text, file string) string
+func FigurePlace(text string, at int) int
+func CodeOpens(text string, start int) bool   // ide.rs CodeStart::opens
+func ImageFormat(data []byte) (ext string, ok bool) // what Typst reads it as: png jpg gif webp svg pdf
+// Hayagriva
+func CheckLibrary(yaml string) error
+type ParsedEntry struct{ Key, Title string; Authors []string; Date string; ParentTitle string } // Date "YYYY[-MM[-DD]]"
+func LibraryEntries(yaml string) ([]ParsedEntry, error)
+type BiblatexImport struct{ YAML string; Verbatim map[string]map[string]string } // per key: keywords, language
+func ImportBiblatex(bibtex string) (BiblatexImport, error)
+```
 
-The rule for where a copy goes is one folder: `images/` beside the document, so a document's path is always `images/<name>`, and `notes/images/` holds what paper notes bring in. The name is the file's own, cleaned as a new document's is, or `pasted`. A name already taken is compared byte for byte: the same content is used as it is, and otherwise the next number is tried, `plot 1.png`, so a second drop of a changed file finds the first copy of it. Nothing is ever written over.
+### internal/vault
 
-Typst decides what counts: `ImageFormat::detect` reads the bytes, and that gives PNG, JPEG, GIF, WebP, SVG, and PDF. A file whose extension disagrees is copied under the right one, since Typst goes by the extension. Anything else is refused with a toast, including BMP, TIFF, and HEIC files. A dropped gzip file is refused too: Typst takes gzip for compressed SVG, which only its extension would settle. Pasted bytes become PNG unless they are PNG or SVG already, so a TIFF on the clipboard works where a TIFF file does not.
+Port of `store.rs`, `paths.rs`, `history.rs`, `images.rs` (copying), `time.rs`. See
+[FORMAT.md](FORMAT.md) for what goes on disk; the format is unchanged (`FORMAT = 1`).
 
-A paste asks for image files first, since a file copied in Finder also holds its name as text and its icon as an image. GPUI's clipboard has no files, so `system.rs` reads them from `NSPasteboard` on macOS. Without files it takes what GPUI gives, which is text ahead of a bitmap. File drops come from GPUI as an `ExternalPaths` drag, and need no patch.
+```go
+const StateDir = ".thesio"; const Extension = "typ"; const LibraryFile = "library.yaml"
+func RootDir() string                       // THESIO_HOME, else ~/Documents/Thesio
+func WriteAtomic(path string, data []byte) error
+func NaturalLess(a, b string) bool
+func ParentOf(path string) (string, bool); func BaseName(path string) string; func Join(parent, name string) string
+func DirParts(path string) []string; func IsWithin(path, ancestor string) bool; func MovedPath(path, from, to string) (string, bool)
+func IsDocument(name string) bool; func DocumentTitle(name string) string; func DocumentName(stem string) string
+func IsPDF(name string) bool
+func ResolveLiteral(dir []string, literal string) (string, bool) // typst_source::vault_path
+func RelativeTo(dir []string, target string) string              // typst_source::relative
+func EscapeMarkup(text string) string; func Quoted(text string) string; func EscapeString(text string) string
+func DisplayTitle(title string) string      // trimmed, "Untitled" when blank
 
-A figure stands in paragraphs of its own, cutting the line at the caret. It goes past a `figure` call around the caret, because the caret sits in a caption after an insert, and a second drop would otherwise land inside it. A selection is replaced as a paste would.
+type Meta struct{ Pinned bool; Opened int64; Starred int64; PageOffset *int }   // json tags as in FORMAT.md
+type Settings struct{ SidebarWidth *float32; WindowSize *[2]float32; Expanded []string }
+type Entry struct{ ID string; Meta Meta; Modified int64; Parent string; HasParent bool; Title string; Folder, Typst bool; Body string }
+type TrashEntry struct{ ID, Title string; Deleted int64; Parent string }
+type Moved struct{ ID string; Rewritten []Rewritten; Warnings []string }
+type Rewritten struct{ ID, Text string }
+type Restored struct{ Renamed bool; Warnings []string }
 
-A moved document's `image` path is rewritten like any other, and the image stays where it is: `images/` does not follow the document.
+// Rewriting paths after a move needs Typst's parser; the app wires it in.
+type Rewriter interface {
+    // TopDocument: the top-level document id belongs to, among ids, reading texts with read.
+    TopDocument(ids []string, read func(id string) (string, bool), id string) string
+    // RewritePaths as typst.RewritePaths.
+    RewritePaths(text, oldFile, newFile, main string, files []string, from, to string) (string, bool)
+}
 
-## Editor rendering
+type Store struct{ /* root, index, trash, bodies cache; Rewriter */ }
+func Open() (*Store, []string, error)
+func OpenAt(root string) (*Store, []string, error)
+func (s *Store) SetRewriter(r Rewriter)
+func (s *Store) Root() string
+func (s *Store) Path(id string) (string, error)      // rejects anything leaving the vault
+func (s *Store) List() []Entry                        // parents before children, natural order within a folder
+func (s *Store) Load(id string) (string, error)
+func (s *Store) Save(id, text string) error
+func (s *Store) Versions(id string) (*Versions, error)
+func (s *Store) Create(parent string) (string, error)                 // parent "" = root
+func (s *Store) CreateFrom(parent, title, text string) (string, error)
+func (s *Store) CreateFolder(parent, title string) (string, error)
+func (s *Store) Attach(from, id string) error
+func (s *Store) AddImage(document string, image Incoming) (string, error) // path as the document writes it
+func (s *Store) Rename(id, title string) (Moved, error)
+func (s *Store) SetParent(id, parent string) (Moved, error)
+func (s *Store) Delete(id string) ([]string, error)   // to Trash; warnings
+func (s *Store) PurgeExpired() []string
+func (s *Store) ListTrash() []TrashEntry
+func (s *Store) Restore(key string) (Restored, error)
+func (s *Store) Purge(key string) error
+func (s *Store) Import(path string) (string, error)
+func (s *Store) UpdateMeta(id string, f func(*Meta)) error
+func (s *Store) Touch(id string) error; SetStarred(id string, on bool) (int64, error); SetPageOffset(id string, n int) error; SetPinned(id string, on bool) error
+func (s *Store) Settings() Settings
+func (s *Store) UpdateSettings(f func(*Settings)) error
 
-`SourceEditor` is a GPUI `List` with one row per logical line, so only visible lines are shaped. Each `LineElement` wraps its line softly and paints its own selection and caret through `text.rs`, which `TextField` shares. Painted rows are kept from frame to frame to resolve mouse positions and vertical caret movement. `Buffer` reports each edit as a `Change`, and only the rows it names are replaced, which keeps the scroll position and measured heights.
+type Versions struct{ /* dir */ }
+func (v *Versions) List() []int64; Read(t int64) (string, error); Keep(text string) (bool, error); KeepPaced(text string) (bool, error)
 
-Every caret move other than an edit goes through `SourceEditor::move_caret`, which keeps the caret out of the folded bibliography and emits `SourceEvent::Caret`. Bringing the caret into view is a `Reveal` request with the margin it wants. It is resolved after a frame has painted the caret's row; until then it moves the list towards that row, first by measured heights and then to the row itself.
+type Incoming struct{ File string; Pasted []byte } // one of
+func NamedAsImage(path string) bool
+func Figures(paths []string, before, after string) (text string, captions []int)
+func BlockGlue(before string) string
+// time
+func Now() int64; func NowMillis() int64; func Civil(secs int64) (y int, m, d, hh, mm int)
+```
 
-Rows also paint `Decoration`s: a wavy underline over a byte range, red for an error and amber for a warning, across every wrapped row it reaches. See [Inline diagnostics](#inline-diagnostics).
+`Store.AddImage` needs `typst.ImageFormat` to tell what Typst reads bytes as; it takes it
+through a package variable `vault.DetectImage func([]byte) (string, bool)` the app sets
+(tests set a stub), so the package itself does not import `internal/typst`.
 
-## Inline diagnostics
+### internal/project
 
-`SourceEditor` subscribes to its session, so paper notes have underlines too, and takes `DocumentSession::problems` on `SessionEvent::Diagnostics`: the newest diagnostics that point into the open file, whichever document was compiled, so a chapter's error shows when the chapter is the open file and only in the list otherwise. The old underlines stay until that event, so nothing flickers while a compile runs.
+Port of `project.rs` over `vault.ResolveLiteral` and a parser the app injects, so the
+package does not import `internal/typst` and tests run with a stub:
 
-A diagnostic's range is in the text that compile read, which `Compilation::placed` moves onto the buffer through `buffer::difference`. Both ends stay on char boundaries, since the text outside the difference is the same in both. Between compiles, `text_changed` moves each underline with the edit (`buffer::stretch`): an edit inside it resizes it, and one across its edge ends it until the next result. A click in the list goes through `DocumentSession::moved`, for a list older than the text. `SourceEditor::go_to` snaps every jump to a char boundary, as a click on a page also comes from older text.
+```go
+type Heading struct{ Path string; Offset, Level int; Title string }
+type Include struct{ Offset int; Literal string }
+type Parsed struct{ Headings []Heading; Includes []Include } // Heading.Path left empty by the parser
+var Parse func(text string) Parsed       // the app sets it to an adapter over typst.ParseDocument
+var RewritePaths func(text, oldFile, newFile, main string, files []string, from, to string) (string, bool) // typst.RewritePaths
+var DefinesLabel func(text, key string) bool // typst.DefinesLabel, for HasLabel
+func Candidates(main, file string) []string
+type Read func(path string) (string, bool)
+type Project struct{ /* ... */ }
+func Open(main string, read Read) *Project
+func Within(main, start string, read Read) *Project
+func (p *Project) Contains(path string) bool
+func (p *Project) Files() []FileText          // {Path, Text}
+func (p *Project) Outline() []Heading
+type Documents struct{ /* ... */ }
+func LoadDocuments(ids []string, read Read) *Documents
+func (d *Documents) Includers(id string) []string
+func (d *Documents) TopDocument(id string) string
+func (d *Documents) HasLabel(id, key string) bool
+func Newest(ids []string, modified []int64) (string, bool)
+type LaunchTarget struct{ Document, Main, Text string }
+func Launch(root string) (LaunchTarget, bool)
+// Rewriter for the vault, built from the above and RewritePaths:
+func NewRewriter() vault.Rewriter
+```
 
-Typst puts a missing token between two characters, so its range can be empty or hold only a newline. `Buffer::visible` shows such a range on the next character of the line, or else on the last text before it. Text inside the folded bibliography has no row, so the fold's row takes the underline and answers the pointer.
+### internal/library
 
-Pointing at an underline waits like hover and shows the message and hints of every diagnostic there, instead of asking `typst_ide` about the word. The popover opens under the row pointed at, and a new set of underlines closes it.
+Port of `library.rs`, `source_type.rs`, `biblatex.rs` (export in Go, import through
+`typst.ImportBiblatex`), `identifier.rs`, `lookup.rs` (net/http), `quote.rs`. YAML goes
+through `gopkg.in/yaml.v3` nodes so that key order and fields the form does not show
+survive a save. A library file that does not parse is never overwritten. Hayagriva is
+reached through an interface the app sets, so the package does not import
+`internal/typst` and tests run with a stub:
 
-## Completion
+```go
+type Engine interface {
+    Check(yaml string) error
+    Entries(yaml string) ([]ParsedEntry, error)       // ParsedEntry as typst.ParsedEntry
+    ImportBiblatex(bibtex string) (BiblatexImport, error) // as typst.BiblatexImport
+}
+var Hayagriva Engine   // set by the app before Load
+const PapersDir = "sources"; const NotesDir = "notes"
+func NoteFile(paper string) string; func PaperFile(key string) string; func PaperNamed(stem string) string
+type Row struct{ Key, Kind, Title, Authors, Year string; Tags []string }
+func (r Row) Label() string; func (r Row) Matches(query string) bool
+func RowOfPaper(rows []Row, id string) (Row, bool)
+type Added struct{ Key string; Duplicate bool }
+type Field struct{ Label, Hint string; Long bool; Slot Slot; Biblatex string } // Biblatex "" = not exported
+type SourceType struct{ Label string; Fields []Field /* entry type, parent, genre private */ }
+var SourceTypes []*SourceType; var JournalArticle, Preprint, Other *SourceType
+var Title, Authors, Date, Publisher, Pages, DOI, ISBN, Arxiv, Version, URL, Accessed, Language Field
+var CitationStyles = [][2]string{{"IEEE","ieee"}, ...}; const DefaultStyle = "ieee"
+type InvalidLibrary struct{ Path, Reason string }; func (e *InvalidLibrary) Error() string
 
-`completion.rs` has the `Provider` trait, and each provider lives with its feature: `CitationKeys` in `citations/`, `NoteLinks` in `document.rs`. A provider finds what it can complete at the caret (`find`: the range an accepted item replaces and the query so far) and answers with a task (`items`), so an answer may come from a background thread. A newer query replaces the task, which drops an older answer. An `Item` holds what to insert, what to select in it afterwards, the other placeholders that Tab selects in order, and optional `info` shown under the list. Citations and note links ask `Workspace` from that task, which runs after the editor's update ends. Only typing or ⌃Space opens the popup, and `SourceEvent::Completed` tells the host the accepted `Item`'s kind. The popup keeps six rows on screen and scrolls the rest. With no items it draws nothing and stays open, so deleting a typo brings the items back, and it holds no keys and leaves hover alone meanwhile. An edit that starts before the popup, such as an undo or a reload, closes it, since its range and its items' offsets describe the old text.
+type Library struct{ /* path, yaml nodes, parsed entries */ }
+func Load(root string) (*Library, error)
+func (l *Library) Versions() *vault.Versions
+func (l *Library) Text() string
+func (l *Library) Restore(text string) error
+func (l *Library) Len() int; Contains(key string) bool
+func (l *Library) PaperIDs(key string) PaperIDs
+func (l *Library) Rows() []Row
+func (l *Library) Tags() []TagCount     // {Name string; Count int}, natural order
+func (l *Library) TagLike(name string) (string, bool)
+func (l *Library) SetTag(keys []string, tag string, on bool) error
+func (l *Library) SourceType(key string) (*SourceType, bool)
+func (l *Library) FieldText(key string, f Field) string
+func (l *Library) AddBlank(kind *SourceType) (string, error)
+func (l *Library) TypeChangeDropsParent(key string, kind *SourceType) bool
+func (l *Library) SetSourceType(key string, kind *SourceType) error
+func (l *Library) SaveFields(key, newKey string, fields []FieldValue) (bool, error) // {Field, Text}
+func (l *Library) RenameTag(old, new string) error; DeleteTag(tag string) error
+func (l *Library) DeleteEntries(keys []string) error
+func (l *Library) ImportBiblatex(text string) (added, skipped int, err error)
+func (l *Library) AddFetched(entry Entry) (Added, error)   // Entry = a yaml mapping node wrapper
+func (l *Library) ExportBiblatex() string
+func (l *Library) Subset(keys []string) (string, error)   // YAML without tags, library order
 
-`CitationKeys` offers sources and labels in one list. Labels come from `Compilation::labels`, read from the introspector of the session's last good compile through `typst_ide::analyze_labels`, so a chapter sees the labels of its whole document, and a label reads as its caption or text, what the document calls it (a figure's supplement), and its page, counted from the first page. What starts with the query comes first, then what matches further in, with sources ahead of labels in both; a source keeps its place from before labels joined. An accepted label is a `CompletionKind::Reference`, which leaves the bibliography alone.
+type Identifier struct{ Kind IDKind; Value string } // DOI, Arxiv, PMID, ISBN
+func Identify(token string) (Identifier, bool)
+func Identifiers(text string) []IdentifierOrText   // {ID Identifier; Text string; OK bool}
+type PaperIDs struct{ DOI, Arxiv string }
+func Fetch(id Identifier) (Entry, error)             // network
+func FetchPaper(ids PaperIDs, email, dest string) (bool, error) // arXiv, then Unpaywall with an email
+func CleanQuote(raw string) string; PrintedPage(label string, index int, offset int) string
+func PageOffset(label string, index int, entered string) (int, bool); QuoteMarkup(text, key, page string) (string, bool)
+```
 
-`TypstCode` in `typst_code.rs` is the provider of Typst code, and it comes last in the list, so `@` and `[[` stay with the other two. Typing opens it after a `#` or the dot of a field access, which `CodeStart` tells from a dot in prose. It keeps the parsed text, so that keystroke costs an edit and not a parse. ⌃Space opens it anywhere, and `Reach` says which of these `find` is answering. `typst_ide` knows the replaced range only once it answers, so an `Item` can override where `find` said it starts.
+### internal/pdfkit
 
-`typst_ide` reads the text through a compile's `World`, and the text is usually newer than the compile. `Compilation::complete` and `Compilation::hover` take the current text and stand it in for its file, in a copy of the world. `DocumentSession` asks the last compile that had a document, since one that failed on a half-typed line stopped before reading what the document imports. A question may compile the whole document to find a value, so it runs on a background thread on a large stack. `Newest` runs one at a time and skips any that a newer one has overtaken. `typst_ide` finds no call inside a `(` nobody closed, or a string with no closing quote, and the editor closes neither, so `complete` adds what is missing after the caret to the text it asks about. A string nobody closed runs on to the next quote or the end of the file, so one that leaves the caret's line counts as ending at the caret. It also matches what is typed, which `typst_ide` leaves to its caller, and continues a snippet's lines at the line's indent.
+macOS only (purego + objc), stubs elsewhere; `Available()` reports it.
 
-Hover follows the pointer through `SourceEditor::text_at`. A pointer on a new word waits 350 ms and then asks the session. The popover closes when the pointer leaves the word or the editor, on a scroll, a click, or an edit, and with Esc, after which that word stays quiet until the pointer moves to another.
+```go
+func Available() bool
+type Document struct{ /* PDFDocument */ }
+func Open(path string) (*Document, error); func (d *Document) Close()
+func (d *Document) PageCount() int; PageLabel(i int) string; PageText(i int) string
+type Highlight struct{ Page int; Text, Comment string; Index int }
+func (d *Document) Highlights() []Highlight
+func (d *Document) AddHighlight(page int, text, comment string) error // finds text on the page, annotates, saves
+func (d *Document) SetComment(h Highlight, comment string) error; RemoveHighlight(h Highlight) error
+```
 
-## Overlays
+## The app
 
-`Workspace::overlay` holds the one menu or dialog over the window, so opening one replaces the last. No flow stacks them: a menu's action closes the menu first, and the Save failed confirmation carries the action it holds back, so cancelling it returns to no overlay rather than a dialog beneath. `overlay.rs` has the enum, Esc, the render dispatch, the modal and menu shells that close it, and whether the paper viewer has to step aside; focus goes back where it was when the overlay closes. Changing the main view closes the overlay, through `Workspace::set_view`, which also closes the paper viewer away from Paper. Rendering changes nothing: what follows the Library's rows, such as the inspector, runs from `Workspace::table_changed`. Column and sidebar drags are separate full-window layers, and the stacking order is `ui::layer`.
+`internal/app` holds `Workspace`, the state of one window, and its view function. A
+feature's state lives in a struct the feature owns (`document.Open`, `citations.State`,
+`papers.State`); `Workspace` holds one of each and routes between them. Views are MyGo
+view functions over that state, built every frame; nothing of `ui.Element` is stored.
+Long work (compiles, downloads, lookups) runs on goroutines and reaches the state through
+`host.Host.Update`.
 
-## Actions
+Feature packages never import `internal/app`. They reach the workspace through
+`internal/app/host.Host` (see `host.go`, which is the contract), and the workspace
+implements it. Shared looks live in `internal/app/theme`: the icon set (`theme.Icons.*`,
+Lucide SVGs embedded from `assets/icons/`), the monospace font name (`theme.Mono`), and
+the few tokens MyGo's theme lacks (`theme.Caption(t)`, `theme.Danger(t)`, `theme.Hairline(t)`,
+`theme.Selected(t)`); everything else is `c.Theme()`.
 
-`actions.rs` is one table of the workspace's actions, so a new action is one row: its name, its menu group and label, its default keys, and its handler. `shortcuts.rs` applies `.thesio/shortcuts.json` over those keys, and `shortcuts::hint` reads a tooltip's key back from the keymap, so a custom key shows and an unbound action shows none. The Edit menu names the editor's own actions, which keep their keys in `source.rs` and `input.rs`.
+### internal/app/document
 
-## Vault ids
+```go
+type Open struct{ /* id, main, buffer, editor state, session, preview, save state */ }
+// NewOpen opens id with text. main is the top-level document it compiles within;
+// withPreview is false for paper notes, which compile for completion and hover only.
+func NewOpen(h host.Host, id, text, main string, withPreview bool) *Open
+func (d *Open) ID() string
+func (d *Open) View(c *ui.Context)        // editor and preview side by side, diagnostics under the preview
+func (d *Open) EditorView(c *ui.Context)  // the editor alone, for the paper panel
+func (d *Open) Focus()
+func (d *Open) Text() string
+func (d *Open) SetText(text string, undoable bool) // as the Rust reload (undoable) and sync_text
+func (d *Open) Caret() int
+func (d *Open) GoTo(offset int)
+func (d *Open) InsertCitation(key string)
+func (d *Open) InsertQuote(markup string, block bool)
+func (d *Open) InsertFigures(paths []string)
+func (d *Open) SetPath(id, main string)   // after a rename or move; recompiles when changed
+func (d *Open) Unsaved() bool
+func (d *Open) Status() SaveStatus         // Idle, Saved, Saving, Failed with its error text
+func (d *Open) Flush() bool                // writes now if unsaved; false when that failed
+func (d *Open) Discard()                   // gives unsaved changes up
+func (d *Open) Words() []typst.FileWords   // of the last good compile
+func (d *Open) Labels() []typst.Label
+func (d *Open) BlockShown() bool; ToggleBlock()
+func (d *Open) Close()
+// Hooks the workspace sets:
+//   OnChange func(text string)   after each edit (the shell schedules outline refresh)
+//   OnCaret func(offset int)
+//   OnSaved func(id, text string) after a successful write (versions, sort, bibliographies, outline)
+//   OnFollowLink func(path string)
+//   Citations func(query string, labels []typst.Label) []editor.Completion  (the @ provider)
+//   NoteLinks func(query string) []editor.Completion                         (the [[ provider)
+//   OnCitationCompleted func()  (a citation was accepted: ensure a bibliography, mark unsaved)
+```
 
-A document's id is its vault-relative path. Renaming or moving a file therefore changes its id. `Workspace::path_changed` updates `OpenDocument`, so its editor and undo history survive, and the session recompiles from wherever the open file and its top document are now. A top document moved to the Trash leaves the open file compiling on its own. Folders are `Entry` values with `folder: true`, which lets the sidebar tree treat them like any other row.
+Images dropped on the editor (`DroppedFiles`) or pasted (`OnPaste` with an empty text and
+`mygo.Clipboard.ReadImage`) go through `vault.Store.AddImage` and `InsertFigures`.
 
-## Search
+### internal/app/citations
 
-The search dialog lists documents, then sources, then PDF highlights, from any PDF in the vault. Highlights live inside each PDF, so `search.rs` reads them with PDFKit when the dialog opens, off the main thread, and keeps them by file time and size. Results fill in once that finishes. Text in a PDF that is not highlighted is not searched.
+```go
+type State struct{ /* table, selection, sort, tag filter, inspector, dialogs */ }
+func New(h host.Host) *State
+func (s *State) LibraryView(c *ui.Context)      // the whole Library page: header, tag chips, table, inspector
+func (s *State) Overlays(c *ui.Context)         // its dialogs and popovers, built every frame
+func (s *State) DocMenuItems(m *ui.Menu)        // Citation Style…, Insert citation, Show/Hide bibliography data, Embed/Link/Remove bibliography
+func (s *State) OpenPicker(); OpenLookup(); OpenEntry(key string); OpenNewEntry(); OpenSourcePicker(purpose PickFor)
+func (s *State) TableChanged()
+func (s *State) CloseInspector(); SaveInspector()
+func (s *State) VisibleRows(query string) []library.Row  // by title ascending
+func (s *State) CompletionItems(query string, labels []typst.Label) []editor.Completion
+func (s *State) CitedIn(id string) []string
+func (s *State) SyncBibliographies(); EnsureBibliography(id string); RenameCitations(old, new string)
+func (s *State) BibliographyMode(id string) typst.BibMode; SetBibliography(mode typst.BibMode); SetStyle(style string)
+func (s *State) LibraryRestored(text string)
+func (s *State) OpenLibraryHistory()
+type PickFor struct{ Cite bool; Attach string; Link string }  // one of
+```
 
-## Version history
+### internal/app/papers
 
-`history.rs` keeps versions as plain files in `.thesio/history/<id>/`: one when a file opens, then at most one every five minutes as it saves, and none if nothing changed. A paper's notes count as a file that opens with the paper, and save the same way, 500 ms after typing stops. Every version stays for a day, then one a day for 90 days, and a file's newest version always stays. `Store::relocate` moves a file's versions with it. Restoring keeps the current text as a version first and goes through the editor, so it can be undone. `Library::commit` keeps `library.yaml` the same way before it writes, so a run of quick edits leaves the state before the first, and a version that no longer parses cannot be restored. A file that cannot be read cannot be kept, so the write stops.
+```go
+type State struct{ /* current paper, notes (a document.Open without preview), highlights, panel, fetching */ }
+func New(h host.Host) *State
+func (s *State) SourcesView(c *ui.Context)
+func (s *State) PaperView(c *ui.Context)        // the WebView showing the PDF, and the notes/highlights panel
+func (s *State) Overlays(c *ui.Context)         // the quote dialog
+func (s *State) Current() string
+func (s *State) OpenPaper(id string)            // saves first through the host
+func (s *State) ClosePaper()
+func (s *State) PaperTitle(id string) string; PaperRow(id string) (library.Row, bool)
+func (s *State) PaperIDs() []string; HasPaper(key string) bool
+func (s *State) AttachPaper(path, id string); LinkPaper(id, key string); RenamePaper(old, new string)
+func (s *State) FetchPapers(keys []string)
+func (s *State) OpenSourceNotes(key string)
+func (s *State) NotesEditor(id string) *document.Open  // the panel's notes when they are id
+func (s *State) FlushNotes() bool; DiscardNotes(); NotesError() string
+func (s *State) Highlights(id string) []pdfkit.Highlight  // for search, cached by file stamp
+func (s *State) PathChanged(old, new string)
+```
 
-## Sidebar
+The paper shows in a `ui.WebView` whose page loads the PDF file (WKWebView's own viewer:
+selection, search, zoom). Highlights are PDF annotations written through `internal/pdfkit`:
+Highlight Selection reads the text the user copied (the viewer's selection is not readable
+from outside) and highlights its first occurrence in the document.
 
-The Outline reads `=` headings from the top-level document and the files it includes, in reading order (`Project::outline`). It updates when the document saves, not on every keystroke, and headings made with `#heading(...)` are not listed.
+Editing flow: the editor is MyGo's `ui/editor` with a `Highlighter` that calls
+`typst.Highlight` on each edit; `OnCompletion` and `OnHover` ask the newest
+`Compilation`; diagnostics are `Placed` onto the buffer's version. A change schedules a
+compile on the session goroutine (one at a time, newest wins) and a save 500 ms later.
+The preview shows `Render`ed pages as bitmaps at the window's scale, re-rendered only
+when a page's hash changes.
 
-`tree.rs` builds the tree from entries: folders first, then names in natural order, ignoring case and comparing runs of digits by value (`paths::natural_cmp`). Every visible file is listed. Text files open in the editor without a preview, and other files open in the system's default app. Rows open on click rather than on mouse down, so a drag can start from any row. Dropping on a folder moves into it, dropping on a file moves beside it, and dropping on empty space moves to the vault root. Open folders are saved in `.thesio/settings.json`.
-
-A rename or move also updates the paths in every vault document: `#include`, `#import`, the path arguments of `image`, `bibliography`, `read`, and the data loaders, and `#link`s to `.typ` files. A moved file's own relative paths are adjusted too. A path starting with `/` means the file the compiler finds, nearest the document's main file first (`project::candidates`), so it stays relative to that folder while the main file and the target remain inside it, and names the vault root otherwise. If the open document changes, its editor takes the new text as one undoable edit.
-
-## Note links
-
-A note link is plain Typst, `#link("../notes/idea.typ")[Idea]`, so a document stays valid without the app. Any `link` whose target ends in `.typ` and is not a web address counts (`references::note_links`). A page only keeps the link's text, so a preview click finds the target through the loaded file that wrote it. Linked From reads the links in every document and updates when the open document opens or saves.
-
-## Citations
-
-`library.yaml` at the vault root is the citation library, in Hayagriva's format. The YAML mapping is the source of truth, so the editor writes only the fields you change, and an edit that Hayagriva rejects is not written. A file that does not parse is left alone and the Library page reports it. Deleting entries asks first and says how many documents cite them.
-
-`source_type.rs` lists the source types and each type's fields. A source type is a Hayagriva type plus its parent's type, so it is read from any entry without a new field, and a Hayagriva type outside the table shows as Other and keeps its `type` until changed. An article with no parent is a Preprint only with an arXiv ID or link, an `archive`, or `genre: Preprint`, which choosing that type writes; otherwise it is a Journal Article. The table is our own: Zotero's schema has no licence file, so it is not copied. The inspector beside the table edits the selected entry and saves when a field loses focus.
-
-BibLaTeX goes through Hayagriva, except keywords and language, which it drops and `import_biblatex` reads with the `biblatex` crate. Import then refines `@misc` entries: an arXiv ID makes a Preprint, a version a Software entry, and an access date a Web Page. A test exports the fields of every imported type and reads them back.
-
-The citation style is the `style` argument of the document's `#bibliography`, so it lives in the file and survives block updates. Picking one edits that argument and nothing else, including in a `#bibliography` the user wrote. Changing a citation key rewrites `@key` and `#cite(<key>)` in every document, and leaves plain labels, raw text, and comments alone. A document that writes a label of the same name, in any of its files, keeps its `@key`, which means the label there (`Documents::has_label`); its `#cite(<key>)` still changes.
-
-Tags are a `tags` list on an entry, a field Hayagriva ignores. They stay out of the generated bibliography blocks, so tagging never rewrites a document, and BibLaTeX export writes them as `keywords`. The table's selection and column widths live in `Citations`; widths persist in preferences, while actions apply only to selected rows the search and tag filter leave visible.
-
-Add by ID recognises DOIs, arXiv IDs, PMIDs, and ISBNs, including pasted links. DOIs and arXiv IDs go to doi.org, PMIDs to NCBI, and ISBNs to Open Library. Requests happen only when the user asks, and send only the identifier. The only other requests a document can cause come from importing a package that is not on disk (see [Packages](#packages)). An entry with a DOI, PMID, ISBN, or arXiv ID already in the library is skipped. Other numbers, such as an ISSN or a version, are shared by many works and do not count. Keys are generated as surname and year.
-
-Adding a source also looks for its paper: arXiv first, then the locations Unpaywall lists, when an email is set in Settings. Only PDFs are kept, as `sources/<key>.pdf`, and the Sources page lists that folder. A paper follows its entry when the key changes, and stays when the entry is deleted. A paper can also be added by hand. A PDF in `sources/` whose name matches no key shows as unlinked until it is linked to a source.
-
-On macOS papers open in `native_pdf.rs`, a PDFKit `PDFView` above the GPUI surface. It hides what GPUI draws beneath it, so the viewer steps aside while a menu or dialog is open. PDFKit was chosen over the `hayro` renderer because it brings text selection and writes standard PDF annotations, which future annotation work can build on. Other platforms open papers in the system app.
-
-Highlights and their comments are PDF annotations, written into the paper in `sources/`, so any reader shows them. A source's notes are an ordinary Typst document at `notes/<key>.typ`, kept beside the paper in `papers/` and renamed with the key.
-
-A document has one of three bibliography modes, read from its text (`bibliography::mode`):
-
-- **Embedded:** a generated block at the end of the file holds the entries its citations use. It is regenerated after each save, outside the undo history. Thesio owns the block, apart from options after `bytes(...)` such as `style:`. The editor folds it into one row and keeps the caret out of it, and Show bibliography data in the document menu reveals it. Home cards and search ignore it.
-- **Linked:** `#bibliography("library.yaml")`, with a path relative to the document.
-- **Custom:** any other `#bibliography` call, which Thesio leaves alone.
-
-The first citation in a document embeds a block unless one already covers it. A document can have only one bibliography, so the block goes in the top-level document, the one no other file includes, and covers citations in everything it includes. An included file's preview compiles that top-level document for the same reason.
+A document's id is its vault-relative path. Anything that renames or moves a file goes
+through `Workspace.PathChanged`.
 
 ## Limits
 
-- An image goes in as `#figure` wherever the caret is, so in code, math, or a raw block it does not compile.
-- Only files and image data count. An image dragged out of a browser or Photos as a promise of a file is not taken, and files on the clipboard are read on macOS only.
-- An image copied together with text pastes as the text.
-- A copied image stays when no document uses it any more.
-- A file is copied on the main thread, so a very large one holds up the window for that time.
-- Fonts are the set bundled with Typst.
-- `@preview` package names are not offered in `#import`: that needs the package index, which no question may fetch.
-- Fields after a dot come from evaluating the document, so an error earlier in the file leaves `typst_ide` no value to list. Names in the standard library are still offered.
-- `@` offers labels as of the last good compile, so a label just typed joins after the next one. With nothing typed, sources come first, so a large library puts labels out of reach until a letter narrows the list.
-- A label is offered even where `@` cannot use it: Typst refuses a heading or equation with no numbering, and any element that has no number.
-- A label made by a script is not seen when a citation key changes, so `@key` to it is rewritten. Cited In and delete warnings still count an `@key` that means a label.
-- Paper notes compile on their own, so they see what they import but not a document that includes them.
-- A failed package download is tried again only by a compile, so a document left untouched keeps showing the error.
-- An editor with no `Preview`, such as paper notes, downloads packages without showing it.
-- A rename can break code that uses a module by its file name, as in `#import "a.typ"` followed by `a.title`.
-- Paths built at run time, such as `"chapters/" + name`, are not updated by a move.
-- Changes made to the open file by other programs are not picked up, and the next save overwrites them.
-- Two windows on the same file are not kept in sync.
-- A diagnostic with no vault file, such as one inside a package, shows only in the list. So does one in a file that holds nothing but blank space.
-- An underline says nothing about the word under it: `typst_ide`'s hover is not shown there.
-- The editor has no find and replace yet.
-- BibLaTeX export covers common fields only, and Hayagriva's model has no direct equivalent for some BibLaTeX types.
-- Zotero import and sync are not implemented, and ADS Bibcodes are not supported because ADS requires a personal API key.
+See the previous architecture's limits list in git history; those that still hold are
+noted in each package's doc comment.

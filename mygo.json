@@ -1,0 +1,11 @@
+{
+  "name": "Thesio",
+  "identifier": "dev.cheetahbyte.thesio",
+  "version": "0.1.0",
+  "out": "build",
+  "fileAssociations": [
+    { "ext": ["typ"], "name": "Typst Document", "mimeType": "text/x-typst" }
+  ],
+  "macos": { "minimumSystemVersion": "13.0" },
+  "linux": { "webview": true }
+}
