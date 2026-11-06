@@ -43,17 +43,17 @@ The repository needs the secret `MYGO_UPDATER_PRIVATE_KEY`, the private key matc
 gh secret set MYGO_UPDATER_PRIVATE_KEY < ~/Library/Application\ Support/mygo/update-keys/mygo-update.key
 ```
 
-The macOS app is signed with the Developer ID in `mygo.json` and notarized. The workflow needs these secrets: `MACOS_CERTIFICATE` (the "Developer ID Application" certificate with its key, exported from Keychain Access as a `.p12`, base64-encoded), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID` (`ZMF32TXKBT`) and `APPLE_APP_PASSWORD` (an app-specific password from account.apple.com):
+The macOS app is signed with the Developer ID in `mygo.json` and notarized with an App Store Connect API key (App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys). The workflow needs these secrets: `MACOS_CERTIFICATE` (the "Developer ID Application" certificate with its key, exported from Keychain Access as a `.p12`, base64-encoded), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY` (the `.p8`, base64-encoded), `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`:
 
 ```sh
 base64 -i certificate.p12 | gh secret set MACOS_CERTIFICATE
 gh secret set MACOS_CERTIFICATE_PASSWORD
-gh secret set APPLE_ID
-gh secret set APPLE_TEAM_ID
-gh secret set APPLE_APP_PASSWORD
+base64 -i AuthKey_KEYID.p8 | gh secret set APPLE_API_KEY
+gh secret set APPLE_API_KEY_ID
+gh secret set APPLE_API_ISSUER
 ```
 
-A local `go tool mygo build` signs with the same identity and notarizes with the keychain profile `notary`: create it once with `xcrun notarytool store-credentials notary --apple-id … --team-id ZMF32TXKBT --password …`, or pass `-skip-notarize`. Windows builds are unsigned; SmartScreen warns about the installer. To sign them, add `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`, enable the commented step in the workflow and set `windows.certificate` in `mygo.json` as [MyGo's guide](https://github.com/egoist/mygo/blob/main/docs/github-actions.md) describes.
+A local `go tool mygo build` signs with the same identity and notarizes with the keychain profile `notary`: create it once with `xcrun notarytool store-credentials notary --key AuthKey_KEYID.p8 --key-id KEYID --issuer ISSUER`, or pass `-skip-notarize`. Windows builds are unsigned; SmartScreen warns about the installer. To sign them, add `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`, enable the commented step in the workflow and set `windows.certificate` in `mygo.json` as [MyGo's guide](https://github.com/egoist/mygo/blob/main/docs/github-actions.md) describes.
 
 ## Docs
 
