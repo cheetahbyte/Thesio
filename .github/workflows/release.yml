@@ -110,15 +110,20 @@ jobs:
           echo '${{ steps.msys2.outputs.msys2-location }}\mingw64\bin' >> "$GITHUB_PATH"
 
       # The built library, keyed on the crate's sources: a change elsewhere compiles no Rust.
+      # The built libraries, keyed on the crate's sources: a change elsewhere compiles
+      # no Rust, and a macOS build starts from the arm64 library CI built for the merge.
       - name: Restore the Typst library
         id: typst-lib
         uses: actions/cache@v4
         with:
           path: typst/target/*/release/libthesio_typst.a
           key: typst-lib-${{ matrix.platform }}-${{ hashFiles('typst/**') }}
+          restore-keys: typst-lib-ci-aarch64-apple-darwin-${{ hashFiles('typst/**') }}
 
       - name: Build the Typst library
         if: steps.typst-lib.outputs.cache-hit != 'true'
+        env:
+          THESIO_SKIP_BUILT: "1"
         run: scripts/build-typst.sh ${{ matrix.triples }}
 
       # internal/typst/cgo.go lists these system libraries per OS; compare when a link fails.

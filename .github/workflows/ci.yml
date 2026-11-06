@@ -48,12 +48,18 @@ jobs:
 
       # The built library, keyed on the crate's sources: a Go-only change compiles no Rust,
       # and the Rust tests run only when the library had to be built.
+      - name: Host triple
+        id: host
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+
+      # The built library, keyed on the crate's sources; the release's macOS job restores it too.
       - name: Restore the Typst library
         id: typst-lib
         uses: actions/cache@v4
         with:
           path: typst/target/*/release/libthesio_typst.a
-          key: typst-lib-${{ runner.os }}-${{ hashFiles('typst/**') }}
+          key: typst-lib-ci-${{ steps.host.outputs.triple }}-${{ hashFiles('typst/**') }}
 
       - name: Rust tests, clippy and the library build
         if: steps.typst-lib.outputs.cache-hit != 'true'
