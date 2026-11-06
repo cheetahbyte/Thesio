@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
 - Rewrite the app in Go on MyGo native UI. Typst, typst-ide and Hayagriva stay in Rust as a static library behind a C ABI; the vault, the citation library, the include graph, and every view are Go. The vault format is unchanged, so an existing vault opens as it is.
 - Show papers in the system's PDF viewer inside the window. Highlights are still PDF annotations: copy text in the paper and press the highlighter to add one.
