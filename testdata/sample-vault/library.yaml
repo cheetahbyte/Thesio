@@ -1,0 +1,29 @@
+knuth1984:
+  type: Book
+  title: The TeXbook
+  author: Knuth, Donald E.
+  date: 1984
+  publisher: Addison-Wesley
+  serial-number:
+    isbn: 0-201-13447-0
+  tags: [typesetting, classic]
+parry2022:
+  type: Article
+  title: A Survey of Flaky Tests
+  author: [Parry, Owain, Kapfhammer, Gregory M., Hilton, Michael, McMinn, Phil]
+  date: 2022
+  parent:
+    type: Periodical
+    title: ACM Transactions on Software Engineering and Methodology
+    volume: 31
+    issue: 1
+  serial-number:
+    doi: 10.1145/3476105
+  tags: [testing]
+lamport1994:
+  type: Book
+  title: "LaTeX: A Document Preparation System"
+  author: Lamport, Leslie
+  date: 1994
+  publisher: Addison-Wesley
+  tags: [typesetting]

@@ -15,50 +15,36 @@ concurrency:
 
 jobs:
   check:
-    name: test + clippy
-    # Exercise AppKit and Metal on macOS; Windows compilation runs separately.
+    name: test + vet
     runs-on: macos-15
-    timeout-minutes: 45
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # rust-toolchain.toml pins the channel and asks for clippy; rustup
-      # installs both here, so local and CI use the same compiler.
-      - name: Install toolchain
-        run: rustup component add clippy
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # typst/rust-toolchain.toml pins the channel.
+      - name: Install Rust
+        run: rustup show
+        working-directory: typst
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          workspaces: typst
           cache-on-failure: true
-          env-vars: MACOSX_DEPLOYMENT_TARGET
 
-      - name: Build application
-        run: cargo build --release --locked
-
-      - name: Tests and clippy
-        run: scripts/check.sh
-
-  windows-build:
-    name: Windows x64 build
-    runs-on: windows-2022
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/cache@v4
         with:
-          cache-on-failure: true
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-${{ hashFiles('go.mod') }}
 
-      - name: Build application with Windows SDK
-        shell: pwsh
+      - name: Install golangci-lint and govulncheck
         run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
-          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$vs) { throw 'Visual Studio C++ tools were not found' }
-          Import-Module "$vs/Common7/Tools/Microsoft.VisualStudio.DevShell.dll"
-          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          & cargo build --release --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          [ -x ~/go/bin/golangci-lint ] && [ -x ~/go/bin/govulncheck ] ||
+            { go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && go install golang.org/x/vuln/cmd/govulncheck@latest; }
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Tests, library build and vet
+        run: scripts/check.sh

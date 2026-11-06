@@ -1,5 +1,7 @@
 /target
+/build
 /dist
 /dist-preview
+/.mygo
 .DS_Store
 /archive/

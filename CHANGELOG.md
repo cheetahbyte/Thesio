@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Rewrite the app in Go on MyGo native UI. Typst, typst-ide and Hayagriva stay in Rust as a static library behind a C ABI; the vault, the citation library, the include graph, and every view are Go. The vault format is unchanged, so an existing vault opens as it is.
+- Show papers in the system's PDF viewer inside the window. Highlights are still PDF annotations: copy text in the paper and press the highlighter to add one.
+- "Open in new window" is gone for now.
+- Build releases for macOS (universal), Linux (x64 and arm64) and Windows (x64) from a `v*` tag, with signed updates.
+- Look like a Mac app: the sidebar sits on the system's sidebar material with SF Symbols, every page shares one 52-point bar with the traffic lights centered in it, and dialogs, tables, settings and the preview's pages follow macOS metrics in light and dark mode.
+
 - Keep working when a click lands right after a large deletion, before the editor has redrawn. It used to crash.
 - Keep a real multi-line string as it is when accepting a path inside it, and replace the rest of a path after the caret, so `"fig|.png` gives `"figures/plot.png"`.
 - Offer only labels `@` can reference. Unnumbered headings and equations and labels on plain text are gone from the list, since Typst rejects them.

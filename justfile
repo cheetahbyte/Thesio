@@ -1,9 +1,12 @@
+# Build the Typst library once, then run the app with live reload.
 start:
-    cargo run -p thesio
+    scripts/build-typst.sh
+    CGO_ENABLED=1 go tool mygo dev
 
-# Build an optimized release and replace /Applications/Thesio.app.
-install:
-    CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_STRIP=symbols mbx build --release --locked
-    scripts/bundle.sh
-    rm -rf /Applications/Thesio.app
-    ditto dist-preview/Thesio.app /Applications/Thesio.app
+# An optimized app bundle and disk image in build/.
+bundle:
+    scripts/build-typst.sh
+    CGO_ENABLED=1 go tool mygo build
+
+check:
+    scripts/check.sh
